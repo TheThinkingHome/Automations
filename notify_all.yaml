@@ -1,0 +1,189 @@
+alias: Notify All
+description: >-
+  (Version 1.1.0) This script provides a centralized and powerful notification
+  service for Home Assistant, designed to be called from any automation. Its
+  primary goal is to simplify sending consistent, rich notifications to multiple
+  users and devices without duplicating code.
+
+
+  The script accepts a title, message, and an optional photo as input. It
+  automatically prepends a timestamp to the title for context and intelligently
+  handles photo attachments from both URLs and local paths, ensuring they are
+  viewable everywhere.
+
+  SETUP & DEPENDENCIES:
+
+  1. Required Helpers: Create the following helpers in Home Assistant:
+     - input_boolean.debug_notify_all
+     - input_text.home_assistant_base_url (e.g., http://192.168.1.100:8123)
+     - input_text.home_assistant_external_url (e.g., your Nabu Casa URL)
+
+  2. Configure Devices: Edit the `android_devices` and `ios_devices` lists in
+  the variables section below to include your own notification services from the
+  Home Assistant Companion App.
+
+  - Changelog:
+    - 1.1.1: Fixed invalid condition syntax for debug block.
+    - 1.1.0: Refactored to use device lists in variables for easier
+      configuration. Reordered variables and updated description with setup
+      instructions.
+    - 1.0.0: Initial release.
+fields:
+  message:
+    description: The concise message for all notifications.
+    example: Motion detected at front door.
+    required: true
+  title:
+    description: The title for notifications, prefixed with a timestamp.
+    example: Security Alert
+    required: true
+  photo:
+    description: >-
+      Optional filename (full URL or relative /local/ path) of the photo.
+      Assumed valid if provided and must end in .jpg, .jpeg, .png, .gif, or
+      .webp.
+    example: /local/llmvision/snapshot.webp
+    required: false
+sequence:
+  - alias: Define and Configure Variables
+    variables:
+      android_devices:
+        - notify.mobile_app_galaxy_s24
+        - notify.mobile_app_galaxy_watch6
+      ios_devices:
+        - notify.mobile_app_iphone
+      ha_base_url_entity: input_text.home_assistant_base_url
+      ha_external_url_entity: input_text.home_assistant_external_url
+      debug_mode_entity: input_boolean.debug_notify_all
+      input_photo: "{{ photo | default('') }}"
+      input_title: "{{ title | default('Notification') }}"
+      input_message: "{{ message | default('No message provided.') }}"
+      debug_mode: "{{ states(debug_mode_entity) == 'on' }}"
+      is_photo_provided: "{{ input_photo != '' }}"
+      has_image_extension: |-
+        {% set photo_lower = input_photo | lower %}
+        {{ is_photo_provided and
+            (photo_lower.endswith('.jpg') or
+             photo_lower.endswith('.jpeg') or
+             photo_lower.endswith('.png') or
+             photo_lower.endswith('.gif') or
+             photo_lower.endswith('.webp')) }}
+      is_photo_url: >-
+        {{ is_photo_provided and (input_photo.startswith('http://') or
+        input_photo.startswith('https://')) }}
+      base_url: "{{ states(ha_base_url_entity) | default('') }}"
+      external_url: "{{ states(ha_external_url_entity) | default('') }}"
+      final_title: "{{ now().strftime('%b %d, %Y %I:%M %p') }} - {{ input_title }}"
+      internal_photo_url: |-
+        {% if is_photo_provided and has_image_extension and base_url != '' %}
+          {% if is_photo_url %}{{ input_photo }}{% else %}{{ base_url.rstrip('/') }}{{ input_photo }}{% endif %}
+        {% endif %}
+      external_photo_url: >-
+        {% if is_photo_provided and has_image_extension and external_url != ''
+        %}
+          {% if is_photo_url %}{{ input_photo }}{% else %}{{ external_url.rstrip('/') }}{{ input_photo }}{% endif %}
+        {% endif %}
+  - alias: Debug Variable Initialization
+    choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ debug_mode }}"
+        sequence:
+          - service: persistent_notification.create
+            continue_on_error: true
+            data:
+              title: "DEBUG ({{ now().strftime('%H:%M:%S') }}): Notify All - Vars"
+              message: >-
+                <b>Inputs:</b><br/>&nbsp;&nbsp;photo: '{{ input_photo
+                }}'<br/>&nbsp;&nbsp;title: '{{ input_title
+                }}'<br/>&nbsp;&nbsp;message: '{{ input_message
+                }}'<br/><b>Flags:</b><br/>&nbsp;&nbsp;Photo Provided: {{
+                is_photo_provided }}<br/>&nbsp;&nbsp;Is URL: {{ is_photo_url
+                }}<br/>&nbsp;&nbsp;Has Image Ext: {{ has_image_extension
+                }}<br/><b>URLs:</b><br/>&nbsp;&nbsp;Internal: {{
+                internal_photo_url }}<br/>&nbsp;&nbsp;External: {{
+                external_photo_url }}<br/><b>Final Title:</b><br/>&nbsp;&nbsp;{{
+                final_title }}
+          - service: system_log.write
+            data:
+              level: debug
+              message: >-
+                Notify All Vars - Final URLs: internal={{ internal_photo_url }},
+                external={{ external_photo_url }}
+  - alias: Send All Notifications
+    parallel:
+      - alias: Create Persistent Notification
+        service: persistent_notification.create
+        continue_on_error: true
+        data:
+          title: "{{ final_title }}"
+          message: |-
+            {{ input_message }}{% if internal_photo_url %}
+              {{ '\n' }}<a href="{{ internal_photo_url }}" target="_blank">View Image</a>
+            {% endif %}
+      - alias: Notify Android Devices
+        repeat:
+          for_each: "{{ android_devices }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: >-
+                        {{ external_photo_url != None and external_photo_url !=
+                        '' }}
+                  sequence:
+                    - continue_on_error: true
+                      data:
+                        title: "{{ final_title }}"
+                        message: "{{ input_message }}"
+                        data:
+                          image: "{{ external_photo_url }}"
+                          priority: high
+                          actions:
+                            - action: URI
+                              title: Open Image
+                              uri: "{{ external_photo_url }}"
+                      action: "{{ repeat.item }}"
+              default:
+                - continue_on_error: true
+                  data:
+                    title: "{{ final_title }}"
+                    message: "{{ input_message }}"
+                    data:
+                      priority: high
+                  action: "{{ repeat.item }}"
+      - alias: Notify iOS Devices
+        repeat:
+          for_each: "{{ ios_devices }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: >-
+                        {{ external_photo_url != None and external_photo_url !=
+                        '' }}
+                  sequence:
+                    - continue_on_error: true
+                      data:
+                        title: "{{ final_title }}"
+                        message: "{{ input_message }}"
+                        data:
+                          attachment:
+                            url: "{{ external_photo_url }}"
+                            content-type: >-
+                              {% set ext = (external_photo_url |
+                              lower).split('.')[-1] %} {% if ext in ['jpg',
+                              'jpeg'] %}image/jpeg {% elif ext == 'png'
+                              %}image/png {% elif ext == 'gif' %}image/gif {%
+                              elif ext == 'webp' %}image/webp {% else
+                              %}image/jpeg{% endif %}
+                            hide-thumbnail: false
+                      action: "{{ repeat.item }}"
+              default:
+                - continue_on_error: true
+                  data:
+                    title: "{{ final_title }}"
+                    message: "{{ input_message }}"
+                  action: "{{ repeat.item }}"
+trace:
+  stored_traces: 15

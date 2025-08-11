@@ -1,0 +1,68 @@
+alias: Two-Way Switch Sync
+description: >-
+  (Version 1.1.0) This automation synchronizes the ON/OFF state of two switches.
+  When one switch is changed manually (physically or via the UI), the other
+  switch is updated to match. It's ideal for managing two switches that control
+  the same set of lights or should otherwise act as one.
+
+  SETUP:
+  1. Define your two switch entities in the `variables` section below.
+  2. Update the `entity_id` in the `triggers` section to match the variables.
+
+  The automation uses the trigger's context to prevent infinite loops, ensuring
+  it only syncs changes made by a user and not by other automations.
+
+  Changelog:
+
+    - 1.1.0 (2025-08-11): Made the automation generic by using variables for
+      switch entities. Updated description with setup instructions.
+
+    - 1.0.0 (2025-05-19): Initial automation creation.
+triggers:
+  - entity_id: switch.entryway_living_room_lights
+    id: switch_1_changed
+    trigger: state
+  - entity_id: switch.hall_living_room_lights
+    id: switch_2_changed
+    trigger: state
+conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.context.parent_id == none }}"
+  - condition: template
+    value_template: "{{ trigger.to_state.state in ['on', 'off'] }}"
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: switch_1_changed
+          - condition: template
+            value_template: "{{ states(switch_2) != trigger.to_state.state }}"
+        sequence:
+          - target:
+              entity_id: "{{ switch_2 }}"
+            action: switch.turn_{{ trigger.to_state.state }}
+          - data:
+              message: >-
+                SYNC: {{ state_attr(switch_1, 'friendly_name') }} changed.
+                Syncing {{ state_attr(switch_2, 'friendly_name') }}.
+              level: info
+            action: system_log.write
+      - conditions:
+          - condition: trigger
+            id: switch_2_changed
+          - condition: template
+            value_template: "{{ states(switch_1) != trigger.to_state.state }}"
+        sequence:
+          - target:
+              entity_id: "{{ switch_1 }}"
+            action: switch.turn_{{ trigger.to_state.state }}
+          - data:
+              message: >-
+                SYNC: {{ state_attr(switch_2, 'friendly_name') }} changed.
+                Syncing {{ state_attr(switch_1, 'friendly_name') }}.
+              level: info
+            action: system_log.write
+variables:
+  switch_1: switch.bedroom_hall_lights
+  switch_2: switch.living_room_hall_lights
+mode: single

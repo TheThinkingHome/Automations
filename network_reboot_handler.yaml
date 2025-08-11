@@ -1,6 +1,6 @@
 alias: System - Network Reboot Handler
 description: >-
-  (Version 1.0.0) This automation provides a fault-tolerant solution to prevent
+  (Version 1.0.1) This automation provides a fault-tolerant solution to prevent
   a cascade of errors from network-dependent integrations during the scheduled
   nightly reboot of the network router.
 
@@ -30,23 +30,24 @@ description: >-
   defined in a variables block for easy modification.
 
   - changelog:
+    - 1.0.1: Moved the network sensor entity ID to the variables block.
     - 1.0.0: Initial release.
 trigger:
   - platform: time
     at: "03:00:00"
 variables:
-  automation_version: "1.0.0"
+  automation_version: "1.0.1"
+  network_sensor: binary_sensor.your_router_ping_entity
   network_recovery_timeout_minutes: 5
   network_stabilization_delay_minutes: 2
   config_ids_to_manage:
-    - 84e18130c-Frigate-3220d57f951a4a
-    - 8f29185b6-Reolink-951a4a26880dd0
-    - 8f29185b6-Reolink-25fbb4d7645cee
-    - 8f29185b6-Reolink-f952cbfd50bfe9
-    - 480c5021c-Motionblinds-3019d360a
-    - 58382a782-Motionblinds-3019d360a
-    - 0c62bd5c2-Motionblinds-96500283f
-    - 0c62bd5c2-Motionblinds-e2be4ef9b
+    - be4v18130c-frigat-7b9eddafced941
+    - 8f29bge4b6-frigate-951a4a6880dd0
+    - 9ebe455363-reolink-b428ed7645cee
+    - 8586be4fdf-reolink-79d9bd02f9fe9
+    - 4be45021c7-motionblinds-8793036b
+    - 58382a782c-motionblinds-b720fb24
+    - 0c62be4c21-motionblinds-99a42958
 action:
   - alias: Log Pre-Reboot Shutdown Start
     action: system_log.write
@@ -60,10 +61,7 @@ action:
     data:
       config_entry_id: "{{ config_ids_to_manage }}"
   - alias: Wait for Network to Come Back Online
-    wait_for_trigger:
-      - platform: state
-        entity_id: binary_sensor.deco_x50
-        to: "on"
+    wait_template: "{{ is_state(network_sensor, 'on') }}"
     timeout:
       minutes: "{{ network_recovery_timeout_minutes }}"
     continue_on_timeout: true

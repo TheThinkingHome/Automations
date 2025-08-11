@@ -1,0 +1,122 @@
+alias: System - Network Reboot Handler
+description: >-
+  (Version 1.0.0) This automation provides a fault-tolerant solution to prevent
+  a cascade of errors from network-dependent integrations during the scheduled
+  nightly reboot of the network router.
+
+  The automation's primary goal is to gracefully manage the state of sensitive
+  integrations by proactively disabling them before the network goes down and
+  re-enabling them only after the network has fully recovered. This prevents the
+  Home Assistant logs from being flooded with timeout, DNS, and connection
+  errors, and ensures a more stable startup for the affected components.
+
+  The process is initiated by a single time-based trigger at 3:00 AM, one
+  minute before the scheduled router reboot. It then proceeds with the
+  following actions:
+  1. Disables a predefined list of network-sensitive integrations (e.g.,
+  Frigate, Reolink, Motion Blinds).
+  2. Pauses its execution and waits for a trigger from a network sensor, which
+  indicates that the router has rebooted and is back online.
+  3. This wait has a configurable timeout to handle cases where the network does
+  not recover as expected.
+
+  If the network sensor comes online within the timeout period (the success
+  path), the automation logs the success and waits an additional two minutes for
+  network services to fully stabilize. If the network sensor does not come
+  online within the timeout period (the failure path), the automation logs a warning and
+  sends a persistent notification to alert the user. Regardless of the outcome,
+  the automation will always re-enable the integrations as the final step to
+  ensure the system returns to an operational state. All key parameters are
+  defined in a variables block for easy modification.
+
+  - changelog:
+    - 1.0.0: Initial release.
+trigger:
+  - platform: time
+    at: "03:00:00"
+variables:
+  automation_version: "1.0.0"
+  network_recovery_timeout_minutes: 5
+  network_stabilization_delay_minutes: 2
+  config_ids_to_manage:
+    - 84e18130c-Frigate-3220d57f951a4a
+    - 8f29185b6-Reolink-951a4a26880dd0
+    - 8f29185b6-Reolink-25fbb4d7645cee
+    - 8f29185b6-Reolink-f952cbfd50bfe9
+    - 480c5021c-Motionblinds-3019d360a
+    - 58382a782-Motionblinds-3019d360a
+    - 0c62bd5c2-Motionblinds-96500283f
+    - 0c62bd5c2-Motionblinds-e2be4ef9b
+action:
+  - alias: Log Pre-Reboot Shutdown Start
+    action: system_log.write
+    data:
+      level: info
+      message: >-
+        NETWORK REBOOT HANDLER (v{{ automation_version }}): Initiating pre-reboot shutdown of
+        network-sensitive integrations.
+  - alias: Disable Network-Sensitive Integrations
+    service: homeassistant.disable_config_entry
+    data:
+      config_entry_id: "{{ config_ids_to_manage }}"
+  - alias: Wait for Network to Come Back Online
+    wait_for_trigger:
+      - platform: state
+        entity_id: binary_sensor.deco_x50
+        to: "on"
+    timeout:
+      minutes: "{{ network_recovery_timeout_minutes }}"
+    continue_on_timeout: true
+  - alias: Log Outcome and Stabilize Network if Successful
+    choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ wait.completed }}"
+        sequence:
+          - alias: Log Successful Network Recovery
+            action: system_log.write
+            data:
+              level: info
+              message: >-
+                NETWORK REBOOT HANDLER (v{{ automation_version }}): Network has recovered.
+                Waiting {{ network_stabilization_delay_minutes }} minutes for services
+                to stabilize.
+          - alias: Wait for Network to Stabilize
+            delay:
+              minutes: "{{ network_stabilization_delay_minutes }}"
+    default:
+      - alias: Log Network Recovery Timeout
+        action: system_log.write
+        data:
+          level: warning
+          message: >-
+            NETWORK REBOOT HANDLER (v{{ automation_version }}): Timed out after {{
+            network_recovery_timeout_minutes }} minutes waiting for network to
+            recover. Proceeding with fallback re-enabling of integrations.
+      - alias: Send Persistent Notification of Timeout
+        action: persistent_notification.create
+        data:
+          title: "Network Reboot Handler: Timeout (v{{ automation_version }})"
+          notification_id: "network_reboot_handler_timeout_{{ now().timestamp() }}"
+          message: >-
+            The network did not come back online within the {{
+            network_recovery_timeout_minutes }}-minute timeout period after the
+            scheduled reboot. The disabled integrations have been re-enabled as
+            a fallback, but you may need to check your network hardware.
+  - alias: Log Re-enabling of Integrations
+    action: system_log.write
+    data:
+      level: info
+      message: >-
+        NETWORK REBOOT HANDLER (v{{ automation_version }}): Re-enabling
+        network-sensitive integrations.
+  - alias: Re-enable Network-Sensitive Integrations
+    service: homeassistant.enable_config_entry
+    data:
+      config_entry_id: "{{ config_ids_to_manage }}"
+  - alias: Log Process Completion
+    action: system_log.write
+    data:
+      level: info
+      message: "NETWORK REBOOT HANDLER (v{{ automation_version }}): Process complete."
+mode: single

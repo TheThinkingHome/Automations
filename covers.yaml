@@ -1,0 +1,84 @@
+# -------------------------------------------------------------------------------------
+# Guarded Cover Template
+#
+# This configuration creates a "guarded" or "proxy" cover entity for an existing
+# physical cover. This is a powerful pattern that allows you to intercept commands
+# sent to a cover and decide whether to pass them through or block them based on
+# a separate condition, such as an open window or a security mode.
+#
+# How it works:
+# 1. A template cover (e.g., cover.master_city_blinds_guarded) is created.
+#    This is the entity you will use in all your dashboards and automations.
+# 2. The template cover's state is always a direct reflection of the real cover's
+#    state (e.g., cover.master_city_blinds).
+# 3. When a command (open, close, set_position) is sent to the guarded cover,
+#    it first checks the state of a "guard" entity (e.g., a binary_sensor or
+#    input_boolean).
+# 4. If the guard is 'on' (meaning it's safe to operate), the command is passed
+#    directly to the real cover entity.
+# 5. If the guard is 'off' (meaning operation is blocked), the command is instead
+#    routed to a handler script. This script can be used to send a notification,
+#    log the event, or, as in this example, simply do nothing.
+#
+# This approach cleanly separates the "what" (e.g., close all blinds at sunset)
+# from the "if" (e.g., but only if the windows are closed), making your automations
+# simpler and more robust.
+# -------------------------------------------------------------------------------------
+
+- platform: template
+  covers:
+    master_city_blinds_guarded: 
+      friendly_name: "Master City Blinds Guarded"
+      unique_id: "master_city_blinds_guarded"
+      value_template: >-
+        {% set state = states('cover.master_city_blinds') %}
+        {% if state in ['opening', 'open', 'closing', 'closed'] %}
+          {{ state }}
+        {% else %}
+          closed
+        {% endif %}
+      icon_template: >-
+        {% if is_state('cover.master_city_blinds', 'open') %}
+          mdi:blinds-open
+        {% else %}
+          mdi:blinds
+        {% endif %}
+      device_class: shade
+      open_cover:
+        service: >
+          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
+            cover.open_cover
+          {% else %}
+            script.do_nothing
+          {% endif %}
+        target:
+          entity_id: cover.master_city_blinds
+      close_cover:
+        service: >
+          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
+            cover.close_cover
+          {% else %}
+            script.do_nothing
+          {% endif %}
+        target:
+          entity_id: cover.master_city_blinds
+      stop_cover:
+        service: >
+          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
+            cover.stop_cover
+          {% else %}
+            script.do_nothing
+          {% endif %}
+        target:
+          entity_id: cover.master_city_blinds
+      set_cover_position:
+        service: >
+          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
+            cover.set_cover_position
+          {% else %}
+            script.do_nothing
+          {% endif %}
+        target:
+          entity_id: cover.master_city_blinds
+        data:
+          position: "{{ position }}"

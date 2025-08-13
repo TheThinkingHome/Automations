@@ -32,7 +32,7 @@ Template entities allow for the creation of custom sensors and other entities ba
 * [**Guarded Cover Template**](https://github.com/TheThinkingHome/Automations/blob/main/covers.yaml)  
   * A template for creating a "Guarded Cover" proxy entity. This pattern centralizes complex conditions (like checking for an open window) into a single "guard" sensor, simplifying your automations by separating the action from the condition. [**Instructions**](https://xeazy.com/the-gatekeeper/)
 * [**Bedtime Detected Sensor**](https://github.com/TheThinkingHome/Automations/blob/main/templat_sensors.yaml)  
-  * A sophisticated template sensor that uses a weighted confidence score to reliably infer a complex state like "Bedtime." It evaluates multiple conditions, each with a configurable weight, making it resilient to minor deviations in routine.
+  * A sophisticated template sensor that uses a weighted confidence score to reliably infer a complex state like "Bedtime." It evaluates multiple conditions, each with a configurable weight, making it resilient to minor deviations in routine. [**Instructions**](https://xeazy.com/weighted-confidence-for-complex-states/)
 
 Thank you for visiting. I hope you find these configurations helpful in your own smart home journey.
 

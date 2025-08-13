@@ -1,0 +1,76 @@
+# -------------------------------------------------------------------------------------
+# Bedtime Detected - Weighted Confidence Sensor
+#
+# This template creates a binary_sensor that uses a weighted scoring system to
+# infer a complex state like "Bedtime." This is more reliable than relying on a
+# single trigger, as it can tolerate one or more conditions not being met.
+#
+# How it works:
+# 1. A list of conditions is defined in the `conditions` variable. Each
+#    condition is a tuple containing the check (true/false) and its weight.
+# 2. The sensor calculates a `total_weight` based on all conditions whose
+#    entities are currently available.
+# 3. It then calculates a `true_weight` based on the conditions that are met.
+# 4. The sensor's state becomes 'on' if the `true_weight` meets a defined
+#    percentage (e.g., 80%) of the `total_weight`.
+# 5. An override is included to immediately set the sensor to 'false' if the
+#    master bedroom door is open, regardless of other conditions.
+# 6. Detailed attributes are provided for debugging, showing the confidence
+#    score and a list of which conditions passed.
+#
+# To customize, simply add, remove, or edit the tuples in the `conditions`
+# list within each template block.
+# -------------------------------------------------------------------------------------
+- name: "Bedtime Detected"
+  unique_id: bedtime_detected
+  state: >-
+    {% if is_state('binary_sensor.door_master_contact', 'on') %}
+      false {# Master door open overrides all other conditions #}
+    {% else %}
+      {% set conditions = [
+        (is_state('input_select.scene', ['Sleep', 'Wake']), 2) if states('input_select.scene') not in ['unavailable', 'unknown'] else (None, 0),
+        ((is_state('binary_sensor.door_master_contact', 'off') and (as_timestamp(utcnow()) - as_timestamp(states.binary_sensor.door_master_contact.last_changed, default=0) > 600)), 4) if states('binary_sensor.door_master_contact') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('binary_sensor.door_terrace_master_contact', 'off'), 1) if states('binary_sensor.door_terrace_master_contact') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('binary_sensor.james_s24_is_charging', 'on'), 3) if states('binary_sensor.james_s24_is_charging') not in ['unavailable', 'unknown'] else (None, 0),
+        ((is_state('sensor.galaxy_watch6_y4ya_battery_state', 'discharging') == False), 3) if states('sensor.galaxy_watch6_y4ya_battery_state') not in ['unavailable', 'unknown'] else (None, 0),
+        ((is_state('sensor.iphone_2_battery_state', 'Not Charging') == False), 1) if states('sensor.iphone_2_battery_state') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('switch.plug_randy_night_light', 'off'), 3) if states('switch.plug_randy_night_light') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('binary_sensor.living_dining_kitchen_presence', 'off'), 1) if states('binary_sensor.living_dining_kitchen_presence') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('media_player.lg_webos_tv_oled65c3psa', 'off'), 2) if states('media_player.lg_webos_tv_oled65c3psa') not in ['unavailable', 'unknown'] else (None, 0)
+      ] %}
+      {% set valid_conditions = conditions | selectattr('0', '!=', None) | list %}
+      {% set total_weight = valid_conditions | map(attribute='1') | sum %}
+      {% set true_weight = valid_conditions | selectattr('0', 'equalto', true) | map(attribute='1') | sum %}
+      {{ true_weight >= (total_weight * 0.80) if total_weight > 0 else false }}
+    {% endif %}
+  device_class: occupancy
+  attributes:
+    confidence: >-
+      {% set conditions = [
+        (is_state('input_select.scene', ['Sleep', 'Wake']), 2) if states('input_select.scene') not in ['unavailable', 'unknown'] else (None, 0),
+        ((is_state('binary_sensor.door_master_contact', 'off') and (as_timestamp(utcnow()) - as_timestamp(states.binary_sensor.door_master_contact.last_changed, default=0) > 600)), 4) if states('binary_sensor.door_master_contact') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('binary_sensor.door_terrace_master_contact', 'off'), 1) if states('binary_sensor.door_terrace_master_contact') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('binary_sensor.james_s24_is_charging', 'on'), 3) if states('binary_sensor.james_s24_is_charging') not in ['unavailable', 'unknown'] else (None, 0),
+        ((is_state('sensor.galaxy_watch6_y4ya_battery_state', 'discharging') == False), 3) if states('sensor.galaxy_watch6_y4ya_battery_state') not in ['unavailable', 'unknown'] else (None, 0),
+        ((is_state('sensor.iphone_2_battery_state', 'Not Charging') == False), 1) if states('sensor.iphone_2_battery_state') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('switch.plug_randy_night_light', 'off'), 3) if states('switch.plug_randy_night_light') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('binary_sensor.living_dining_kitchen_presence', 'off'), 1) if states('binary_sensor.living_dining_kitchen_presence') not in ['unavailable', 'unknown'] else (None, 0),
+        (is_state('media_player.lg_webos_tv_oled65c3psa', 'off'), 2) if states('media_player.lg_webos_tv_oled65c3psa') not in ['unavailable', 'unknown'] else (None, 0)
+      ] %}
+      {% set valid_conditions = conditions | selectattr('0', '!=', None) | list %}
+      {% set total_weight = valid_conditions | map(attribute='1') | sum %}
+      {% set true_weight = valid_conditions | selectattr('0', 'equalto', true) | map(attribute='1') | sum %}
+      {{ ((true_weight / total_weight * 100) | round(2) | string) + '%' if total_weight > 0 else '0%' }}
+    conditions_met: >-
+      {% set conditions = [
+        ('Scene is Sleep or Wake', 2) if states('input_select.scene') not in ['unavailable', 'unknown'] and is_state('input_select.scene', ['Sleep', 'Wake']) else (None, 0),
+        ('Master bedroom door closed for 10 minutes', 4) if states('binary_sensor.door_master_contact') not in ['unavailable', 'unknown'] and is_state('binary_sensor.door_master_contact', 'off') and (as_timestamp(utcnow()) - as_timestamp(states.binary_sensor.door_master_contact.last_changed, default=0) > 600) else (None, 0),
+        ('Master terrace door Closed', 1) if states('binary_sensor.door_terrace_master_contact') not in ['unavailable', 'unknown'] and is_state('binary_sensor.door_terrace_master_contact', 'off') else (None, 0),
+        ('James phone Charging', 3) if states('binary_sensor.james_s24_is_charging') not in ['unavailable', 'unknown'] and is_state('binary_sensor.james_s24_is_charging', 'on') else (None, 0),
+        ('James watch Charging', 3) if states('sensor.galaxy_watch6_y4ya_battery_state') not in ['unavailable', 'unknown'] and (is_state('sensor.galaxy_watch6_y4ya_battery_state', 'discharging') == False) else (None, 0),
+        ('Randy iPhone Charging', 1) if states('sensor.iphone_2_battery_state') not in ['unavailable', 'unknown'] and (is_state('sensor.iphone_2_battery_state', 'Not Charging') == False) else (None, 0),
+        ('Randy night table light Off', 3) if states('switch.plug_randy_night_light') not in ['unavailable', 'unknown'] and is_state('switch.plug_randy_night_light', 'off') else (None, 0),
+        ('Living-dining-kitchen presence Clear', 1) if states('binary_sensor.living_dining_kitchen_presence') not in ['unavailable', 'unknown'] and is_state('binary_sensor.living_dining_kitchen_presence', 'off') else (None, 0),
+        ('Living room TV Off', 2) if states('media_player.lg_webos_tv_oled65c3psa') not in ['unavailable', 'unknown'] and is_state('media_player.lg_webos_tv_oled65c3psa', 'off') else (None, 0)
+      ] %}
+      {{ conditions | selectattr('0', '!=', None) | map(attribute='0') | list }}

@@ -14,8 +14,8 @@ Automations are the workhorses of Home Assistant, performing tasks in the backgr
   * A fault-tolerant automation that gracefully manages network-dependent integrations during a scheduled router reboot, preventing a cascade of errors and ensuring a stable recovery.  
 * [**Two-Way Switch Sync**](https://github.com/TheThinkingHome/Automations/blob/main/two-way_switch_sync.yaml)  
   * A simple and robust automation to synchronize the state of two switches. It intelligently avoids infinite loops by ignoring changes made by other automations.
-* [**Random_Voice_Notifications**](https://github.com/TheThinkingHome/Automations/blob/main/random_notifications.yaml).
-  * Monitors a door sensor and uses a persistent loop to send randomized voice alerts if an obstruction is detected, stopping automatically when the condition is resolved.
+* [**Random_Voice_Notifications**](https://github.com/TheThinkingHome/Automations/blob/main/random_notifications.yaml)
+  * Monitors a door sensor and uses a persistent loop to send randomized voice alerts if an obstruction is detected, stopping automatically when the condition is resolved. [**Instructions**](https://xeazy.com/taming-the-reboot/)
 
 ### **📜 Scripts**
 

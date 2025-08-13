@@ -120,7 +120,7 @@ actions:
       message: "NETWORK REBOOT HANDLER (v{{ automation_version }}): Process complete."
 variables:
   automation_version: 1.1.1
-  network_sensor: binary_sensor.deco_x50
+  network_sensor: binary_sensor.your_router
   network_recovery_timeout_minutes: 5
   network_stabilization_delay_minutes: 2
 mode: single

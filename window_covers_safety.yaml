@@ -1,0 +1,93 @@
+alias: Window, Blinds/Shades - Enforce 62%
+description: >-
+  (Version 2.0.0) This automation ensures that when a window is open, the shades
+  and blinds covering that window cannot close beyond a safe position (62%) to
+  prevent damage from wind. It works regardless of how the blinds are adjusted,
+  including physical remote controls.
+
+  This version has been refactored to use a centralized mapping variable and
+  more efficient numeric_state triggers. This eliminates repetitive code and
+  makes the automation significantly easier to read and maintain. To add a new
+  cover, you only need to add a new trigger and a corresponding entry in the
+  'window_map' variable.
+
+  - How it works: 
+    - The automation triggers only when the position of a monitored cover drops 
+      below 62%.
+    - It uses a 'window_map' variable to look up the window sensor(s) associated
+      with the cover that triggered the automation.
+    - It then checks if any of the associated windows are open. - If a window is
+      open, it sets the cover's position back to 62%.
+
+  - changelog:
+    - 2.0.0: Major refactor. Replaced the large, repetitive 'choose' block with a
+      single, templated action using a mapping variable. Corrected trigger IDs
+      and logic.
+    - 1.0.0: Initial release.
+variables:
+  window_map:
+    dining_shades:
+      - binary_sensor.window_dining_room_right_contact
+      - binary_sensor.window_dining_room_left_contact
+    living_shades:
+      - binary_sensor.window_living_room_right_contact
+      - binary_sensor.window_living_room_left_contact
+    master_city_blinds:
+      - binary_sensor.window_master_city_contact
+    master_city_shades:
+      - binary_sensor.window_master_city_contact
+    master_park_blinds:
+      - binary_sensor.window_master_park_right_contact
+    master_park_shades:
+      - binary_sensor.window_master_park_right_contact
+actions:
+  - alias: Define Action Variables
+    variables:
+      window_sensors: "{{ window_map[trigger.id] }}"
+      is_window_open: >-
+        {{ expand(window_sensors) | selectattr('state', 'eq', 'on') | list |
+        count > 0 }}
+  - alias: Check if Window is Open
+    condition: template
+    value_template: "{{ is_window_open }}"
+  - alias: Set Cover Position to Safety Limit
+    target:
+      entity_id: "{{ trigger.entity_id }}"
+    data:
+      position: 62
+    action: cover.set_cover_position
+mode: parallel
+max: 6
+trace:
+  stored_traces: 15
+triggers:
+  - entity_id: cover.dining_shades
+    attribute: current_position
+    below: 62
+    id: dining_shades
+    trigger: numeric_state
+  - entity_id: cover.living_shades
+    attribute: current_position
+    below: 62
+    id: living_shades
+    trigger: numeric_state
+  - entity_id: cover.master_city_blinds
+    attribute: current_position
+    below: 62
+    id: master_city_blinds
+    trigger: numeric_state
+  - entity_id: cover.master_city_shades
+    attribute: current_position
+    below: 62
+    id: master_city_shades
+    trigger: numeric_state
+  - entity_id: cover.master_park_blinds
+    attribute: current_position
+    below: 62
+    id: master_park_blinds
+    trigger: numeric_state
+  - entity_id: cover.master_park_shades
+    attribute: current_position
+    below: 62
+    id: master_park_shades
+    trigger: numeric_state

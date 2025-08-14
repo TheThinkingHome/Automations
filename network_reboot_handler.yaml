@@ -1,15 +1,16 @@
-alias: System - Network Reboot Handler
+alias: Network Reboot Handler
 description: >-
-  (Version 1.1.1) This automation provides a fault-tolerant solution to prevent
+  (Version 1.1.3) This automation provides a fault-tolerant solution to prevent
   a cascade of errors from network-dependent integrations during the scheduled
   nightly reboot of the network router. It requires the 'Spook' custom
   integration to be installed via HACS.
 
   The automation's primary goal is to gracefully manage the state of sensitive
-  integrations by proactively disabling them before the network goes down and
-  re-enabling them only after the network has fully recovered. This prevents the
-  Home Assistant logs from being flooded with timeout, DNS, and connection
-  errors, and ensures a more stable startup for the affected components.
+  integrations. It validates that its network sensor is available, waits to
+  confirm that the network has actually gone down, and only then proceeds to
+  proactively disable integrations. It then waits for the network to fully
+  recover before re-enabling them. This prevents log errors and ensures a stable
+  startup for the affected components.
 
   This automation calls two helper scripts to perform the actual disable/enable
   actions. This modular approach allows the list of managed integrations to be
@@ -26,24 +27,16 @@ description: >-
       data:
         config_entry_id: xxxxxxxxxxxxxxxx
       alias: Frigate
-    - service: spook.disable_config_entry
-      data:
-        config_entry_id: yyyyyyyyyyyyyyyy
-      alias: Reolink Front Door
   '''
 
   In the 'sequence' of the 'Enabler' script, add a corresponding action for each
   integration using the 'spook.enable_config_entry' service. ---
 
-  The process is initiated by a single time-based trigger at 3:00 AM. It then
-  calls the disabler script and pauses its execution to wait for the network to
-  come back online, with a configurable timeout. If the network recovers
-  successfully, it waits for services to stabilize before calling the enabler
-  script. If it times out, it sends a notification before calling the enabler
-  script as a fallback. All key parameters are defined in a variables block for
-  easy modification.
-
   - changelog:
+    - 1.1.3: Added a log entry and explicit stop if the network sensor is
+      unavailable at the start of the automation.
+    - 1.1.2: Added validation to ensure the network sensor exists and that the
+      network reboot has actually occurred before taking action.
     - 1.1.1: Updated the description to include configuration details for the
       required helper scripts.
     - 1.1.0: Refactored to call dedicated helper scripts for disabling and
@@ -53,74 +46,130 @@ triggers:
   - at: "03:00:00"
     trigger: time
 actions:
-  - alias: Log Pre-Reboot Shutdown Start
-    action: system_log.write
-    data:
-      level: info
-      message: >-
-        NETWORK REBOOT HANDLER (v{{ automation_version }}): Initiating
-        pre-reboot shutdown of network-sensitive integrations.
-  - alias: Call Disabler Script
-    action: script.network_reboot_handler_disabler
-  - alias: Wait for Network to Come Back Online
-    wait_template: "{{ is_state(network_sensor, 'on') }}"
-    timeout:
-      minutes: "{{ network_recovery_timeout_minutes }}"
-    continue_on_timeout: true
-  - alias: Log Outcome and Stabilize Network if Successful
+  - alias: Validate that the network sensor exists and is available
     choose:
       - conditions:
           - condition: template
-            value_template: "{{ wait.completed }}"
+            value_template: "{{ states(network_sensor) in ['unavailable', 'unknown'] }}"
         sequence:
-          - alias: Log Successful Network Recovery
+          - alias: Log Sensor Unavailable Error
+            action: system_log.write
+            data:
+              level: error
+              message: >-
+                NETWORK REBOOT HANDLER (v{{ automation_version }}): Automation
+                cannot run because the network sensor '{{ network_sensor }}' is
+                unavailable.
+          - alias: Stop Automation
+            stop: Network sensor is unavailable.
+    default:
+      - alias: Log Handler Start and Wait for Network Outage
+        action: system_log.write
+        data:
+          level: info
+          message: >-
+            NETWORK REBOOT HANDLER (v{{ automation_version }}): Triggered.
+            Waiting up to {{ network_outage_wait_minutes }} minutes for network
+            outage to begin.
+      - alias: Wait for Scheduled Network Outage to Begin
+        wait_template: "{{ is_state(network_sensor, 'off') }}"
+        timeout:
+          minutes: "{{ network_outage_wait_minutes }}"
+        continue_on_timeout: true
+      - alias: Choose Action Based on Reboot Detection
+        choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ wait.completed }}"
+            sequence:
+              - alias: Log Network Outage Detected
+                action: system_log.write
+                data:
+                  level: info
+                  message: >-
+                    NETWORK REBOOT HANDLER (v{{ automation_version }}): Network
+                    outage detected. Proceeding with handler logic.
+              - alias: Call Disabler Script
+                action: script.network_reboot_handler_disabler
+                data: {}
+              - alias: Wait for Network to Come Back Online
+                wait_template: "{{ is_state(network_sensor, 'on') }}"
+                timeout:
+                  minutes: "{{ network_recovery_timeout_minutes }}"
+                continue_on_timeout: true
+              - alias: Log Outcome and Stabilize Network if Successful
+                choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ wait.completed }}"
+                    sequence:
+                      - alias: Log Successful Network Recovery
+                        action: system_log.write
+                        data:
+                          level: info
+                          message: >-
+                            NETWORK REBOOT HANDLER (v{{ automation_version }}):
+                            Network has recovered. Waiting {{
+                            network_stabilization_delay_minutes }} minutes for
+                            services to stabilize.
+                      - alias: Wait for Network to Stabilize
+                        delay:
+                          minutes: "{{ network_stabilization_delay_minutes }}"
+                default:
+                  - alias: Log Network Recovery Timeout
+                    action: system_log.write
+                    data:
+                      level: warning
+                      message: >-
+                        NETWORK REBOOT HANDLER (v{{ automation_version }}):
+                        Timed out after {{ network_recovery_timeout_minutes }}
+                        minutes waiting for network to recover. Proceeding with
+                        fallback re-enabling of integrations.
+                  - alias: Send Persistent Notification of Timeout
+                    action: persistent_notification.create
+                    data:
+                      title: >-
+                        Network Reboot Handler: Timeout (v{{ automation_version
+                        }})
+                      notification_id: network_reboot_handler_timeout_{{ now().timestamp() }}
+                      message: >-
+                        The network did not come back online within the {{
+                        network_recovery_timeout_minutes }}-minute timeout
+                        period after the scheduled reboot. The disabled
+                        integrations have been re-enabled as a fallback, but you
+                        may need to check your network hardware.
+              - alias: Log Re-enabling of Integrations
+                action: system_log.write
+                data:
+                  level: info
+                  message: >-
+                    NETWORK REBOOT HANDLER (v{{ automation_version }}):
+                    Re-enabling network-sensitive integrations.
+              - alias: Call Enabler Script
+                action: script.network_reboot_handler_enabler
+                data: {}
+              - alias: Log Process Completion
+                action: system_log.write
+                data:
+                  level: info
+                  message: >-
+                    NETWORK REBOOT HANDLER (v{{ automation_version }}): Process
+                    complete.
+        default:
+          - alias: Log Skipped Reboot
             action: system_log.write
             data:
               level: info
               message: >-
-                NETWORK REBOOT HANDLER (v{{ automation_version }}): Network has
-                recovered. Waiting {{ network_stabilization_delay_minutes }}
-                minutes for services to stabilize.
-          - alias: Wait for Network to Stabilize
-            delay:
-              minutes: "{{ network_stabilization_delay_minutes }}"
-    default:
-      - alias: Log Network Recovery Timeout
-        action: system_log.write
-        data:
-          level: warning
-          message: >-
-            NETWORK REBOOT HANDLER (v{{ automation_version }}): Timed out after
-            {{ network_recovery_timeout_minutes }} minutes waiting for network
-            to recover. Proceeding with fallback re-enabling of integrations.
-      - alias: Send Persistent Notification of Timeout
-        action: persistent_notification.create
-        data:
-          title: "Network Reboot Handler: Timeout (v{{ automation_version }})"
-          notification_id: network_reboot_handler_timeout_{{ now().timestamp() }}
-          message: >-
-            The network did not come back online within the {{
-            network_recovery_timeout_minutes }}-minute timeout period after the
-            scheduled reboot. The disabled integrations have been re-enabled as
-            a fallback, but you may need to check your network hardware.
-  - alias: Log Re-enabling of Integrations
-    action: system_log.write
-    data:
-      level: info
-      message: >-
-        NETWORK REBOOT HANDLER (v{{ automation_version }}): Re-enabling
-        network-sensitive integrations.
-  - alias: Call Enabler Script
-    action: script.network_reboot_handler_enabler
-    data: {}
-  - alias: Log Process Completion
-    action: system_log.write
-    data:
-      level: info
-      message: "NETWORK REBOOT HANDLER (v{{ automation_version }}): Process complete."
+                NETWORK REBOOT HANDLER (v{{ automation_version }}): Network
+                outage was not detected within the timeout period. Skipping
+                handler.
+          - alias: Stop Automation
+            stop: No reboot was detected.
 variables:
-  automation_version: 1.1.1
-  network_sensor: binary_sensor.your_router
+  automation_version: 1.1.3
+  network_sensor: binary_sensor.deco_x50
+  network_outage_wait_minutes: 3
   network_recovery_timeout_minutes: 5
   network_stabilization_delay_minutes: 2
 mode: single

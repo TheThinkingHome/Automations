@@ -1,3 +1,9 @@
+# NOTE ABOUT THIS AUTOMATION...This automation failed at is goal. It showes an
+# iterative process of automation and script development. Even in its flawed 
+# state, it has value. If anyone viewing this automation can improve on it, so
+# that it functions as described in the description, it would solve a problem
+# in my Home Assistant configuration.
+
 alias: Network Reboot Handler
 description: >-
   (Version 1.1.3) This automation provides a fault-tolerant solution to prevent

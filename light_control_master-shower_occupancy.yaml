@@ -6,18 +6,18 @@ description: >-
   and an optional exhaust fan.
 
   Changelog:
-    - 2.0.4: Fixed "Sensor Saturation" bug. When the timer finishes, the logic
-      now checks if motion is still active before turning off. Also fixed "Sunny
-      Morning" bug by allowing motion to extend the timer regardless of lux if
+    - 2.0.4: Fixed (Sensor Saturation) bug. When the timer finishes, the logic
+      now checks if motion is still active before turning off. Also fixed (Sunny
+      Morning) bug by allowing motion to extend the timer regardless of lux if
       the light is already on.
     - 2.0.3: Implement a 5-second (debounce logic) into the Door Closed sequence
-      to catch the scenario where closing the door simultaniously triggers on of
-      the motion sensors.
+      to catch the scenario where closing the door simultaniously triggers one 
+      of the motion sensors.
     - 2.0.2: Added optional exhaust fan logic tied to the door sensor.
     - 2.0.1: Added `variables` block for all key entities to simplify
       adaptation. 
     - 2.0.0: Initial creation. Forked from Main Bathroom v1.0.3. Reworked
-      all logic for a "wasp-in-a-box" model.
+      all logic for a (wasp-in-a-box) model.
 
   Key Entities Utilized:
     - Triggers/Inputs:
@@ -234,7 +234,6 @@ actions:
         conditions:
           - condition: trigger
             id: motion_detected
-          # Lux condition moved inside to allow re-triggering if light is already on
         sequence:
           - alias: Check Lux OR Light State
             if:
@@ -289,9 +288,9 @@ actions:
         sequence:
           - alias: Check for Continuous Motion
             if:
-              - condition: state
-                entity_id: binary_sensor.master_shower_occupancy_group
-                state: "on"
+              - condition: template
+                value_template: "{{ is_state(motion_sensor, 'on') }}"
+                alias: Motion is still active
             then:
               - alias: Restart Timer (Motion Persists)
                 action: timer.start

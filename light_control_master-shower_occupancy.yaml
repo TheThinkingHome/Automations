@@ -1,11 +1,15 @@
 alias: Light Control - Master Shower Occupancy
 description: >-
-  Version: 2.0.3. This automation provides (wasp-in-a-box inferred occupancy)
+  Version: 2.0.4. This automation provides (wasp-in-a-box inferred occupancy)
   logic. It depends on a motion sensor group, a door sensor, and a lux sensor. 
   It focuses purely on motion, door state, lux, and a timer to control the light
   and an optional exhaust fan.
 
   Changelog:
+    - 2.0.4: Fixed "Sensor Saturation" bug. When the timer finishes, the logic
+      now checks if motion is still active before turning off. Also fixed "Sunny
+      Morning" bug by allowing motion to extend the timer regardless of lux if
+      the light is already on.
     - 2.0.3: Implement a 5-second (debounce logic) into the Door Closed sequence
       to catch the scenario where closing the door simultaniously triggers on of
       the motion sensors.
@@ -230,42 +234,51 @@ actions:
         conditions:
           - condition: trigger
             id: motion_detected
-          - condition: template
-            value_template: "{{ states(lux_sensor) | float(-1) < lux_level }}"
-            alias: Ambient Light Level Low
+          # Lux condition moved inside to allow re-triggering if light is already on
         sequence:
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ light_switch }}"
-            data: {}
-          - alias: Start or Restart Detection Timer
-            action: timer.start
-            target:
-              entity_id: "{{ occupancy_timer }}"
-            data: {}
-          - action: system_log.write
-            data:
-              message: >-
-                Light Control - Master Shower: Motion DETECTED (lux OK). Light
-                ON and timer (re)started.
-              level: info
-          - alias: Wasp Test
+          - alias: Check Lux OR Light State
             if:
-              - condition: template
-                value_template: "{{ states(door_sensor) == 'off' }}"
-                alias: Door Closed
+              - condition: or
+                conditions:
+                  - condition: template
+                    value_template: "{{ states(lux_sensor) | float(-1) < lux_level }}"
+                    alias: Dark Enough
+                  - condition: template
+                    value_template: "{{ is_state(light_switch, 'on') }}"
+                    alias: Light Already On
             then:
-              - alias: Activate Wasp Hold
-                action: input_boolean.turn_on
+              - action: switch.turn_on
                 target:
-                  entity_id: "{{ wasp_boolean }}"
+                  entity_id: "{{ light_switch }}"
+                data: {}
+              - alias: Start or Restart Detection Timer
+                action: timer.start
+                target:
+                  entity_id: "{{ occupancy_timer }}"
                 data: {}
               - action: system_log.write
                 data:
                   message: >-
-                    Light Control - Master Shower: Motion detected while door is
-                    CLOSED. Wasp boolean (inferred occupancy) set to TRUE.
+                    Light Control - Master Shower: Motion DETECTED. Light
+                    ON/Kept ON and timer (re)started.
                   level: info
+              - alias: Wasp Test
+                if:
+                  - condition: template
+                    value_template: "{{ states(door_sensor) == 'off' }}"
+                    alias: Door Closed
+                then:
+                  - alias: Activate Wasp Hold
+                    action: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ wasp_boolean }}"
+                    data: {}
+                  - action: system_log.write
+                    data:
+                      message: >-
+                        Light Control - Master Shower: Motion detected while door is
+                        CLOSED. Wasp boolean (inferred occupancy) set to TRUE.
+                      level: info
       - alias: Timer Finished
         conditions:
           - condition: trigger
@@ -274,25 +287,43 @@ actions:
             value_template: "{{ is_state(wasp_boolean, 'off') }}"
             alias: Wasp Hold Inactive
         sequence:
-          - action: switch.turn_off
-            target:
-              entity_id: "{{ light_switch }}"
-            data: {}
-          - alias: Exhaust Fan
+          - alias: Check for Continuous Motion
             if:
-              - condition: template
-                value_template: "{{ exhaust_fan != 'none' }}"
+              - condition: state
+                entity_id: binary_sensor.master_shower_occupancy_group
+                state: "on"
             then:
+              - alias: Restart Timer (Motion Persists)
+                action: timer.start
+                target:
+                  entity_id: "{{ occupancy_timer }}"
+                data: {}
+              - action: system_log.write
+                data:
+                  message: >-
+                    Light Control - Master Shower: Timer finished but motion is
+                    still active (saturation). Timer restarted. Light remains ON.
+                  level: info
+            else:
               - action: switch.turn_off
                 target:
-                  entity_id: "{{ exhaust_fan }}"
+                  entity_id: "{{ light_switch }}"
                 data: {}
-          - action: system_log.write
-            data:
-              message: >-
-                Light Control - Master Shower: Timer FINISHED. Wasp boolean is
-                'false'. Light and Fan TURNED OFF.
-              level: info
+              - alias: Exhaust Fan
+                if:
+                  - condition: template
+                    value_template: "{{ exhaust_fan != 'none' }}"
+                then:
+                  - action: switch.turn_off
+                    target:
+                      entity_id: "{{ exhaust_fan }}"
+                    data: {}
+              - action: system_log.write
+                data:
+                  message: >-
+                    Light Control - Master Shower: Timer FINISHED and NO motion
+                    detected. Wasp boolean is 'false'. Light and Fan TURNED OFF.
+                  level: info
     default:
       - action: system_log.write
         data:

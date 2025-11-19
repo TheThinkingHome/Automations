@@ -1,0 +1,153 @@
+alias: Door - Main Bath Litter Box Obstruction
+description: >
+  Activates when the main bathroom door is closed for a defined duration,
+  marking the litter box as obstructed, sending a notification, and announcing a
+  random message every 'loop_delay' minutes (up to 'max_announcements' times)
+  while the door remains closed. Clears obstruction when the door opens. Key
+  parameters are defined as global variables for easier customization.
+triggers:
+  - entity_id: binary_sensor.door_bath_main_contact
+    to: "off"
+    for:
+      minutes: 30
+    id: door_closed
+    trigger: state
+  - entity_id: binary_sensor.door_bath_main_contact
+    to: "on"
+    id: door_opened
+    trigger: state
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: door_closed
+        sequence:
+          - variables:
+              announcement_count: 0
+          - target:
+              entity_id: "{{ litter_box_obstructed_boolean_entity_id }}"
+            action: input_boolean.turn_on
+            data: {}
+          - data:
+              title: Litter Box Obstruction Alert
+              message: >-
+                The main bathroom door has been closed for 30 minutes, 
+                obstructing the cat litter box.
+              notification_id: litter_box_obstruction_alert
+            action: persistent_notification.create
+          - repeat:
+              while:
+                - condition: template
+                  value_template: "{{ states(door_sensor_entity_id) == 'off' }}"
+                - condition: template
+                  value_template: "{{ announcement_count < max_announcements }}"
+              sequence:
+                - data:
+                    message_text: "{{ cat_messages | random }}"
+                    high_priority_alert: true
+                  action: script.controlled_voice_announcement
+                - delay:
+                    minutes: "{{ loop_delay_minutes }}"
+                - variables:
+                    announcement_count: "{{ announcement_count + 1 }}"
+      - conditions:
+          - condition: trigger
+            id: door_opened
+        sequence:
+          - target:
+              entity_id: "{{ litter_box_obstructed_boolean_entity_id }}"
+            action: input_boolean.turn_off
+            data: {}
+          - data:
+              notification_id: litter_box_obstruction_alert
+            action: persistent_notification.dismiss
+    default: []
+mode: single
+variables:
+  loop_delay_minutes: 5
+  max_announcements: 10
+  door_sensor_entity_id: binary_sensor.door_bath_main_contact
+  litter_box_obstructed_boolean_entity_id: input_boolean.cat_litter_box_obstructed
+  cat_messages:
+    - >-
+      Houston, we have a problem! The main bathroom door is closed and Ari and
+      Noodles can’t reach their litter box!
+    - >-
+      Alert! The bathroom door has been shut so long, the cats are planning a
+      litter box heist!
+    - >-
+      You can’t handle the truth! The bathroom door is blocking Noodles and
+      Ari’s litter box!
+    - >-
+      Code Meow! The litter box is crying for freedom behind the closed bathroom
+      door!
+    - >-
+      Help us, dear. You are our only hope! Ari and Noodles can't reach the
+      litter box with the door closed!
+    - >-
+      Yikes! The bathroom door’s locked tight, and the cats are plotting to
+      storm the litter box!
+    - >-
+      The cats are saying, ‘There’s no place like the litter box,’ but the
+      bathroom door is still closed!
+    - >-
+      Paws for concern! The main bathroom door is shut, and the cats are sending
+      SOS signals!
+    - >-
+      The litter box awaits Ari and Noodles. Open that door... Make it so,
+      Number One!
+    - >-
+      Catastrophe alert! The bathroom door’s blocking the litter box, and
+      Noodles and Ari are sharpening their claws!
+    - >-
+      The bathroom door has been shut, and the litter box is screaming, ‘Show me
+      the kitties!
+    - >-
+      Holy whiskers! The main bathroom door is closed, securing the litter box
+      like Fort Knox!
+    - >-
+      Open the bathroom door for Ari and Noodles, you must. Wait longer, they
+      cannot. Yes, hmmm. To the litter box, they must go!
+    - >-
+      To the litter box... and beyond! Ari and Noodles need your help to
+      complete  their mission!, Space Rangers.
+    - >-
+      Go ahead, open the door. Make Ari and Noodles' day... Save the carpet.  
+      The litter box awaits!
+    - >-
+      Hold it! Ari and Noodles are trying to hold it, but the closed bathroom
+      door is a Class 5 feline emergency! Litter box access required, stat!
+    - >-
+      The cats are in a galaxy far, far away from their litter box, Open the
+      closed bathroom door!
+    - >-
+      Claws out! The main bathroom door is blocking the litter box, and Ari and
+      Noodles are ready to pounce!
+    - >-
+      This isn't the closed door you are looking for. Move along... move along
+      and open it for Ari and Noodles' litter box access. (These *are* the cats
+      that need to go!)
+    - >-
+      Loja Control, this is Ari and Noodles. The bathroom door is an
+      impenetrable barrier to the litter box. Our patience is approaching zero.
+      We request immediate door-opening action. Over.
+    - >-
+      Great Scott! The bathroom door is *still* closed! Ari and Noodles need to
+      get back... back to the litter box!
+    - >-
+      A cat's got to know its limitations. And Ari and Noodles are reachin' 
+      theirs. Time to open up the path to their litter box.
+    - >-
+      I'm a cat, not a cammel! Ari and Noodles can't just beam through to the
+      litter box. We need you to open it!
+    - >-
+      Well, human? Are you gonna open that bathroom door, or just stand there
+      whistlin' Dixie? Ari and Noodles are waiting for the litter box?
+    - >-
+      If my calculations are correct, Ari and Noodles are approaching critical
+      bladder capacity! The bathroom door must be opened immediately for the
+      sake of the space-time-litter-box continuum!
+    - >-
+      If Ari and Noodles are to live long and prosper (and keep the carpets
+      clean), access to the litter box is essential. It is the only logical  
+      path to household peace, and cleanliness.

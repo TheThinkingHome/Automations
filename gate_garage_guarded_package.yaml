@@ -1,5 +1,5 @@
 # Package: Gate Garage Guard
-# Version: 1.0.6
+# Version: 1.0.5 Beta
 #
 # Description:
 #   A "Nervous System" for a dumb 433MHz gate relay. This package sits between your
@@ -31,14 +31,16 @@
 #   - Search "gate_garage_package" to see ONLY the Logic Layer.
 
 # Changelog:
-#   v1.0.6: Renamed all package entities to 'gate_garage_package_*' convention for
+#   v1.0.5: Fixed 'wait is undefined' error in Smart Vibration sensor by using timestamp math
+#           instead of automation-specific logic. Added explicit triggers to Error Display 
+#           sensor to prevent 'unknown' state on boot.
+#   v1.0.4: Renamed all package entities to 'gate_garage_package_*' convention for
 #           improved search filtering.
-#   v1.0.5: Updated description to list required hardware sensors (contact & raw vibration).
-#   v1.0.4: Added documentation regarding 15s timeout based on ~12s gate travel time.
-#   v1.0.3: Integrated sensor.restarting_status to block operations during boot.
-#   v1.0.2: Changed invalid 'unknown' state return to 'none'. Enhanced availability
+#   v1.0.3: Added documentation regarding 15s timeout based on ~12s gate travel time.
+#   v1.0.2: Integrated sensor.restarting_status to block operations during boot.
+#   v1.0.1: Changed invalid 'unknown' state return to 'none'. Enhanced availability
 #           check. Fixed 'unavailable' vibration sensor.
-#   v1.0.1: Initial Release.
+#   v1.0.0: Initial Release.
 
 # ------------------------------------------------------------------------------
 # 1. INPUTS (Memory Banks)
@@ -62,7 +64,17 @@ input_text:
 template:
   # --- The Error Display Entity ---
   # This is the single entity to use on your dashboard for error reporting.
-  - sensor:
+  # Added triggers to ensure state is calculated immediately on change or start.
+  - trigger:
+      - trigger: state
+        entity_id: switch.stove_vent_relays_gate
+      - trigger: state
+        entity_id: binary_sensor.door_gate_garage_contact
+      - trigger: state
+        entity_id: input_text.gate_garage_package_error_latch
+      - trigger: homeassistant
+        event: start
+    sensor:
       - name: "Gate Garage Package Error Display"
         unique_id: sensor_gate_garage_package_error_display
         icon: mdi:alert-box
@@ -108,15 +120,15 @@ template:
           {% if trigger.platform == 'homeassistant' %}
             false
           {% else %}
-            {% set raw = 'binary_sensor.vibration_gate_garage_vibration' %}
             {% set duration_sensor = 'binary_sensor.gate_garage_package_vibration_guarded' %}
-            {% set last_changed = states[raw].last_changed %}
             
+            {# 1. Check if the 'Guarded' (long duration) sensor is already ON #}
             {% if is_state(duration_sensor, 'on') %}
               true
-            {# Check for rapid succession (multipath noise filter) #}
-            {# Gate Travel Time is ~12s. 15s window ensures we capture movement during full actuation. #}
-            {% elif wait.trigger is defined and (now() - last_changed).total_seconds() < 15 %}
+            {# 2. Check for rapid succession (multipath noise filter) #}
+            {# If the sensor was OFF for less than 15s before turning ON, it's a double-tap. #}
+            {% elif trigger.from_state is defined and 
+                    (now() - trigger.from_state.last_changed).total_seconds() < 15 %}
               true
             {% else %}
               false

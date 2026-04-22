@@ -1,0 +1,243 @@
+alias: Light Control - Office Occupancy
+description: >-
+  Version: 1.0.0 - Wasp-in-a-box inferred occupancy logic for a single room.
+  Uses a door sensor, a motion sensor, a timer, and two boolean helpers to
+  infer whether the room is occupied and respect human intent.
+ 
+  Core pattern: the door closing while motion is active captures the wasp --
+  someone is inside. The light stays on and the timer is suppressed until the
+  door opens again. When the door opens the wasp is released and normal
+  timer-based motion logic resumes.
+ 
+  Manual override: if a human physically turns the light off, an override
+  boolean is set that suppresses all motion-based turn-on. The human has
+  declared the room dark. Motion will not override that decision. The override
+  is cleared when the human physically turns the light back on, or when the
+  door opens -- whichever comes first. Door open is a clean slate.
+ 
+  Physical switch detection uses the three-condition context filter to
+  distinguish a human wall switch press from an automation or dashboard
+  state change. See: https://xeazy.com/detect-a-physical-switch-press-in-home-assistant/
+ 
+  Transient motion guard: motion detected within 5 seconds of the door
+  opening is ignored. This filters the momentary motion trigger as an
+  occupant walks out through the open door.
+ 
+  Helpers required:
+    timer.office_occupancy_timer        -- duration 5 minutes
+    input_boolean.office_wasp_hold      -- wasp capture state
+    input_boolean.office_manual_override -- human override state
+ 
+  Changelog:
+    1.0.0 - Initial release. Written as a teaching example for the
+        wasp-in-a-box occupancy pattern article on xeazy.com.
+ 
+  Dependencies:
+    binary_sensor.door_office_contact   -- door state trigger
+    binary_sensor.motion_office         -- motion trigger
+    switch.office_lights                -- light control
+    timer.office_occupancy_timer        -- occupancy countdown
+    input_boolean.office_wasp_hold      -- wasp capture state
+    input_boolean.office_manual_override -- human override state
+ 
+triggers:
+  - alias: Door Opened
+    trigger: state
+    entity_id: binary_sensor.door_office_contact
+    from: "off"
+    to: "on"
+    id: door_opened
+  - alias: Door Closed
+    trigger: state
+    entity_id: binary_sensor.door_office_contact
+    from: "on"
+    to: "off"
+    id: door_closed
+  - alias: Motion Detected
+    trigger: state
+    entity_id: binary_sensor.motion_office
+    from: "off"
+    to: "on"
+    id: motion_detected
+  - alias: Manual Switch On
+    trigger: state
+    entity_id: switch.office_lights
+    from: "off"
+    to: "on"
+    id: manual_switch_on
+  - alias: Manual Switch Off
+    trigger: state
+    entity_id: switch.office_lights
+    from: "on"
+    to: "off"
+    id: manual_switch_off
+  - alias: Timer Finished
+    trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: timer.office_occupancy_timer
+    id: timer_finished
+conditions: []
+actions:
+  - choose:
+      - alias: Door Opened — Release Wasp and Clear Override
+        conditions:
+          - condition: trigger
+            id: door_opened
+        sequence:
+          - alias: Release Wasp Hold
+            action: input_boolean.turn_off
+            continue_on_error: true
+            target:
+              entity_id: input_boolean.office_wasp_hold
+          - alias: Clear Manual Override
+            action: input_boolean.turn_off
+            continue_on_error: true
+            target:
+              entity_id: input_boolean.office_manual_override
+          - alias: Start Timer if Light is On
+            if:
+              - condition: state
+                entity_id: switch.office_lights
+                state: "on"
+            then:
+              - action: timer.start
+                continue_on_error: true
+                target:
+                  entity_id: timer.office_occupancy_timer
+            else:
+              - alias: Light Was Off — Cancel Any Stale Timer
+                action: timer.cancel
+                continue_on_error: true
+                target:
+                  entity_id: timer.office_occupancy_timer
+      - alias: Door Closed — Capture Wasp if Motion Active
+        conditions:
+          - condition: trigger
+            id: door_closed
+        sequence:
+          - alias: Wait for Motion to Settle
+            delay: "00:00:05"
+          - alias: Capture Wasp if Motion Detected
+            if:
+              - condition: state
+                entity_id: binary_sensor.motion_office
+                state: "on"
+            then:
+              - alias: Set Wasp Hold — Room is Occupied
+                action: input_boolean.turn_on
+                continue_on_error: true
+                target:
+                  entity_id: input_boolean.office_wasp_hold
+            else:
+              - alias: No Motion — Cancel Timer and Turn Off Light
+                action: timer.cancel
+                continue_on_error: true
+                target:
+                  entity_id: timer.office_occupancy_timer
+              - action: switch.turn_off
+                continue_on_error: true
+                target:
+                  entity_id: switch.office_lights
+      - alias: Motion Detected — Turn On Light and Start Timer
+        conditions:
+          - condition: trigger
+            id: motion_detected
+          - alias: Wasp Hold is Off
+            condition: state
+            entity_id: input_boolean.office_wasp_hold
+            state: "off"
+          - alias: Manual Override Not Active
+            condition: state
+            entity_id: input_boolean.office_manual_override
+            state: "off"
+          - alias: Door Has Been Open for More Than 5 Seconds
+            condition: template
+            value_template: >-
+              {{ (now() - states.binary_sensor.door_office_contact.last_changed)
+                 .total_seconds() > 5 }}
+        sequence:
+          - action: switch.turn_on
+            continue_on_error: true
+            target:
+              entity_id: switch.office_lights
+          - action: timer.start
+            continue_on_error: true
+            target:
+              entity_id: timer.office_occupancy_timer
+      - alias: Manual Switch On — Human Override
+        conditions:
+          - condition: trigger
+            id: manual_switch_on
+          - alias: Physical Switch — Not Triggered by Automation or Dashboard
+            condition: template
+            value_template: >-
+              {{ trigger.to_state.context.parent_id is none and
+                 trigger.to_state.context.user_id is none and
+                 trigger.to_state.context.id is not none }}
+        sequence:
+          - alias: Clear Manual Override — Human is Back
+            action: input_boolean.turn_off
+            continue_on_error: true
+            target:
+              entity_id: input_boolean.office_manual_override
+          - alias: Start Occupancy Timer — Human Declared Presence
+            action: timer.start
+            continue_on_error: true
+            target:
+              entity_id: timer.office_occupancy_timer
+      - alias: Manual Switch Off — Human Override
+        conditions:
+          - condition: trigger
+            id: manual_switch_off
+          - alias: Physical Switch — Not Triggered by Automation or Dashboard
+            condition: template
+            value_template: >-
+              {{ trigger.to_state.context.parent_id is none and
+                 trigger.to_state.context.user_id is none and
+                 trigger.to_state.context.id is not none }}
+        sequence:
+          - alias: Cancel Occupancy Timer
+            action: timer.cancel
+            continue_on_error: true
+            target:
+              entity_id: timer.office_occupancy_timer
+          - alias: Release Wasp Hold
+            action: input_boolean.turn_off
+            continue_on_error: true
+            target:
+              entity_id: input_boolean.office_wasp_hold
+          - alias: Set Manual Override — Suppress Further Motion
+            action: input_boolean.turn_on
+            continue_on_error: true
+            target:
+              entity_id: input_boolean.office_manual_override
+      - alias: Timer Finished — Turn Off if Wasp is Off
+        conditions:
+          - condition: trigger
+            id: timer_finished
+          - alias: Wasp Hold is Off
+            condition: state
+            entity_id: input_boolean.office_wasp_hold
+            state: "off"
+          - alias: Motion is Clear
+            condition: state
+            entity_id: binary_sensor.motion_office
+            state: "off"
+        sequence:
+          - action: switch.turn_off
+            continue_on_error: true
+            target:
+              entity_id: switch.office_lights
+variables:
+  wasp_boolean: input_boolean.office_wasp_hold
+  manual_override: input_boolean.office_manual_override
+  occupancy_timer: timer.office_occupancy_timer
+  light_switch: switch.office_lights
+  door_sensor: binary_sensor.door_office_contact
+  motion_sensor: binary_sensor.motion_office
+mode: restart
+max_exceeded: silent
+trace:
+  stored_traces: 10
+ 

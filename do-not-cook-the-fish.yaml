@@ -1,0 +1,594 @@
+################################################################################
+# Do Not Cook the Fish — Living Room Shade Automation
+# Version 1.5.0
+#
+# Reference automation for the article "Do Not Cook the Fish: An Automation
+# That Took a Year and a Half to Get Right" on xeazy.com.
+#
+# This automation manages the shades in a main living area with a large
+# west-facing window. It balances four concerns:
+#
+#   1. Sun heat protection: drop shades when outdoor lux indicates the room
+#      is heating up.
+#   2. TV glare protection: drop shades at lower lux thresholds when the TV
+#      is on, since glare is more sensitive than heat.
+#   3. Wind safety: do not close shades on open windows. Handled externally
+#      by the guarded cover entity, not in this automation.
+#   4. Sunset viewing: open shades when lux drops low enough that none of the
+#      protection thresholds apply.
+#
+# ENTITIES YOU NEED TO REPLACE:
+#   sensor.lux_outdoors_illuminance        — outdoor lux sensor
+#   cover.dining_shades_guarded            — primary shade (guarded for window safety)
+#   cover.living_shades_guarded            — secondary shade
+#   media_player.living_room_tv            — TV (the integration must report
+#                                            "unavailable" when off — see note below)
+#   binary_sensor.window_left_contact      — window contact sensor (left)
+#   binary_sensor.window_right_contact     — window contact sensor (right)
+#   input_boolean.disable_shades           — manual disable
+#   input_boolean.home                     — gates the open branch
+#   input_select.scene                     — only runs in Day or Evening scene
+#
+# ABOUT GUARDED COVER ENTITIES:
+# The two cover entities (.dining_shades_guarded and .living_shades_guarded)
+# are template covers that wrap the actual physical shades. The guarded
+# entities refuse to close if a window is open. This way, every automation
+# that touches the cover gets wind protection automatically. See the article
+# "Guarded Cover Entities" on xeazy.com for how to build them.
+#
+# ABOUT THE TV INTEGRATION:
+# Some TV integrations (notably LG WebOS) do NOT report a state of "off".
+# The TV state goes from "on" / "playing" / etc. directly to "unavailable"
+# when powered off. This automation checks for unavailable as the off state.
+# If your TV integration reports a real "off" state, you will need to update
+# the relevant value_templates throughout.
+#
+# ABOUT THE LUX THRESHOLDS:
+# The thresholds in the variables block are starting points tuned for a
+# specific west-facing window in Loja, Ecuador (4° south, 2,135m elevation).
+# Your lux values will differ. Tune them by watching how the room feels at
+# different lux levels and adjusting accordingly.
+#
+# IMPORTANT — VARIABLES VS TRIGGER VALUE_TEMPLATES:
+# Home Assistant template triggers cannot reference automation variables
+# inside their value_template field. The thresholds are therefore declared
+# both as variables (for readability and clean references in the action
+# block) AND hardcoded in the trigger value_templates. If you tune a
+# threshold, you MUST update both the variable AND the corresponding
+# trigger value_template. Mismatches will silently break the automation.
+#
+# DEBUG LOGGING:
+# Set debug_enabled to true in the variables block to log every decision
+# point to the HA system log. Flip to false once behavior is confirmed.
+################################################################################
+
+alias: Do Not Cook the Fish — Living Room Shades
+description: >-
+  Version 1.5.0. Adjusts shades based on outdoor lux to protect from sun
+  heat, prevent TV glare, and open at sunset. Wind safety is handled by
+  guarded cover entities, not in this automation.
+
+triggers:
+
+  # Lux-driven close triggers (sun policy, TV off)
+  - alias: Sun — Close Dining to 62%
+    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 3400 }}"
+    for:
+      minutes: 3
+    id: close_62_sun
+    trigger: template
+
+  - alias: Sun — Close Dining to 15%
+    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 4100 }}"
+    for:
+      minutes: 3
+    id: close_15_sun
+    trigger: template
+
+  - alias: Sun — Close Dining to 15% (Max Sun Fast)
+    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 4400 }}"
+    for:
+      seconds: 30
+    id: close_15_max_sun
+    trigger: template
+
+  # Lux-driven close triggers (TV policy, TV on)
+  - alias: TV — Close Dining and Living to 62%
+    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 2000 }}"
+    for:
+      minutes: 3
+    id: close_62_tv
+    trigger: template
+
+  - alias: TV — Close Dining to 15%, Living to 62%
+    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 2800 }}"
+    for:
+      minutes: 3
+    id: close_15_tv
+    trigger: template
+
+  # Lux-driven open trigger
+  - alias: Sun Setting — Open Dining Shades
+    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) < 2500 }}"
+    for:
+      minutes: 20
+    id: open_blinds
+    trigger: template
+
+  # State-change re-evaluation triggers
+  - alias: TV Turned On
+    entity_id: media_player.living_room_tv
+    from: unavailable
+    id: tv_on
+    trigger: state
+
+  - alias: TV Turned Off
+    entity_id: media_player.living_room_tv
+    to: unavailable
+    id: tv_off
+    trigger: state
+
+  - alias: Window Closed — Left
+    entity_id: binary_sensor.window_left_contact
+    to: "off"
+    id: window_closed
+    trigger: state
+
+  - alias: Window Closed — Right
+    entity_id: binary_sensor.window_right_contact
+    to: "off"
+    id: window_closed
+    trigger: state
+
+  # Time-gate startup re-evaluation
+  - alias: 11 AM Startup Gate
+    at: "11:00:00"
+    id: startup_11am
+    trigger: time
+
+conditions:
+  - alias: Only After 11 AM
+    condition: not
+    conditions:
+      - condition: time
+        before: "11:00:00"
+  - alias: Not Manually Disabled
+    condition: state
+    entity_id: input_boolean.disable_shades
+    state: "off"
+  - alias: Only Active During Day or Evening Scene
+    condition: template
+    value_template: "{{ states('input_select.scene') in ['Day', 'Evening'] }}"
+
+actions:
+  # Optional debug log on every fire
+  - if:
+      - condition: template
+        value_template: "{{ debug_enabled }}"
+    then:
+      - action: system_log.write
+        data:
+          level: info
+          message: >-
+            [Do Not Cook the Fish] Triggered by: {{ trigger.id }}. Lux: {{
+            states('sensor.lux_outdoors_illuminance') | float(0) | round(0) }}.
+            TV: {{ 'ON' if not is_state(tv_entity, 'unavailable') else 'OFF' }}.
+            Dining: {{ state_attr(dining_shades, 'current_position') }}%.
+            Living: {{ state_attr(living_shades, 'current_position') }}%.
+
+  - choose:
+
+      # ---- Sun policy: TV off ----
+      - alias: Sun — Set Dining to 62%
+        conditions:
+          - condition: trigger
+            id: close_62_sun
+          - alias: TV is Off
+            condition: template
+            value_template: "{{ is_state(tv_entity, 'unavailable') }}"
+          - alias: Shades Above 70%
+            condition: template
+            value_template: >-
+              {{ state_attr(dining_shades, 'current_position') |
+              int(default=100) > 70 }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ debug_enabled }}"
+            then:
+              - action: system_log.write
+                data:
+                  level: info
+                  message: "[Do Not Cook the Fish] Sun close_62_sun matched. Setting dining to 62%."
+          - alias: Close Dining Shades to 62%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ dining_shades }}"
+            data:
+              position: 62
+
+      - alias: Sun — Set Dining to 15%, Living to 62%
+        conditions:
+          - condition: trigger
+            id:
+              - close_15_sun
+              - close_15_max_sun
+          - alias: TV is Off
+            condition: template
+            value_template: "{{ is_state(tv_entity, 'unavailable') }}"
+          - alias: Shades Above 20%
+            condition: template
+            value_template: >-
+              {{ state_attr(dining_shades, 'current_position') |
+              int(default=100) > 20 }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ debug_enabled }}"
+            then:
+              - action: system_log.write
+                data:
+                  level: info
+                  message: "[Do Not Cook the Fish] Sun close_15 matched. Setting dining to 15%, living to 62%."
+          - alias: Close Dining Shades to 15%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ dining_shades }}"
+            data:
+              position: 15
+          - alias: Close Living Shades to 62%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ living_shades }}"
+            data:
+              position: 62
+
+      # ---- TV policy: TV on ----
+      - alias: TV On — Set Dining and Living to 62%
+        conditions:
+          - condition: trigger
+            id: close_62_tv
+          - alias: TV is On
+            condition: template
+            value_template: "{{ not is_state(tv_entity, 'unavailable') }}"
+          - alias: Shades Above 70%
+            condition: template
+            value_template: >-
+              {{ state_attr(dining_shades, 'current_position') |
+              int(default=100) > 70 }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ debug_enabled }}"
+            then:
+              - action: system_log.write
+                data:
+                  level: info
+                  message: "[Do Not Cook the Fish] TV close_62_tv matched. Setting dining to 62%, living to 62%."
+          - alias: Close Dining Shades to 62%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ dining_shades }}"
+            data:
+              position: 62
+          - alias: Close Living Shades to 62%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ living_shades }}"
+            data:
+              position: 62
+
+      - alias: TV On — Set Dining to 15%, Living to 62%
+        conditions:
+          - condition: trigger
+            id: close_15_tv
+          - alias: TV is On
+            condition: template
+            value_template: "{{ not is_state(tv_entity, 'unavailable') }}"
+          - alias: Dining Shades Above 20%
+            condition: template
+            value_template: >-
+              {{ state_attr(dining_shades, 'current_position') |
+              int(default=100) > 20 }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ debug_enabled }}"
+            then:
+              - action: system_log.write
+                data:
+                  level: info
+                  message: "[Do Not Cook the Fish] TV close_15_tv matched. Setting dining to 15%, living to 62%."
+          - alias: Close Dining Shades to 15%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ dining_shades }}"
+            data:
+              position: 15
+          - alias: Close Living Shades to 62%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ living_shades }}"
+            data:
+              position: 62
+
+      # ---- Sunset open ----
+      - alias: Sun Setting — Open Dining Shades
+        conditions:
+          - condition: trigger
+            id: open_blinds
+          - alias: Home is On
+            condition: state
+            entity_id: input_boolean.home
+            state: "on"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ debug_enabled }}"
+            then:
+              - action: system_log.write
+                data:
+                  level: info
+                  message: "[Do Not Cook the Fish] open_blinds matched. Lux below 2500 for 20min. Opening dining to 100%."
+          - alias: Open Dining Shades to 100%
+            action: cover.set_cover_position
+            continue_on_error: true
+            target:
+              entity_id: "{{ dining_shades }}"
+            data:
+              position: 100
+
+      # ---- Re-evaluation: TV turned ON ----
+      # When the TV turns on, the lux trigger may have already fired and been
+      # discarded. Re-evaluate current lux and set shades to TV-policy position.
+      - alias: TV Turned On — Re-evaluate Lux and Set Shades
+        conditions:
+          - condition: trigger
+            id: tv_on
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ debug_enabled }}"
+            then:
+              - action: system_log.write
+                data:
+                  level: info
+                  message: >-
+                    [Do Not Cook the Fish] TV turned ON. Re-evaluating lux: {{
+                    states('sensor.lux_outdoors_illuminance') | float(0) | round(0) }}.
+          - choose:
+              - alias: Lux Above TV Close-15 Threshold
+                conditions:
+                  - condition: template
+                    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 2800 }}"
+                sequence:
+                  - alias: Close Dining Shades to 15%
+                    action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 15
+                  - alias: Close Living Shades to 62%
+                    action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ living_shades }}"
+                    data:
+                      position: 62
+              - alias: Lux Above TV Close-62 Threshold
+                conditions:
+                  - condition: template
+                    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 2000 }}"
+                sequence:
+                  - alias: Close Dining Shades to 62%
+                    action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 62
+                  - alias: Close Living Shades to 62%
+                    action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ living_shades }}"
+                    data:
+                      position: 62
+            # IMPORTANT: this default branch is the v1.5.0 fix.
+            # Without it, re-evaluation that fires when lux is already low
+            # (after sunset, etc.) would leave shades stuck at their last
+            # closed position indefinitely.
+            default:
+              - alias: Open Dining Shades to 100%
+                action: cover.set_cover_position
+                continue_on_error: true
+                target:
+                  entity_id: "{{ dining_shades }}"
+                data:
+                  position: 100
+
+      # ---- Re-evaluation: TV turned OFF ----
+      - alias: TV Turned Off — Re-evaluate Lux and Set Shades
+        conditions:
+          - condition: trigger
+            id: tv_off
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ debug_enabled }}"
+            then:
+              - action: system_log.write
+                data:
+                  level: info
+                  message: >-
+                    [Do Not Cook the Fish] TV turned OFF. Re-evaluating lux: {{
+                    states('sensor.lux_outdoors_illuminance') | float(0) | round(0) }}.
+          - choose:
+              - alias: Lux Above Sun Close-15 Threshold
+                conditions:
+                  - condition: template
+                    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 4100 }}"
+                sequence:
+                  - alias: Close Dining Shades to 15%
+                    action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 15
+                  - alias: Close Living Shades to 62%
+                    action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ living_shades }}"
+                    data:
+                      position: 62
+              - alias: Lux Above Sun Close-62 Threshold
+                conditions:
+                  - condition: template
+                    value_template: "{{ states('sensor.lux_outdoors_illuminance') | float(0) > 3400 }}"
+                sequence:
+                  - alias: Close Dining Shades to 62%
+                    action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 62
+            default:
+              - alias: Open Dining Shades to 100%
+                action: cover.set_cover_position
+                continue_on_error: true
+                target:
+                  entity_id: "{{ dining_shades }}"
+                data:
+                  position: 100
+
+      # ---- Re-evaluation: window closed OR 11 AM gate ----
+      # Combined branch because both events have the same logic: re-evaluate
+      # current lux and TV state, set shades accordingly. The 11 AM gate
+      # catches cases where lux was already above a threshold before the
+      # time gate opened. The window-closed case catches the "shades did not
+      # close because window was open, now window is closed" scenario.
+      - alias: Window Closed or 11 AM — Re-evaluate Lux and Set Shades
+        conditions:
+          - condition: trigger
+            id:
+              - window_closed
+              - startup_11am
+          - alias: Both Windows Closed
+            condition: template
+            value_template: >-
+              {{ is_state(window_left, 'off') and is_state(window_right, 'off') }}
+        sequence:
+          - choose:
+              - alias: TV On — Lux Above TV Close-15 Threshold
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ not is_state(tv_entity, 'unavailable') and
+                      states('sensor.lux_outdoors_illuminance') | float(0) > 2800 }}
+                sequence:
+                  - action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 15
+                  - action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ living_shades }}"
+                    data:
+                      position: 62
+              - alias: TV On — Lux Above TV Close-62 Threshold
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ not is_state(tv_entity, 'unavailable') and
+                      states('sensor.lux_outdoors_illuminance') | float(0) > 2000 }}
+                sequence:
+                  - action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 62
+                  - action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ living_shades }}"
+                    data:
+                      position: 62
+              - alias: TV Off — Lux Above Sun Close-15 Threshold
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ is_state(tv_entity, 'unavailable') and
+                      states('sensor.lux_outdoors_illuminance') | float(0) > 4100 }}
+                sequence:
+                  - action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 15
+                  - action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ living_shades }}"
+                    data:
+                      position: 62
+              - alias: TV Off — Lux Above Sun Close-62 Threshold
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ is_state(tv_entity, 'unavailable') and
+                      states('sensor.lux_outdoors_illuminance') | float(0) > 3400 }}
+                sequence:
+                  - action: cover.set_cover_position
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ dining_shades }}"
+                    data:
+                      position: 62
+            default:
+              - alias: Open Dining Shades to 100%
+                action: cover.set_cover_position
+                continue_on_error: true
+                target:
+                  entity_id: "{{ dining_shades }}"
+                data:
+                  position: 100
+
+variables:
+  # Lux thresholds. See header comment about variables vs trigger value_templates.
+  lux_close_62_sun: 3400
+  lux_close_15_sun: 4100
+  lux_close_15_max_sun: 4400
+  lux_close_62_tv: 2000
+  lux_close_15_tv: 2800
+  lux_open: 2500
+
+  # Entities. Replace these with your own.
+  tv_entity: media_player.living_room_tv
+  dining_shades: cover.dining_shades_guarded
+  living_shades: cover.living_shades_guarded
+  window_left: binary_sensor.window_left_contact
+  window_right: binary_sensor.window_right_contact
+
+  # Set true to log every decision point. False for production.
+  debug_enabled: false
+
+trace:
+  stored_traces: 20
+
+mode: single

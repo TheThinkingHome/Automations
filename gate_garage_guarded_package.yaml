@@ -1,113 +1,149 @@
-# Package: Gate Garage Guard
-# Version: 1.0.5 Beta
+# =============================================================================
+# Package: Gate Garage Guard  (Public Reference Version)
+# File: config/packages/gate_garage_guard.yaml
+# =============================================================================
 #
-# Description:
-#   A "Nervous System" for a dumb 433MHz gate relay. This package sits between your
-#   dashboard and the hardware, ensuring the gate only moves when it makes sense.
+# WHAT THIS IS
+#   A Home Assistant package that turns a "blind" 433MHz gate relay into a
+#   state-aware cover entity. A bare relay just clicks - it has no idea whether
+#   the gate is open, closed, or stuck. This package adds the missing
+#   intelligence: it checks the gate's real position before acting, fires the
+#   relay, waits for the gate to travel, and verifies the result. It also
+#   filters a noisy vibration sensor so wind and passing trucks do not get
+#   mistaken for tampering.
 #
-# Why This Exists:
-#   Radio relays are deaf and blind; they just click. The logic in this package checks
-#   if the gate is already open before opening it, monitors vibration to distinguish
-#   wind from intruders, and retries commands if the gate gets stuck.
+# IMPORTANT - READ THIS
+#   This is NOT the live file running on the author's system. It has been
+#   anonymized and simplified for publication. The author's working version
+#   includes presence-based arrival/departure automations, a dual contact
+#   sensor "health ledger" that quarantines unreliable sensors, and other
+#   site-specific logic that depends on entities you would not have. All of
+#   that has been stripped out so this file is a clean starting point you can
+#   actually adapt. Treat it as a reference, not a drop-in.
 #
-# The Hardware (The Senses):
-#   1. binary_sensor.door_gate_garage_contact: The "Eye." It tells the brain if the
-#      gate is actually open or closed, preventing the relay from firing blindly.
-#   2. binary_sensor.vibration_gate_garage_vibration: The "Raw Nerve." It feels
-#      every rattle, which the software then filters to ignore wind or casual bumps.
+# WHAT YOU NEED TO PROVIDE (hard dependencies)
+#   This package will not function until these three entities exist and the
+#   IDs below are updated to match yours:
 #
-# Entities Created (Add these to your Dashboard):
-#   1. cover.gate_garage_package_guarded (The General): Use this entity for all control.
-#      It safely manages the actual relay and handles the retry logic.
-#   2. input_text.gate_garage_package_status_message (The Town Crier): Displays real-time
-#      status like "Processing Open...", "Retry: Closing...", or "Success".
-#   3. sensor.gate_garage_package_error_display (The Warning Light): The single source of
-#      truth for trouble. Shows "None" or specific errors like "Error: Close Failed".
-#   4. binary_sensor.gate_garage_package_vibration_smart (The Filter): A calculated sensor
-#      that only trips on sustained vibration or rapid double-taps.
+#     switch.gate_relay
+#         The relay that pulses the gate remote. (Author uses a Sonoff 4CH Pro
+#         flashed with Tasmota in "inching" mode for a 1-second pulse.)
 #
-# Search Tips:
-#   - Search "gate_garage" to see EVERYTHING (Hardware + Package Logic).
-#   - Search "gate_garage_package" to see ONLY the Logic Layer.
-
-# Changelog:
-#   v1.0.5: Fixed 'wait is undefined' error in Smart Vibration sensor by using timestamp math
-#           instead of automation-specific logic. Added explicit triggers to Error Display 
-#           sensor to prevent 'unknown' state on boot.
-#   v1.0.4: Renamed all package entities to 'gate_garage_package_*' convention for
-#           improved search filtering.
-#   v1.0.3: Added documentation regarding 15s timeout based on ~12s gate travel time.
-#   v1.0.2: Integrated sensor.restarting_status to block operations during boot.
-#   v1.0.1: Changed invalid 'unknown' state return to 'none'. Enhanced availability
-#           check. Fixed 'unavailable' vibration sensor.
-#   v1.0.0: Initial Release.
-
-# ------------------------------------------------------------------------------
-# 1. INPUTS (Memory Banks)
-# ------------------------------------------------------------------------------
+#     binary_sensor.gate_contact
+#         A contact sensor on the gate. 'on' = open, 'off' = closed.
+#
+#     binary_sensor.gate_vibration
+#         A vibration sensor on the gate, used for tamper detection. 'on' when
+#         it detects movement/vibration.
+#
+#   If you only want the open/close state awareness and do not care about
+#   tamper detection, you can delete the three vibration-related template
+#   entities and ignore binary_sensor.gate_vibration entirely. The cover entity
+#   does not depend on it.
+#
+# ONE TUNABLE WORTH KNOWING
+#   The actuation logic waits 15 seconds for the gate to finish traveling
+#   before it checks the result. The author's gate takes about 12 seconds.
+#   If your gate is faster or slower, change the delay in
+#   script.gate_garage_package_actuate_and_verify.
+#
+# THE ONE WEAK POINT - THE CONTACT SENSOR
+#   This package trusts binary_sensor.gate_contact completely. The cover
+#   entity's reported state is just a reading of that sensor, and the manager
+#   script's "is the gate already open/closed?" check depends on it being
+#   honest. That is fine when the sensor works. But if the contact sensor
+#   fails or freezes, the system does not just go dark - it can behave
+#   backwards. A frozen sensor stuck on "closed" will make the manager refuse
+#   a "close" command (it thinks the gate is already closed) while happily
+#   running an "open" command on a gate that is physically already open. The
+#   verified path is only as honest as the sensor feeding it.
+#
+#   For exactly that situation, this package keeps one deliberate escape
+#   hatch: script.gate_garage_package_resync_click. It bypasses every check
+#   and just pulses the relay once. It is the manual blind toggle you fall
+#   back to when the contact sensor has failed and you still need to operate
+#   the gate before you can fix the hardware. The author's full system handles
+#   sensor failure automatically with a second contact sensor and a health
+#   ledger; that is out of scope here and covered in the follow-up.
+# =============================================================================
+ 
+ 
+# =============================================================================
+# 1. INPUTS
+# Two text helpers that drive the dashboard: a live status line and a latched
+# error message that persists until the next command clears it.
+# =============================================================================
 input_text:
   gate_garage_package_status_message:
     name: Gate Garage Package Status Message
     icon: mdi:message-text-clock
     initial: "System Ready"
-    # Used for transient messages: "Processing...", "Closing...", "Open"
-
+ 
   gate_garage_package_error_latch:
     name: Gate Garage Package Error Memory
     icon: mdi:alert-circle
-    initial: "None"
-    # Stores logic failures (e.g., "Close Failed"). Reset on successful new command.
-
-# ------------------------------------------------------------------------------
-# 2. TEMPLATES (The Nervous System & The Face)
-# ------------------------------------------------------------------------------
+    initial: "Clear"
+ 
+ 
+# =============================================================================
+# 2. TEMPLATES
+# The cover entity, the dashboard error display, and the vibration filter.
+# =============================================================================
 template:
-  # --- The Error Display Entity ---
-  # This is the single entity to use on your dashboard for error reporting.
-  # Added triggers to ensure state is calculated immediately on change or start.
-  - trigger:
-      - trigger: state
-        entity_id: switch.stove_vent_relays_gate
-      - trigger: state
-        entity_id: binary_sensor.door_gate_garage_contact
-      - trigger: state
-        entity_id: input_text.gate_garage_package_error_latch
-      - trigger: homeassistant
-        event: start
-    sensor:
+ 
+  # ---------------------------------------------------------------------------
+  # Error Display
+  # A single dashboard sensor that shows either the current latched error or
+  # "Clear". It also reports if the relay itself has gone unavailable, which is
+  # the most common real-world failure (the relay lost power or fell off the
+  # network). Defaults are defensive so the sensor never renders as "unknown".
+  # ---------------------------------------------------------------------------
+  - sensor:
       - name: "Gate Garage Package Error Display"
         unique_id: sensor_gate_garage_package_error_display
         icon: mdi:alert-box
         state: >-
-          {% set switch_status = states('switch.stove_vent_relays_gate') %}
-          {% set contact_status = states('binary_sensor.door_gate_garage_contact') %}
-          {# We default to 'None' if the input_text is not yet ready #}
-          {% set logic_error = states('input_text.gate_garage_package_error_latch') | default('None', true) %}
-          {% set logic_error = 'None' if logic_error in ['unknown', 'unavailable'] else logic_error %}
-          
-          {% if switch_status in ['unavailable', 'unknown'] %}
-            Switch Unavailable
-          {% elif contact_status in ['unavailable', 'unknown'] %}
-            Sensor Unavailable
-          {% else %}
+          {% set logic_error = states('input_text.gate_garage_package_error_latch') | default('Clear', true) %}
+          {% set switch_status = states('switch.gate_relay') | default('unknown', true) %}
+ 
+          {# Coerce any empty / null-ish latch value back to a clean "Clear" #}
+          {% set logic_error = 'Clear' if logic_error in ['unavailable', 'unknown', 'None', 'none', ''] else logic_error %}
+          {% set switch_unavailable = switch_status in ['unavailable', 'unknown'] %}
+ 
+          {%- if switch_unavailable -%}
+            Relay Unavailable
+          {%- elif logic_error != 'Clear' -%}
             {{ logic_error }}
-          {% endif %}
-
-  # --- Vibration Filters ---
+          {%- else -%}
+            Clear
+          {%- endif -%}
+ 
+  # ---------------------------------------------------------------------------
+  # Vibration Guarded
+  # The raw vibration sensor, but it only reports "on" after the vibration has
+  # been continuous for 5 seconds. A single bump (a slammed car door, a gust)
+  # never gets through. This is the first noise filter.
+  # ---------------------------------------------------------------------------
   - binary_sensor:
       - name: "Gate Garage Package Vibration Guarded"
         unique_id: binary_sensor_gate_garage_package_vibration_guarded
         device_class: vibration
-        # True if raw sensor is on for > 5 seconds
         state: >-
-          {{ is_state('binary_sensor.vibration_gate_garage_vibration', 'on') }}
+          {{ is_state('binary_sensor.gate_vibration', 'on') }}
         delay_on: 5
-
+ 
+  # ---------------------------------------------------------------------------
+  # Vibration Smart
+  # The "is this real" verdict. It turns on when the guarded sensor confirms a
+  # sustained vibration, or when a fresh vibration started within the last 15
+  # seconds. It auto-clears after 15 seconds so it represents a recent event,
+  # not a stuck state. This is what you put on a dashboard or trigger security
+  # automations from.
+  # ---------------------------------------------------------------------------
   - trigger:
       - trigger: state
-        entity_id: binary_sensor.vibration_gate_garage_vibration
+        entity_id: binary_sensor.gate_vibration
         to: "on"
-      # Wake up the sensor on boot so it isn't 'unavailable'
       - trigger: homeassistant
         event: start
     binary_sensor:
@@ -115,19 +151,14 @@ template:
         unique_id: binary_sensor_gate_garage_package_vibration_smart
         device_class: vibration
         icon: mdi:vibrate
-        # Logic: If triggered by boot, set to False. Otherwise check duration or multipath.
         state: >-
           {% if trigger.platform == 'homeassistant' %}
             false
           {% else %}
             {% set duration_sensor = 'binary_sensor.gate_garage_package_vibration_guarded' %}
-            
-            {# 1. Check if the 'Guarded' (long duration) sensor is already ON #}
             {% if is_state(duration_sensor, 'on') %}
               true
-            {# 2. Check for rapid succession (multipath noise filter) #}
-            {# If the sensor was OFF for less than 15s before turning ON, it's a double-tap. #}
-            {% elif trigger.from_state is defined and 
+            {% elif trigger.from_state is defined and
                     (now() - trigger.from_state.last_changed).total_seconds() < 15 %}
               true
             {% else %}
@@ -135,8 +166,12 @@ template:
             {% endif %}
           {% endif %}
         auto_off: 15
-
-  # --- Gate History (Trigger Sensors) ---
+ 
+  # ---------------------------------------------------------------------------
+  # Last Vibration Time
+  # Timestamp of the last confirmed (filtered) vibration event. Useful on a
+  # dashboard so you can see at a glance when the gate was last disturbed.
+  # ---------------------------------------------------------------------------
   - trigger:
       - trigger: state
         entity_id: binary_sensor.gate_garage_package_vibration_smart
@@ -146,99 +181,106 @@ template:
         unique_id: sensor_gate_garage_package_last_vibration_time
         icon: mdi:clock-alert
         state: "{{ now().strftime('%d-%m %H:%M') }}"
-
+ 
+  # ---------------------------------------------------------------------------
+  # Last Opened Time
+  # Timestamp of the last time the gate contact sensor reported "open".
+  # ---------------------------------------------------------------------------
   - trigger:
       - trigger: state
-        entity_id: binary_sensor.door_gate_garage_contact
+        entity_id: binary_sensor.gate_contact
         to: "on"
     sensor:
       - name: "Gate Garage Package Last Opened Time"
         unique_id: sensor_gate_garage_package_last_opened_time
         icon: mdi:clock-outline
         state: "{{ now().strftime('%d-%m %H:%M') }}"
-
-  # --- THE GATE ENTITY (The General) ---
+ 
+  # ---------------------------------------------------------------------------
+  # The Cover Entity
+  # This is the only thing you interact with. It reads the gate's real position
+  # from the contact sensor and routes open/close commands through the manager
+  # script, which checks state before acting. Put this on your dashboard
+  # instead of the bare relay switch.
+  #
+  # Note: there is intentionally no stop_cover. A sliding/swing gate opener
+  # cannot reliably stop mid-travel from a single button pulse, so offering a
+  # stop button would be misleading.
+  # ---------------------------------------------------------------------------
   - cover:
       - name: "Gate Garage Package Guarded"
         unique_id: cover_gate_garage_package_guarded
         device_class: gate
-        
-        # State Logic: Check contact sensor
+ 
         state: >-
-          {% set contact = 'binary_sensor.door_gate_garage_contact' %}
-          {% if is_state(contact, 'on') %}
-            open
-          {% elif is_state(contact, 'off') %}
-            closed
-          {% else %}
-            none
-          {% endif %}
-        
-        # Availability: If Tasmota/Sensor is dead OR system is restarting, Gate is unavailable.
+          {{ 'open' if is_state('binary_sensor.gate_contact', 'on') else 'closed' }}
+ 
         availability: >-
-          {{ states('switch.stove_vent_relays_gate') not in ['unavailable', 'unknown'] and 
-             states('binary_sensor.door_gate_garage_contact') not in ['unavailable', 'unknown'] and
-             states('sensor.restarting_status') not in ['True', 'true', 'on'] }}
-
-        # Actions
+          {{ states('switch.gate_relay') not in ['unavailable', 'unknown'] }}
+ 
         open_cover:
           - action: script.gate_garage_package_manager
             data:
               command: 'open'
-        
+ 
         close_cover:
           - action: script.gate_garage_package_manager
             data:
               command: 'close'
-        
-        stop_cover:
-          - action: script.gate_garage_package_manager
-            data:
-              command: 'toggle'
-
-# ------------------------------------------------------------------------------
-# 3. SCRIPTS (The Logic Engine)
-# ------------------------------------------------------------------------------
+ 
+ 
+# =============================================================================
+# 3. SCRIPTS
+# The decision-making layer. The manager decides what to do; the actuation
+# script does it and verifies the result.
+# =============================================================================
 script:
+ 
+  # ---------------------------------------------------------------------------
+  # Manager
+  # The decision maker. Takes a command (open / close / toggle), checks the
+  # gate's current state, and only actuates if the gate is not already in the
+  # requested position. This is what prevents the classic "blind toggle" bug
+  # where you press open but the gate was already open, so it closes instead.
+  # ---------------------------------------------------------------------------
   gate_garage_package_manager:
     alias: "Gate Garage Package Manager Logic"
     icon: mdi:gate-arrow-right
-    description: "Handles open/close logic with retry verification."
+    description: "Checks gate state, then routes open/close/toggle to the actuation script."
     fields:
       command:
         description: "The desired action: open, close, or toggle"
         example: "close"
     sequence:
-      # 1. Safety Check: Restarting Status
-      - if: "{{ states('sensor.restarting_status') in ['True', 'true', 'on'] }}"
-        then:
-          - action: persistent_notification.create
-            data:
-              title: "Gate Ignored"
-              message: "Gate command ignored because system is restarting."
-          - stop: "System is restarting."
-
-      # 2. Clear previous error state on new command attempt
-      - action: input_text.set_value
+      - alias: Clear the previous error
+        action: input_text.set_value
+        continue_on_error: true
         target:
           entity_id: input_text.gate_garage_package_error_latch
         data:
-          value: "None"
-
-      - action: input_text.set_value
+          value: "Clear"
+ 
+      - alias: Set status to processing
+        action: input_text.set_value
+        continue_on_error: true
         target:
           entity_id: input_text.gate_garage_package_status_message
         data:
           value: "Processing {{ command }}..."
-
-      # 3. Logic Branching
-      - choose:
-          # --- CASE 1: CLOSE COMMAND ---
-          - conditions: "{{ command == 'close' }}"
+ 
+      - alias: Route the command
+        choose:
+          - alias: Close command
+            conditions:
+              - condition: template
+                value_template: "{{ command == 'close' }}"
             sequence:
-              - if: "{{ is_state('binary_sensor.door_gate_garage_contact', 'off') }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ is_state('cover.gate_garage_package_guarded', 'closed') }}"
                 then:
                   - action: input_text.set_value
+                    continue_on_error: true
                     target:
                       entity_id: input_text.gate_garage_package_status_message
                     data:
@@ -249,13 +291,18 @@ script:
                     data:
                       target_state: 'off'
                       direction: 'close'
-
-          # --- CASE 2: OPEN COMMAND ---
-          - conditions: "{{ command == 'open' }}"
+ 
+          - alias: Open command
+            conditions:
+              - condition: template
+                value_template: "{{ command == 'open' }}"
             sequence:
-              - if: "{{ is_state('binary_sensor.door_gate_garage_contact', 'on') }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ is_state('cover.gate_garage_package_guarded', 'open') }}"
                 then:
                   - action: input_text.set_value
+                    continue_on_error: true
                     target:
                       entity_id: input_text.gate_garage_package_status_message
                     data:
@@ -266,128 +313,139 @@ script:
                     data:
                       target_state: 'on'
                       direction: 'open'
-
-          # --- CASE 3: TOGGLE COMMAND ---
-          - conditions: "{{ command == 'toggle' }}"
+ 
+          - alias: Toggle command
+            conditions:
+              - condition: template
+                value_template: "{{ command == 'toggle' }}"
             sequence:
-              - if: "{{ is_state('binary_sensor.door_gate_garage_contact', 'off') }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ is_state('cover.gate_garage_package_guarded', 'closed') }}"
                 then:
-                  # It is closed, so we Open
                   - action: script.gate_garage_package_actuate_and_verify
                     data:
                       target_state: 'on'
                       direction: 'open'
                 else:
-                  # It is open (or unknown), so we Close
                   - action: script.gate_garage_package_actuate_and_verify
                     data:
                       target_state: 'off'
                       direction: 'close'
-
+ 
+  # ---------------------------------------------------------------------------
+  # Actuate and Verify
+  # Fires the relay, waits for the gate to finish traveling, then checks the
+  # contact sensor. If the sensor reached the requested state, it reports
+  # success. If not, it latches an error and the dashboard shows it.
+  #
+  # The 15-second delay is the one value you may need to tune. The author's
+  # gate takes ~12 seconds end to end; 15 gives a small margin.
+  # ---------------------------------------------------------------------------
   gate_garage_package_actuate_and_verify:
-    alias: "Gate Garage Package Actuation Loop"
-    description: "Internal script to trigger relay and verify result with retry."
+    alias: "Gate Garage Package Actuation"
+    description: "Fires the relay, waits for travel, and verifies the contact sensor reached the target state."
     fields:
       target_state:
-        description: "The binary sensor state we are looking for (on=open, off=closed)"
+        description: "Contact sensor state to wait for: on = open, off = closed"
       direction:
-        description: "Text description for logs (open/close)"
+        description: "Human-readable direction for logs and messages: open / close"
     sequence:
-      # --- ATTEMPT 1 ---
-      - action: input_text.set_value
+      - alias: Announce actuation
+        action: input_text.set_value
+        continue_on_error: true
         target:
           entity_id: input_text.gate_garage_package_status_message
         data:
-          value: "Attempt 1: {{ direction }}ing..."
-      
-      - action: switch.turn_on
+          value: "Actuating: {{ direction | title }}ing..."
+ 
+      - alias: Fire the relay
+        action: switch.turn_on
+        continue_on_error: true
         target:
-          entity_id: switch.stove_vent_relays_gate
-      
-      - wait_for_trigger:
-          - trigger: state
-            entity_id: binary_sensor.door_gate_garage_contact
-            to: "{{ target_state }}"
-        timeout: "00:00:15"
-        continue_on_timeout: true
-      
-      # Check Success 1
-      - if: "{{ is_state('binary_sensor.door_gate_garage_contact', target_state) }}"
-        then:
-          - action: input_text.set_value
+          entity_id: switch.gate_relay
+ 
+      - alias: Wait for the gate to finish traveling
+        delay: "00:00:15"
+ 
+      - alias: Verify the result
+        choose:
+          - alias: Sensor reached the target state
+            conditions:
+              - condition: template
+                value_template: "{{ states('binary_sensor.gate_contact') == target_state }}"
+            sequence:
+              - action: input_text.set_value
+                continue_on_error: true
+                target:
+                  entity_id: input_text.gate_garage_package_status_message
+                data:
+                  value: "Success: Gate {{ direction | title }}ed"
+        default:
+          - alias: Sensor did not reach the target state
+            action: input_text.set_value
+            continue_on_error: true
             target:
               entity_id: input_text.gate_garage_package_status_message
             data:
-              value: "Success: Gate {{ direction }}ed"
-          - stop: "Success"
-
-      # --- ATTEMPT 2 (Retry) ---
-      - action: input_text.set_value
-        target:
-          entity_id: input_text.gate_garage_package_status_message
-        data:
-          value: "Retry: {{ direction }}ing..."
-      
-      - action: switch.turn_on
-        target:
-          entity_id: switch.stove_vent_relays_gate
-      
-      - wait_for_trigger:
-          - trigger: state
-            entity_id: binary_sensor.door_gate_garage_contact
-            to: "{{ target_state }}"
-        timeout: "00:00:15"
-        continue_on_timeout: true
-
-      # Check Success 2
-      - if: "{{ is_state('binary_sensor.door_gate_garage_contact', target_state) }}"
-        then:
+              value: "Failed: Gate did not {{ direction }}"
           - action: input_text.set_value
-            target:
-              entity_id: input_text.gate_garage_package_status_message
-            data:
-              value: "Success: Gate {{ direction }}ed (Retry)"
-        else:
-          # --- FAILURE CONDITION ---
-          - action: input_text.set_value
-            target:
-              entity_id: input_text.gate_garage_package_status_message
-            data:
-              value: "Failed"
-          # Set the Error Latch for the Dashboard
-          - action: input_text.set_value
+            continue_on_error: true
             target:
               entity_id: input_text.gate_garage_package_error_latch
             data:
-              value: "Error: {{ direction | title }} Failed"
-          - action: persistent_notification.create
+              value: "Error: {{ direction | title }} Failed - sensor did not confirm"
+          - action: system_log.write
+            continue_on_error: true
             data:
-              title: "Gate Guard Error"
-              message: "The gate failed to {{ direction }} after two attempts."
-
-# ------------------------------------------------------------------------------
-# 5. AUTOMATIONS (Maintenance)
-# ------------------------------------------------------------------------------
-automation:
-  - alias: "Gate Garage Package Sensor Wake-up Monitor"
-    description: "Sets error flag if sensors are stale (>24h)."
-    mode: single
-    triggers:
-      - trigger: time_pattern
-        hours: "12"
-        minutes: "0"
-    conditions:
-      - condition: template
-        value_template: >-
-          {% set sensor_time = states.sensor.door_gate_garage_last_seen.state | as_timestamp(0) %}
-          {{ (as_timestamp(now()) - sensor_time) > 86400 }}
-    actions:
-      - action: input_text.set_value
+              level: warning
+              message: >-
+                [Gate Garage Guard] Commanded gate to {{ direction }}, but
+                binary_sensor.gate_contact did not reach '{{ target_state }}'
+                after the travel delay.
+ 
+  # ---------------------------------------------------------------------------
+  # Resync (Blind Click)
+  # The deliberate escape hatch for a failed contact sensor.
+  #
+  # Everything else in this package routes through the manager script, and the
+  # manager only trusts itself as far as it can trust binary_sensor.gate_contact.
+  # When that sensor fails or freezes, the verified open/close path becomes
+  # unreliable: the cover entity reports a stale state and the manager's "is it
+  # already open/closed?" check can refuse a valid command or run a backwards
+  # one. (See "THE ONE WEAK POINT" in the file header.)
+  #
+  # This script exists for exactly that case. It bypasses every check and every
+  # bit of state logic and simply pulses the relay once. It is the manual blind
+  # toggle - the same thing the original 433MHz remote does - that still works
+  # when the smart layer cannot be trusted. Use it to operate the gate while a
+  # failed sensor is waiting to be repaired or replaced. It is not part of
+  # normal operation; it is the thing you reach for when the sensor has let you
+  # down and you still need to get through the gate.
+  # ---------------------------------------------------------------------------
+  gate_garage_package_resync_click:
+    alias: "Gate Garage Package Resync (Blind Click)"
+    icon: mdi:sync-alert
+    description: >-
+      Emergency manual pulse. Bypasses all checks and fires the relay once. Use
+      this when the contact sensor has failed and the verified open/close path
+      can no longer be trusted.
+    sequence:
+      - alias: Announce the resync
+        action: input_text.set_value
+        continue_on_error: true
         target:
-          entity_id: input_text.gate_garage_package_error_latch
+          entity_id: input_text.gate_garage_package_status_message
         data:
-          value: "Error: Sensors Stale"
-      - action: persistent_notification.create
+          value: "Manual Resync Executed"
+      - alias: Pulse the relay
+        action: switch.turn_on
+        continue_on_error: true
+        target:
+          entity_id: switch.gate_relay
+      - alias: Log it
+        action: system_log.write
+        continue_on_error: true
         data:
-          title: "Gate Sensor Warning"
-          message: "Gate sensors have not checked in for over 24 hours."
+          level: warning
+          message: "[Gate Garage Guard] Manual Resync (Blind Click) executed by user."

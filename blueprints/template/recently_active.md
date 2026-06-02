@@ -4,8 +4,8 @@ A Home Assistant template blueprint that turns a fired-and-forgotten event into 
 
 Home Assistant triggers fire once, at the instant a state crosses a line. The door opens, the event fires, and it is gone. Ask a moment later whether the door was just opened and there is nothing left to read, because Home Assistant evaluated that crossing once and moved on. Recently Active closes the gap. It builds a binary sensor that reads `on` while your source is on, and keeps reading `on` for a chosen number of seconds after the source turns off. So "the door is open" quietly becomes "the door was open within the last N seconds," which is the question your other automations actually want to ask.
 
-Full write-up and a worked example: https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/
-Questions and discussion: https://xeazy.com/logbook
+Full write-up and a worked example: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
+Questions and discussion: https://xeazy.com/logbook/d/36-recently-active-blueprint
 
 ## What you get
 

@@ -27,7 +27,7 @@ blueprint:
   domain: template
   homeassistant:
     min_version: 2026.5.4
-  # source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/recently_active.yaml
+    source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/recently_active.yaml
   input:
     source_entity:
       name: Source entity

@@ -1,3 +1,6 @@
+# Recently Active - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+# Full write-up, worked examples, and directions:
+# https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 blueprint:
   name: Recently Active
   author: James Lander (xeazy.com)
@@ -20,7 +23,7 @@ blueprint:
     id so the sensor can be renamed and managed in the interface, and a device
     class for how it reads in the frontend.
 
-    Full write-up and worked examples: https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/
+    Full write-up and worked examples: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 
     Changelog:
       2.0.0 - Rebuilt on delay_off instead of a now() based template, so the

@@ -2,41 +2,24 @@ blueprint:
   name: Recently Active
   author: James Lander (xeazy.com)
   description: >
-    Bridges the gap between an event and a state in Home Assistant.
+    Recently Active (now() version). Holds an on/off source as a state for a
+    chosen number of seconds after it turns off.
 
-    A trigger fires once, the instant a state crosses a threshold. The door
-    opens, the event fires, and it is gone. A moment later, when some other
-    automation asks "was the door just opened," there is nothing left to read.
-    The event already happened, and HA evaluated it once. This blueprint takes
-    that fired-once moment and holds it as a state you can ask about: the source
-    was active within the last N seconds.
+    It creates a binary sensor that reads "on" while the source entity is on,
+    and keeps reading "on" for the linger window after the source turns off,
+    worked out from the source's last-changed time. If the source goes
+    unavailable or unknown, the sensor reads off.
 
-    It creates a binary sensor that reports "on" while the source entity is on,
-    and keeps reporting "on" for a chosen number of seconds after the source
-    turns off. Once that linger window passes, it returns "off." Point it at any
-    on/off source: binary_sensor, switch, input_boolean, and so on.
-
-    If the source goes unavailable or unknown, the sensor returns off. A dead
-    sensor never sticks on, and never permanently suppresses whatever logic
-    depends on it downstream.
-
-    One honest limit. The window closing is time passing, not a state change, so
-    the only thing that rechecks it is the once-a-minute clock tick HA gives to
-    any template that calls now(). The source turning off is caught instantly,
-    but the window expiring can lag up to about a minute past the number you set.
-    That is the trade for staying idle and cheap until something actually
-    changes. If you need second-precise timing or a long window, a timer helper
-    is the right tool. This one is built for light, short linger.
-
-    Full write-up and worked example: https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/
+    Changelog:
+      1.0.0 - now() based linger. Three inputs: source, linger, name.
   domain: template
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/recently_active.yaml
   homeassistant:
     min_version: 2026.5.4
-    source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/recently_active.yaml
   input:
     source_entity:
       name: Source entity
-      description: The on/off entity to track (binary_sensor, switch, input_boolean...).
+      description: The on/off entity to track (binary_sensor, switch, input_boolean, and so on).
       selector:
         entity: {}
     linger_seconds:
@@ -56,15 +39,13 @@ blueprint:
       default: Recently Active
       selector:
         text: {}
-
 variables:
   source_entity: !input source_entity
   linger_seconds: !input linger_seconds
-
 binary_sensor:
-  - name: !input sensor_name
-    state: >-
-      {{ states(source_entity) not in ['unavailable', 'unknown']
-         and (states(source_entity) == 'on'
-              or (states(source_entity) == 'off'
-                  and (as_timestamp(now()) - as_timestamp(states[source_entity].last_changed, default=0)) <= linger_seconds)) }}
+  name: !input sensor_name
+  state: >-
+    {{ states(source_entity) not in ['unavailable', 'unknown']
+       and (states(source_entity) == 'on'
+            or (states(source_entity) == 'off'
+                and (as_timestamp(now()) - as_timestamp(states[source_entity].last_changed, default=0)) <= linger_seconds)) }}

@@ -13,7 +13,7 @@ Questions and discussion: https://xeazy.com/logbook/d/36-recently-active-bluepri
 - Works with any on/off source: a `binary_sensor`, a `switch`, an `input_boolean`, anything that reads on or off.
 - If the source goes unavailable or unknown, the sensor returns `off`, so a dead source never sticks the sensor on and never silently suppresses whatever depends on it.
 
-One honest limit, stated up front so it does not surprise you: the off transition is rechecked on Home Assistant's once-a-minute clock tick, so the sensor can stay on up to about a minute past the window you set. The source turning off is caught instantly; only the window closing rides that minute tick. For second-precise timing or long windows, a timer helper is the better tool. This one is for light, short linger.
+How the timing works, up front: the linger runs on the binary sensor's own `delay_off`, so the off transition lands exactly when your window closes, to the second, and the source turning off is caught instantly. What it does not give you is a timer you can pause, cancel, or watch count down. If you need any of that, a timer helper or History Stats is the better tool. This one is for clean, short linger in a single line.
 
 ## Requirements
 
@@ -46,11 +46,12 @@ use_blueprint:
   path: TheThinkingHome/recently_active.yaml
   input:
     source_entity: binary_sensor.front_door
+    unique_id: front_door_recently_open
     linger_seconds: 60
     sensor_name: Front Door Recently Open
 ```
 
-`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. The three inputs are explained near the end.
+`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. `source_entity` and `unique_id` are the two required settings; the rest have sensible defaults. All of them are explained near the end.
 
 That block has to sit under Home Assistant's `template:` configuration. The tidy way to do that, and the way that scales once you make more of these, is a package.
 
@@ -75,11 +76,12 @@ template:
       path: TheThinkingHome/recently_active.yaml
       input:
         source_entity: binary_sensor.front_door
+        unique_id: front_door_recently_open
         linger_seconds: 60
         sensor_name: Front Door Recently Open
 ```
 
-Each entity you build from the blueprint is one more list item in the same file. They can watch different sources with different windows, all in one place:
+Each entity you build from the blueprint is one more list item in the same file. They can watch different sources with different windows, all in one place. Give each one its own `unique_id`, since reusing one collides the two sensors:
 
 ```yaml
 template:
@@ -87,6 +89,7 @@ template:
       path: TheThinkingHome/recently_active.yaml
       input:
         source_entity: binary_sensor.front_door
+        unique_id: front_door_recently_open
         linger_seconds: 60
         sensor_name: Front Door Recently Open
 
@@ -94,6 +97,7 @@ template:
       path: TheThinkingHome/recently_active.yaml
       input:
         source_entity: binary_sensor.hallway_motion
+        unique_id: hallway_recently_active
         linger_seconds: 30
         sensor_name: Hallway Recently Active
 ```
@@ -108,13 +112,15 @@ When it comes up you will have a `binary_sensor` named after your `sensor_name`.
 
 ## The inputs
 
-- **Source entity** (`source_entity`): the on/off entity to track. A `binary_sensor`, `switch`, `input_boolean`, or anything that reads on or off.
+- **Source entity** (`source_entity`), required: the on/off entity to track. A `binary_sensor`, `switch`, `input_boolean`, or anything that reads on or off.
+- **Unique ID** (`unique_id`), required: a short id string, distinct for every sensor you build, such as `front_door_recently_open`. It registers the entity so you can rename it, place it in an area, or change its device class from the interface. Reusing one across two sensors collides them, so keep each unique.
 - **Linger window** (`linger_seconds`): how many seconds the sensor stays on after the source turns off. Default 60.
-- **Sensor name** (`sensor_name`): the name for the binary sensor this creates, and what its entity id is built from.
+- **Sensor name** (`sensor_name`): the name for the binary sensor this creates, and what its entity id is built from. Default "Recently Active".
+- **Device class** (`device_class`): how the sensor reads in the frontend. Default `occupancy`, which shows Detected and Clear. Set another to match your source, such as `door` or `motion`, or clear it for plain On and Off.
 
 ## A small note on display
 
-The sensor is created without a device class, so it shows plain On and Off rather than themed labels such as Open and Closed. The underlying state value is on or off either way, so it reads correctly in templates and conditions regardless.
+By default the sensor uses the `occupancy` device class, so the frontend shows Detected and Clear rather than plain On and Off. Change the device class input to relabel it, for example `door` for Open and Closed, or clear the field for a plain On and Off. The underlying state value is `on` or `off` whichever you pick, so it reads correctly in templates and conditions regardless.
 
 ## Example use
 

@@ -48,7 +48,7 @@ Template entities allow for the creation of custom sensors and other entities ba
 Blueprints are reusable templates you import once and use with different inputs, so the same tested logic can run in many places without copy-paste.
 
 * [Recently Active](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/recently_active.md)
-   * Turns a fired-once event into a state you can ask about later. It builds a binary sensor that stays on while a source is on, and for a set number of seconds after it turns off. Point it at any on/off entity: a contact sensor, a switch, an input_boolean. [Instructions](https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/)
+   * Turns a fired-once event into a state you can ask about later. It builds a binary sensor that stays on while a source is on, and for a set number of seconds after it turns off. Point it at any on/off entity: a contact sensor, a switch, an input_boolean. [Instructions](https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/)
 
 Thank you for visiting. I hope you find these configurations helpful in your own smart home journey.
 

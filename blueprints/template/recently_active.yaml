@@ -32,9 +32,9 @@ blueprint:
         device_class input for how it reads in the frontend.
       1.0.0 - Initial release. now() based linger, no unique_id or device_class.
   domain: template
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/recently_active.yaml
   homeassistant:
     min_version: 2026.5.4
-    source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/recently_active.yaml
   input:
     source_entity:
       name: Source entity

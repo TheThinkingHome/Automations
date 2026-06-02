@@ -1,58 +1,85 @@
-# The Thinking Home - Home Assistant Configuration
+# The Thinking Home Blueprints
 
-Welcome to my Home Assistant configuration repository. This collection contains the foundational automations, scripts, and templates that make my smart home a "Thinking Home"—one that is robust, predictable, and requires minimal manual intervention.
+A collection of Home Assistant blueprints from [xeazy.com](https://xeazy.com). Each one is useful, kept deliberately simple, and tested on a real instance before it ships. Questions and discussion live on the forum: https://xeazy.com/logbook
 
-My philosophy is one of good stewardship over the technology we invite into our homes. Each configuration here is designed to be a reliable, set-and-forget solution that solves a practical problem with elegance and simplicity. Feel free to explore, adapt, and use these configurations in your own Home Assistant setup.
+## Blueprints
 
-## Foundational Configurations
+### Recently Active
 
-### 🏡 Automations
+Home Assistant triggers fire once, at the instant a state crosses a line, and then the moment is gone. Recently Active holds onto it. It builds a binary sensor that stays `on` while your source is on, and for a chosen number of seconds after it turns off, so a fired-and-gone event becomes a state your other automations can still ask about. Point it at a door contact, a motion sensor, a switch, anything that reads on or off. The usual job is suppressing a notification or an analysis for a short window right after something happens, such as skipping a camera's "a person walked in" alert for a minute after the door opens.
 
-Automations are the workhorses of Home Assistant, performing tasks in the background to make life easier and the home more responsive.
+**[Full directions and one-click import ->](template/recently_active.md)**
 
-* [Network Reboot Handler](https://github.com/TheThinkingHome/Automations/blob/main/network_reboot_handler.yaml)
-   * A fault-tolerant automation that gracefully manages network-dependent integrations during a scheduled router reboot, preventing a cascade of errors and ensuring a stable recovery. [Instructions](https://xeazy.com/taming-the-reboot/)
-* [Two-Way Switch Sync](https://github.com/TheThinkingHome/Automations/blob/main/two-way_switch_sync.yaml)
-   * A simple and robust automation to synchronize the state of two switches. It intelligently avoids infinite loops by ignoring changes made by other automations. [Instructions](https://xeazy.com/there-can-be-only-one/)
-* [Window_Cover_Safety](https://github.com/TheThinkingHome/Automations/tree/main)
-   * Prevents motorized blinds from closing on open windows to avoid damage from wind or obstruction. Instructions
-* [Random_Voice_Notifications](https://github.com/TheThinkingHome/Automations/blob/main/random_notifications.yaml)
-   * Monitors a door sensor and uses a persistent loop to send randomized voice alerts if an obstruction is detected, stopping automatically when the condition is resolved. [Instructions](https://xeazy.com/taming-the-reboot/)
-* [Do Not Cook the Fish](https://github.com/TheThinkingHome/Automations/blob/main/do-not-cook-the-fish.yaml)
-   * A worked example of the gated trigger problem and its fix. It positions dining and living room shades from outdoor lux, TV state, and open windows, re-checking the whole picture on every trigger so the shades never get stuck in the wrong place. Built to keep the afternoon sun off a west-facing fishbowl. [Instructions](https://xeazy.com/why-your-home-assistant-automation-triggers-but-does-not-run/)
-* [Light Control - Office Occupancy](https://github.com/TheThinkingHome/Automations/blob/main/light_control_office_occupancy.yaml)
-   * The clean teaching version of the wasp-in-a-box occupancy pattern. A door closing while motion is active captures the occupant and holds the light on, and a physical switch press sets a manual override that motion will not fight. Uses the three-condition context filter to tell a human press from an automation. [Instructions](https://xeazy.com/REPLACE-WITH-WASP-IN-A-BOX-SLUG/)
-* [Light Control - Master Shower Occupancy](https://github.com/TheThinkingHome/Automations/blob/main/light_control_master-shower_occupancy.yaml)
-   * The same wasp-in-a-box occupancy logic applied to a wet room, with an optional exhaust fan tied to the door. Motion, door state, and a lux reading drive the light, and a closed door keeps it on while someone is inside even after motion stops. [Instructions](https://xeazy.com/REPLACE-WITH-WASP-IN-A-BOX-SLUG/)
-* [Litter Box Obstruction](https://github.com/TheThinkingHome/Automations/blob/main/main_bath_litter_box_obstruction.yaml)
-   * Watches a bathroom door that blocks the cats from their litter box when it stays shut. After 30 minutes closed it flags an obstruction, sends a notification, and plays a randomized voice nag every few minutes until someone opens the door. [Instructions](https://xeazy.com/REPLACE-WITH-LITTER-BOX-SLUG/)
+---
 
-### 📜 Scripts
+Everything below is the general guide for importing and using any template blueprint here: how one is imported, where it lives, and how you turn it into a working entity. Each blueprint's own page, linked above, adds the specifics unique to it.
 
-Scripts are reusable sequences of actions that can be called from anywhere in Home Assistant, helping to keep automations clean and centralize complex logic.
+## How the blueprints are organized
 
-* [Notify All](https://github.com/TheThinkingHome/Automations/blob/main/notify_all.yaml)
-   * A centralized notification script that simplifies sending rich notifications. It handles multiple users and devices (Android & iOS) and intelligently manages photo attachments from both local paths and external URLs. [Instructions](https://xeazy.com/one-script-to-notify-them-all/)
+They live under `blueprints/`, sorted by the kind of entity they build: `template/` for template entities such as sensors and binary sensors, with `automation/` and `script/` to follow as the collection grows. Home Assistant works out which kind a blueprint is from inside the file, so the folder is only for tidiness.
 
-### 🧩 Template Sensors & Entities
+## Importing a blueprint
 
-Template entities allow for the creation of custom sensors and other entities based on the state of existing ones. They are perfect for combining multiple data points into a single, meaningful state.
+Every blueprint page has a one-click import button. To do it by hand instead:
 
-* [Guarded Cover Template](https://github.com/TheThinkingHome/Automations/blob/main/covers.yaml)
-   * A template for creating a "Guarded Cover" proxy entity. This pattern centralizes complex conditions (like checking for an open window) into a single "guard" sensor, simplifying your automations by separating the action from the condition. [Instructions](https://xeazy.com/the-gatekeeper/)
-* [Bedtime Detected Sensor](https://github.com/TheThinkingHome/Automations/blob/main/templat_sensors.yaml)
-   * A sophisticated template sensor that uses a weighted confidence score to reliably infer a complex state like "Bedtime." It evaluates multiple conditions, each with a configurable weight, making it resilient to minor deviations in routine. [Instructions](https://xeazy.com/weighted-confidence-for-complex-states/)
+1. In Home Assistant, open Settings, then Automations & Scenes, then the Blueprints tab.
+2. Click Import Blueprint at the bottom right.
+3. Paste the blueprint's raw URL, listed on its page, and click Preview.
+4. Confirm and import.
 
-### 📐 Blueprints
+Importing only registers the blueprint. It does not create anything yet. A template blueprint lands at `config/blueprints/template/<author>/<name>.yaml`. Open that folder and note the exact `<author>` subfolder Home Assistant assigned, because you point at it when you build an entity.
 
-Blueprints are reusable templates you import once and use with different inputs, so the same tested logic can run in many places without copy-paste.
+## Turning a template blueprint into an entity
 
-* [Recently Active](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/recently_active.md)
-   * Turns a fired-once event into a state you can ask about later. It builds a binary sensor that stays on while a source is on, and for a set number of seconds after it turns off. Point it at any on/off entity: a contact sensor, a switch, an input_boolean. [Instructions](https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/)
+This is the step that catches people. Automation blueprints get a Create automation button on the Blueprints page. Template blueprints do not, and they never show up in the Create Helper list. That is expected, not a fault. You build a template entity from a blueprint with a short piece of YAML called `use_blueprint`:
 
-Thank you for visiting. I hope you find these configurations helpful in your own smart home journey.
+```yaml
+use_blueprint:
+  path: <author>/<name>.yaml
+  input:
+    # the settings this blueprint asks for, listed on its page
+```
 
-## Resources
+`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder plus the filename. The `input:` keys change from one blueprint to the next, and each blueprint's page spells out its own.
 
-* The Book: Learn more about the methodologies and philosophies behind these automations in "The Thinking Home: A Practical Guide to Planning and Building a Reliable and Private Smart Home".
-* The Website: Join our vibrant community, find additional insights, and explore more resources at [XeazY.com](https://xeazy.com/). You can also read and sign The Thinking Home Manifesto.
+That `use_blueprint` block has to sit under Home Assistant's `template:` configuration. The tidy way to do that, and the way that holds up once you have several, is a package.
+
+## What a package is, and how to use one
+
+A package is a single YAML file that holds a bundle of related configuration. Rather than scattering entities across your main files, you keep everything for one purpose in one file, and Home Assistant folds it into your overall configuration at startup. Packages are optional, but they keep related things together and easy to find.
+
+If you have never used packages, switch them on once. In `configuration.yaml`, add the two lines below. If a `homeassistant:` section already exists, just add the `packages:` line under it:
+
+```yaml
+homeassistant:
+  packages: !include_dir_named packages
+```
+
+Then make a folder named `packages` next to your `configuration.yaml`. Every file you drop in there is a package.
+
+Now create a file such as `packages/blueprints.yaml` and gather your `use_blueprint` blocks under one `template:` list:
+
+```yaml
+template:
+  - use_blueprint:
+      path: <author>/<name>.yaml
+      input:
+        # this entity's settings
+
+  - use_blueprint:
+      path: <author>/<another>.yaml
+      input:
+        # another entity's settings
+```
+
+Any mix of blueprints can share that list. One that builds a binary sensor and one that builds a sensor sit side by side, because each blueprint decides what kind of entity it makes.
+
+If you already keep template entities in `configuration.yaml` under a `template:` key, you can drop a `use_blueprint` block into that list instead. The package is simply the cleaner home once you have a few.
+
+## Loading your changes
+
+A brand-new package file needs a full Home Assistant restart to register the first time. After that, adding more `use_blueprint` blocks to the same file only needs Developer Tools, YAML, Reload Template Entities.
+
+## License and credit
+
+Use them, adapt them, share them. A link back to [xeazy.com](https://xeazy.com) is appreciated, never required.

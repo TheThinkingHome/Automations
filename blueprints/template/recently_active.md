@@ -49,6 +49,7 @@ use_blueprint:
     unique_id: front_door_recently_open
     linger_seconds: 60
     sensor_name: Front Door Recently Open
+    device_class: occupancy
 ```
 
 `path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. `source_entity` and `unique_id` are the two required settings; the rest have sensible defaults. All of them are explained near the end.
@@ -79,6 +80,7 @@ template:
         unique_id: front_door_recently_open
         linger_seconds: 60
         sensor_name: Front Door Recently Open
+        device_class: occupancy
 ```
 
 Each entity you build from the blueprint is one more list item in the same file. They can watch different sources with different windows, all in one place. Give each one its own `unique_id`, since reusing one collides the two sensors:
@@ -92,6 +94,7 @@ template:
         unique_id: front_door_recently_open
         linger_seconds: 60
         sensor_name: Front Door Recently Open
+        device_class: occupancy
 
   - use_blueprint:
       path: TheThinkingHome/recently_active.yaml
@@ -100,6 +103,7 @@ template:
         unique_id: hallway_recently_active
         linger_seconds: 30
         sensor_name: Hallway Recently Active
+        device_class: motion
 ```
 
 If you already keep template entities in your `configuration.yaml` under a `template:` key, you can drop the `use_blueprint` block into that list instead. The package is simply the cleaner home once you have a few.
@@ -116,11 +120,11 @@ When it comes up you will have a `binary_sensor` named after your `sensor_name`.
 - **Unique ID** (`unique_id`), required: a short id string, distinct for every sensor you build, such as `front_door_recently_open`. It registers the entity so you can rename it, place it in an area, or change its device class from the interface. Reusing one across two sensors collides them, so keep each unique.
 - **Linger window** (`linger_seconds`): how many seconds the sensor stays on after the source turns off. Default 60.
 - **Sensor name** (`sensor_name`): the name for the binary sensor this creates, and what its entity id is built from. Default "Recently Active".
-- **Device class** (`device_class`): how the sensor reads in the frontend. Default `occupancy`, which shows Detected and Clear. Set another to match your source, such as `door` or `motion`, or clear it for plain On and Off.
+- **Device class** (`device_class`): how the sensor reads in the frontend. Default `occupancy`, which shows Detected and Clear. Match it to what the sensor means rather than to its source, such as `running` for an appliance or `motion` for an activity group, or clear it for plain On and Off.
 
 ## A small note on display
 
-By default the sensor uses the `occupancy` device class, so the frontend shows Detected and Clear rather than plain On and Off. Change the device class input to relabel it, for example `door` for Open and Closed, or clear the field for a plain On and Off. The underlying state value is `on` or `off` whichever you pick, so it reads correctly in templates and conditions regardless.
+By default the sensor uses the `occupancy` device class, so the frontend shows Detected and Clear rather than plain On and Off. Change the device class input to relabel it, for example `running` for Running and Not running, or clear the field for a plain On and Off. Pick the class for what the new sensor means, not for what its source is: a "recently used" door is really a presence signal, so `occupancy` reads truer than `door`, which would show Open while the door has actually been shut for the whole window. The underlying state value is `on` or `off` whichever you pick, so it reads correctly in templates and conditions regardless.
 
 ## Example use
 

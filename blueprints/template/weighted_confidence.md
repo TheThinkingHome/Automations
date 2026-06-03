@@ -14,7 +14,7 @@ Questions and discussion: https://xeazy.com/logbook
 - A `binary_sensor` that turns on when the weighted share of agreeing signals reaches your threshold.
 - Each signal carries its own weight and its own idea of what counts as agreement, by text match or by number.
 - A per-signal say in what an unavailable reading means: ignore it, treat it as agreeing, or treat it as disagreeing.
-- A `required` flag for any signal that should act as a hard gate.
+- A `required` flag for any signal that should act as a hard gate, and which can veto even while it is unavailable.
 - Attributes that show the running score and name exactly which signals are helping and which are holding it back.
 
 ## How the scoring works
@@ -23,7 +23,7 @@ Each signal carries a weight and a rule for what counts as agreement. The sensor
 
 The word available is doing real work there. By default, if a signal goes unavailable or unknown it drops out of both the top and the bottom of the sum, so a dead sensor lowers the bar to clear rather than counting as a vote against. You can override that per signal, telling one to count as agreeing or as disagreeing while it is out. More on that below.
 
-One signal can be promoted to a hard gate with the `required` flag. If a required signal is available and does not agree, the sensor is off, whatever weight the rest pile up in favour. Mark a settled door required and an open door keeps the answer off no matter what the bedroom says.
+One signal can be promoted to a hard gate with the `required` flag. If a required signal is available and does not agree, the sensor is off, whatever weight the rest pile up in favour. Mark a settled door required and an open door keeps the answer off no matter what the bedroom says. By default a required signal that goes unavailable simply drops out, but set its unavailable policy to `disagree` and it vetoes while it is out too, so a gate whose state you cannot confirm fails closed instead of being waved through.
 
 ## Requirements
 
@@ -157,8 +157,8 @@ Each item in the `signals` list takes these. A signal needs only an `entity` and
 | `value` | Used by `above` and `below` | none | a number | The number the entity's value is compared against. |
 | `low` | Used by `between` | none | a number | The inclusive lower bound. |
 | `high` | Used by `between` | none | a number | The inclusive upper bound. |
-| `unavailable` | No | `drop` | `drop`, `agree`, `disagree` | What to do when the entity is unavailable or unknown. `drop` leaves it out, `agree` counts its weight as agreeing, `disagree` counts its weight against. |
-| `required` | No | `false` | `true`, `false` | Makes the signal a hard gate. An available required signal that does not agree forces the sensor off, whatever the score. |
+| `unavailable` | No | `drop` | `drop`, `agree`, `disagree` | What to do when the entity is unavailable or unknown. `drop` leaves it out, `agree` counts its weight as agreeing, `disagree` counts its weight against. On a `required` signal, `disagree` also vetoes while the entity is unavailable. |
+| `required` | No | `false` | `true`, `false` | Makes the signal a hard gate. Available and not agreeing forces the sensor off, whatever the score. Pair it with `unavailable: disagree` to force off while the signal is unavailable too; on the default `drop`, an unavailable required signal simply drops out. |
 | `name` | No | the entity id | any text | The label shown in the `contributing` and `not_met` attributes, so they read in plain language. |
 
 ### Text and numbers
@@ -168,6 +168,21 @@ Each item in the `signals` list takes these. A signal needs only an `entity` and
 ### When a signal is unavailable
 
 A signal that drops out costs you nothing: it leaves both sides of the sum, so the rest decide it between themselves. That is the right default for most signals. Reach for `agree` when no reading should be read as the quiet answer, the classic case being a TV that has fallen off the network, where "not reachable" really does mean "off." Reach for `disagree` for a signal whose silence should hold the result back rather than be waved through.
+
+There is one more combination worth knowing, and it is why `disagree` and `required` were built to work together. On an ordinary signal, `disagree` only drags the score down by the signal's weight. On a `required` signal, dragging down misses the point, because a required signal that is not satisfied forces the result off. So a `required` signal set to `disagree` vetoes outright the moment it goes unavailable. Use it for a gate you refuse to guess about. A door contact that has dropped off the mesh tells you nothing about whether the door is open, and `required` with `disagree` makes the sensor fail closed rather than assume the best and engage on a blind spot. Leave a `required` signal on the default `drop` and it does the gentler thing, stepping aside while it is out.
+
+In practice that gate is usually its own signal, weight zero so it never pads the score, sitting beside whatever weighted signal carries the real measurement:
+
+```yaml
+  - entity: binary_sensor.front_door_contact
+    state: "off"
+    weight: 0
+    required: true
+    unavailable: disagree
+    name: Front door not open
+```
+
+An open door fails the `state: "off"` check and vetoes. An unreadable door trips the same veto through `disagree`. Either way the sensor refuses to call the house settled until it can actually see the door is shut.
 
 ## Reading the attributes
 
@@ -180,7 +195,7 @@ The sensor carries six attributes, and they turn tuning from guesswork into read
 - **not_met**: the names of available signals that are not agreeing.
 - **unavailable**: the entities that are unavailable or unknown right now.
 
-When the sensor stubbornly stays off, `not_met` tells you why in one glance, and `confidence` tells you how close you were. When it turns on too easily, `contributing` shows you which light signals are carrying it and want more weight on the firmer ones.
+When the sensor stubbornly stays off, `not_met` tells you why in one glance, and `confidence` tells you how close you were. When it turns on too easily, `contributing` shows you which light signals are carrying it and want more weight on the firmer ones. A required gate that is vetoing while unavailable shows up in the `unavailable` list rather than `not_met`, so if the sensor is off but `confidence` reads high, check there.
 
 ## Example use
 
@@ -210,10 +225,15 @@ Then the weighted sensor that reads it:
         sensor_name: House At Bedtime
         threshold_percent: 80
         signals:
+          - entity: binary_sensor.front_door_contact
+            state: "off"
+            weight: 0
+            required: true
+            unavailable: disagree
+            name: Front door not open
           - entity: binary_sensor.front_door_recently_used
             state: "off"
             weight: 4
-            required: true
             name: Front door settled
           - entity: input_select.house_mode
             state: ["Night", "Sleep"]
@@ -242,7 +262,7 @@ Then the weighted sensor that reads it:
             name: No recent movement
 ```
 
-The settled door is required, so an open front door keeps the answer off however sleepy everything else looks. The TV counts as off when it is unreachable rather than dropping out. The lux signal reads the room as dark below five. Everything else is weighed, and once the agreeing share clears 80 percent the sensor turns on. Hang your goodnight scene, your away checks, or your overnight automations off that single sensor, and they all share one honest read on whether the house has actually turned in.
+The door is two signals doing two jobs. The weight-zero gate is the instant veto: an open front door, or a contact that has dropped offline, forces the answer off right now, without waiting for the score to drift. The weight-4 settled signal is the gentle one, the Recently Active feed that only reads off once the door has been shut a full ten minutes, and it carries the actual weight in the sum. The TV counts as off when it is unreachable rather than dropping out. The lux signal reads the room as dark below five. Everything else is weighed, and once the agreeing share clears 80 percent the sensor turns on. Hang your goodnight scene, your away checks, or your overnight automations off that single sensor, and they all share one honest read on whether the house has actually turned in.
 
 ## License
 

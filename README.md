@@ -50,6 +50,9 @@ Blueprints are reusable templates you import once and use with different inputs,
 * [Recently Active](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/recently_active.md)
    * Turns a fired-once event into a state you can ask about later. It builds a binary sensor that stays on while a source is on, and for a set number of seconds after it turns off. Point it at any on/off entity: a contact sensor, a switch, an input_boolean. [Instructions](https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/)
 
+* [Weighted Confidence](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/weighted_confidence.md)
+   * Infers a fuzzy state like "is it bedtime" from many signals at once, each carrying its own weight. The sensor turns on when enough agreeing weight crosses a threshold you set, a required signal can veto the result outright, and it reads numbers as readily as on and off. Pairs with Recently Active to bring time into the vote. Beta, so the signal format may still shift between releases. [Instructions](https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/)
+
 Thank you for visiting. I hope you find these configurations helpful in your own smart home journey.
 
 ## Resources

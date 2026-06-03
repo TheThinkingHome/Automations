@@ -52,7 +52,7 @@ use_blueprint:
     device_class: occupancy
 ```
 
-`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. `source_entity` and `unique_id` are the two required settings; the rest have sensible defaults. All of them are explained near the end.
+`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. `source_entity` and `unique_id` are the two required settings; the rest have sensible defaults. Every parameter is laid out in the reference below.
 
 That block has to sit under Home Assistant's `template:` configuration. The tidy way to do that, and the way that scales once you make more of these, is a package.
 
@@ -114,13 +114,15 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a `binary_sensor` named after your `sensor_name`. Watch it in Developer Tools, States: flip the source on and it goes on, turn the source off and it holds on for your window, then drops to off.
 
-## The inputs
+## Parameters
 
-- **Source entity** (`source_entity`), required: the on/off entity to track. A `binary_sensor`, `switch`, `input_boolean`, or anything that reads on or off.
-- **Unique ID** (`unique_id`), required: a short id string, distinct for every sensor you build, such as `front_door_recently_open`. It registers the entity so you can rename it, place it in an area, or change its device class from the interface. Reusing one across two sensors collides them, so keep each unique.
-- **Linger window** (`linger_seconds`): how many seconds the sensor stays on after the source turns off. Default 60.
-- **Sensor name** (`sensor_name`): the name for the binary sensor this creates, and what its entity id is built from. Default "Recently Active".
-- **Device class** (`device_class`): how the sensor reads in the frontend. Default `occupancy`, which shows Detected and Clear. Match it to what the sensor means rather than to its source, such as `running` for an appliance or `motion` for an activity group, or clear it for plain On and Off.
+| Input | Required | Default | Accepted values | What it does |
+|---|---|---|---|---|
+| `source_entity` | Yes | none | any entity id that reads on or off (`binary_sensor`, `switch`, `input_boolean`, and so on) | The entity to track. The sensor is on whenever this is on. |
+| `unique_id` | Yes | none | any short text id, distinct per sensor | Registers the entity so you can rename it, place it in an area, or change its device class from the interface. Reusing one collides two sensors. |
+| `linger_seconds` | No | `60` | a whole number of seconds, 1 to 3600 | How long the sensor stays on after the source turns off. |
+| `sensor_name` | No | `Recently Active` | any text | The friendly name, and what the entity id is built from. |
+| `device_class` | No | `occupancy` | any binary_sensor device class (`occupancy`, `motion`, `door`, and so on), or left blank | How the sensor reads in the frontend. `occupancy` shows Detected and Clear; blank shows plain On and Off. |
 
 ## A small note on display
 

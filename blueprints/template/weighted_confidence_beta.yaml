@@ -1,7 +1,7 @@
 # Weighted Confidence (Beta) - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
 # Work in progress. The signal format may still change between beta releases.
 # Full write-up, worked examples, and directions:
-# https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/
+# https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/
 blueprint:
   name: Weighted Confidence (Beta)
   author: James Lander (xeazy.com)
@@ -42,7 +42,8 @@ blueprint:
     door has been shut for ten minutes," point a Recently Active sensor at the
     door and hand its result in as a signal.
 
-    Full write-up and worked examples: https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/
+    Full write-up and worked examples: 
+    https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/
 
     Changelog:
       1.1.0-beta - A required signal set to unavailable: disagree now vetoes

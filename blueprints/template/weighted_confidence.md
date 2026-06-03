@@ -6,8 +6,8 @@ Some states are not one sensor's job. "Is the house at bedtime" is not a single 
 
 This one is a beta. It is tested and it works, but the way you describe a signal may still change between beta releases, so treat a config you build today as something you might revisit when a new version lands.
 
-Full write-up and worked examples: https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/
-Questions and discussion: https://xeazy.com/logbook
+Full write-up and worked examples: https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/
+Questions and discussion: https://xeazy.com/logbook/d/37-a-home-assistant-weighted-sensor-now-a-blueprint
 
 ## What you get
 

@@ -10,6 +10,12 @@ Home Assistant triggers fire once, at the instant a state crosses a line, and th
 
 **[Full directions and one-click import ->](template/recently_active.md)**
 
+### Weighted Confidence
+
+Some states are not one sensor's job. Whether the house is at bedtime, whether a room is really in use, whether everyone has actually settled: each is a handful of weaker signals that mostly agree. Weighted Confidence takes a list of those signals, gives each its own weight, and turns a binary sensor on when the agreeing weight crosses a threshold you set. Signals that go unavailable drop out of the sum instead of dragging the score down, any signal can be made a hard gate that forces the answer off on its own, and the attributes show you the running score and exactly which signals are helping and which are holding it back. It pairs with Recently Active: feed in a "door shut for ten minutes" sensor as one of the weighted signals.
+
+**[Full directions and one-click import ->](template/weighted_confidence.md)**
+
 ---
 
 Everything below is the general guide for importing and using any template blueprint here: how one is imported, where it lives, and how you turn it into a working entity. Each blueprint's own page, linked above, adds the specifics unique to it.

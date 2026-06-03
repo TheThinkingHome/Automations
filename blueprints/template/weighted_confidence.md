@@ -74,7 +74,7 @@ use_blueprint:
         name: Phone charging
 ```
 
-`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. The inputs are explained near the end.
+`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. Every parameter is laid out in the reference below.
 
 That block has to sit under Home Assistant's `template:` configuration. The tidy way to do that, and the way that scales once you make more of these, is a package.
 
@@ -120,37 +120,46 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a `binary_sensor` named after your `sensor_name`, with attributes that show the score and which signals are pulling their weight.
 
-## The inputs
+## Parameters
 
-- **Signals** (`signals`), required: the list of signals to weigh. Each item is described in its own section below.
-- **Threshold** (`threshold_percent`): the share of currently available weight that must agree before the sensor turns on. Default 80.
-- **Sensor name** (`sensor_name`): the name for the binary sensor this creates, and what its entity id is built from. Default "Weighted Confidence".
-- **Unique ID** (`unique_id`), required: a short id string, distinct for every sensor you build, such as `house_at_bedtime`. It registers the entity so you can rename it, place it in an area, or change its device class from the interface.
-- **Device class** (`device_class`): how the sensor reads in the frontend. Default `occupancy`, which shows Detected and Clear. Pick another to suit what the sensor means, or clear it for plain On and Off.
+Two levels: the inputs you pass to the blueprint, and the fields on each signal inside the `signals` list.
 
-## The signals list, field by field
+### Blueprint inputs
 
-Each item in `signals` accepts these keys. Two are needed, the rest are optional:
+| Input | Required | Default | Accepted values | What it does |
+|---|---|---|---|---|
+| `signals` | Yes | none | a list of signal items (fields in the next table) | The signals to weigh. |
+| `threshold_percent` | No | `80` | a whole number from 1 to 100 | The share of currently available weight that must agree before the sensor turns on. |
+| `sensor_name` | No | `Weighted Confidence` | any text | The friendly name, and what the entity id is built from. |
+| `unique_id` | Yes | none | any short text id, distinct per sensor | Registers the entity so you can rename it, place it in an area, or change its device class from the interface. |
+| `device_class` | No | `occupancy` | any binary_sensor device class (`occupancy`, `motion`, `door`, and so on), or left blank | How the sensor reads in the frontend. `occupancy` shows Detected and Clear; blank shows plain On and Off. |
+
+### Signal fields
+
+Each item in the `signals` list takes these. A signal needs only an `entity` and usually a `weight`; the rest shape how it is judged.
 
 ```yaml
 - entity: binary_sensor.front_door_recently_used   # required
-  weight: 4                                          # required
+  weight: 4                                          # almost always set
   operator: equals                                   # optional, default equals
-  state: "off"                                        # for equals / not_equals
+  state: "off"                                        # used by equals / not_equals
   unavailable: drop                                   # optional, default drop
   required: true                                      # optional, default false
   name: Front door settled                            # optional, default the entity id
 ```
 
-- **entity**: the entity to read. Anything with a state works, not only binary sensors.
-- **weight**: how much this signal counts toward the score. Bigger means more say. Defaults to 1 if you leave it off.
-- **operator**: how agreement is judged. `equals` (the default), `not_equals`, `above`, `below`, or `between`.
-- **state**: for `equals` and `not_equals`, the value that counts as agreement. Defaults to `"on"`. It can be a single value, such as `"off"` or `"charging"`, or a list, such as `["Sleep", "Wake"]`, in which case any of them counts.
-- **value**: for `above` and `below`, the number the entity's value is compared against.
-- **low** and **high**: for `between`, the inclusive numeric range.
-- **unavailable**: what to do when the entity is unavailable or unknown. `drop` (the default) leaves it out of the sum, `agree` counts its weight as agreeing, `disagree` counts its weight against.
-- **required**: set it true to make this signal a hard gate. An available required signal that does not agree forces the sensor off regardless of the score.
-- **name**: a label for the attributes, so the contributing and not_met lists read in plain language instead of entity ids. Defaults to the entity id.
+| Field | Required | Default | Accepted values | What it does |
+|---|---|---|---|---|
+| `entity` | Yes | none | any entity id | The entity this signal reads. Anything with a state, not only binary sensors. |
+| `weight` | No | `1` | any number, including `0` | How much the signal counts toward the score. `0` makes a pure gate that adds nothing but can still be `required`. |
+| `operator` | No | `equals` | `equals`, `not_equals`, `above`, `below`, `between` | How agreement is judged. The first two compare text, the last three read the state as a number. |
+| `state` | Used by `equals` and `not_equals` | `"on"` | a single value, or a list of values | The value or values that count as agreement under `equals`, or that disqualify under `not_equals`. |
+| `value` | Used by `above` and `below` | none | a number | The number the entity's value is compared against. |
+| `low` | Used by `between` | none | a number | The inclusive lower bound. |
+| `high` | Used by `between` | none | a number | The inclusive upper bound. |
+| `unavailable` | No | `drop` | `drop`, `agree`, `disagree` | What to do when the entity is unavailable or unknown. `drop` leaves it out, `agree` counts its weight as agreeing, `disagree` counts its weight against. |
+| `required` | No | `false` | `true`, `false` | Makes the signal a hard gate. An available required signal that does not agree forces the sensor off, whatever the score. |
+| `name` | No | the entity id | any text | The label shown in the `contributing` and `not_met` attributes, so they read in plain language. |
 
 ### Text and numbers
 

@@ -28,9 +28,14 @@ blueprint:
       low/high for between: the inclusive numeric range.
       unavailable  what to do when the entity is unavailable or unknown: drop
                (default, leaves it out of the maths), agree (counts its weight
-               as agreeing), or disagree (counts its weight against).
-      required true makes it a hard gate. If a required signal is available and
-               does not agree, the result is off no matter the score.
+               as agreeing), or disagree (counts its weight against). On a
+               required signal, disagree also forces the result off while the
+               signal is unavailable.
+      required true makes it a hard gate. A required signal that is available
+               and does not agree forces the result off, no matter the score.
+               Pair it with unavailable: disagree to force off when the signal
+               is unavailable too; with drop (the default) an unavailable
+               required signal just drops out.
       name     a label for the attributes. Defaults to the entity id.
 
     Time-based conditions live in the signals you feed it, not here. For "the
@@ -40,6 +45,10 @@ blueprint:
     Full write-up and worked examples: https://xeazy.com/REPLACE-WITH-ARTICLE-SLUG/
 
     Changelog:
+      1.1.0-beta - A required signal set to unavailable: disagree now vetoes
+        while it is unavailable, so a required signal whose state cannot be
+        confirmed forces the result off instead of silently dropping out.
+        Non-required disagree is unchanged, counting against the score only.
       1.0.0-beta - Public preview. Percentage-of-available-weight scoring with
         per-signal weight, operators (equals, not_equals, above, below,
         between), a per-signal unavailable policy (drop, agree, disagree), an
@@ -139,7 +148,7 @@ binary_sensor:
     {% set w = s.weight | int(1) %}
     {% if cur in ['unavailable', 'unknown'] %}
     {% set policy = s.unavailable | default('drop') %}
-    {% if policy == 'agree' %}{% set ns.total = ns.total + w %}{% set ns.agree = ns.agree + w %}{% elif policy == 'disagree' %}{% set ns.total = ns.total + w %}{% endif %}
+    {% if policy == 'agree' %}{% set ns.total = ns.total + w %}{% set ns.agree = ns.agree + w %}{% elif policy == 'disagree' %}{% set ns.total = ns.total + w %}{% if s.required | default(false) %}{% set ns.veto = true %}{% endif %}{% endif %}
     {% else %}
     {% set op = s.operator | default('equals') %}
     {% set match = s.state | default('on') %}

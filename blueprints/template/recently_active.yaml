@@ -1,23 +1,31 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
 # Recently Active - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
 # Full write-up, worked examples, and directions:
 # https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
+#
+# Changelog:
+#   2.0.0 - Rebuilt on delay_off instead of a now() based template, so the linger
+#           is timer-precise and the sensor no longer re-evaluates every minute.
+#           State is simply whether the source is on, and delay_off holds the on
+#           state for the chosen number of seconds after the source goes quiet.
+#           Added a unique_id input so the sensor is registered and can be
+#           renamed, placed in an area, and reclassified in the interface, and a
+#           device_class input for how it reads in the frontend.
+#   1.0.0 - Initial release. now() based linger, no unique_id or device_class.
 blueprint:
   name: Recently Active
   author: James Lander (xeazy.com)
   description: >
-    Recently Active. Holds an on/off source as a state you can still ask about
-    after the moment has passed.
-
-    It creates a binary sensor that reads "on" while the source entity is on,
-    and keeps reading "on" for a chosen number of seconds after the source
-    turns off. Point it at anything that reports on or off: a door or window
-    contact, a motion sensor, a switch, an input_boolean, or a power-threshold
-    binary sensor.
-
-    The linger is handled by the binary sensor's own delay_off, so the timing
-    is precise and the sensor sits idle between changes instead of polling. If
-    the source goes unavailable, the sensor decays to off after the linger
-    rather than sticking on.
+    Holds an on/off source as a state you can still ask about after the moment
+    has passed. It creates a binary sensor that reads "on" while the source
+    entity is on, and keeps reading "on" for a chosen number of seconds after
+    the source turns off. Point it at anything that reports on or off: a door or
+    window contact, a motion sensor, a switch, or an input_boolean. If the
+    source goes unavailable, the sensor decays to off after the linger rather
+    than sticking on.
 
     Inputs: the source entity to watch, the linger in seconds, a name, a unique
     id so the sensor can be renamed and managed in the interface, and a device
@@ -25,15 +33,8 @@ blueprint:
 
     Full write-up and worked examples: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 
-    Changelog:
-      2.0.0 - Rebuilt on delay_off instead of a now() based template, so the
-        linger is timer-precise and the sensor no longer re-evaluates every
-        minute. State is simply whether the source is on, and delay_off holds
-        the on state for the chosen number of seconds after the source goes
-        quiet. Added a unique_id input so the sensor is registered and can be
-        renamed, placed in an area, and reclassified in the interface, and a
-        device_class input for how it reads in the frontend.
-      1.0.0 - Initial release. now() based linger, no unique_id or device_class.
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking
+    Home (https://xeazy.com).
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/recently_active.yaml
   homeassistant:

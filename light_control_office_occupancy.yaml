@@ -6,8 +6,11 @@
 # A wasp-in-a-box inferred occupancy teaching example for a single room.
 # Full write-up: https://xeazy.com/home-assistant-occupancy-detection-the-wasp-in-a-box-pattern/
 #
-# Version: 1.1.1
+# Version: 1.1.2
 # Changelog:
+#   1.1.2 - Documented in the description that triggers and top-level conditions
+#           cannot reference the variables (read at load), so their entities must
+#           be edited directly.
 #   1.1.1 - Wired the actions and conditions to the variables block; entity IDs
 #           are no longer hardcoded in the body. Triggers remain literal, since
 #           trigger entity lists are read at load and cannot reference variables.
@@ -42,9 +45,9 @@ description: >-
   occupant walks out through the open door.
 
   ADAPTATION: set your entities in the variables block at the bottom. The
-  actions and conditions read from there. The triggers must be edited
-  separately, since trigger entity lists are read at load and cannot
-  reference the variables.
+  actions and the per-branch conditions read from there. Triggers and any
+  top-level conditions cannot use the variables, since both are read at load
+  before the variables exist, so edit those entities directly.
 
   Helpers required:
     timer.office_occupancy_timer        -- duration 5 minutes

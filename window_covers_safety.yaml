@@ -1,23 +1,30 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Window, Blinds/Shades - Enforce 62% - The Thinking Home (xeazy.com)
+# Full write-up: https://xeazy.com/protecting-your-smart-home-from-itself/
 alias: Window, Blinds/Shades - Enforce 62%
 description: >-
   (Version 2.0.0) This automation ensures that when a window is open, the shades
   and blinds covering that window cannot close beyond a safe position (62%) to
   prevent damage from wind. It works regardless of how the blinds are adjusted,
   including physical remote controls.
-
   This version has been refactored to use a centralized mapping variable and
   more efficient numeric_state triggers. This eliminates repetitive code and
   makes the automation significantly easier to read and maintain. To add a new
   cover, you only need to add a new trigger and a corresponding entry in the
   'window_map' variable.
-
-  - How it works: 
-    - The automation triggers only when the position of a monitored cover drops 
+  - How it works:
+    - The automation triggers only when the position of a monitored cover drops
       below 62%.
     - It uses a 'window_map' variable to look up the window sensor(s) associated
       with the cover that triggered the automation.
     - It then checks if any of the associated windows are open. - If a window is
       open, it sets the cover's position back to 62%.
+
+  License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com).
+  Full write-up: https://xeazy.com/protecting-your-smart-home-from-itself/
 
   - changelog:
     - 2.0.0: Major refactor. Replaced the large, repetitive 'choose' block with a

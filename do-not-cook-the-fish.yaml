@@ -1,112 +1,54 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Do Not Cook the Fish - a Home Assistant automation from The Thinking Home (xeazy.com)
+# A worked example of the gated trigger problem and its symmetrical fix.
+# Full write-up: https://xeazy.com/why-your-home-assistant-automation-triggers-but-does-not-run/
+#
+# Changelog:
+#   1.6.0 - Added living room window close re-evaluation. Two new state triggers
+#           on the living room window contacts going to off, sharing id
+#           living_window_closed. New branch gates on both living windows closed
+#           and sets living shades only. Dining shades remain untouched there,
+#           since they are governed independently by the dining branch.
+#   1.5.0 - Added open-to-100% default case to all re-evaluation branches (TV on,
+#           TV off, window closed or 11 AM). When lux is below lux_open (2500) at
+#           re-evaluation, dining shades open to 100% immediately. Fixes the
+#           stuck-at-62% bug when re-evaluation fired after sunset with no open
+#           case.
+#   1.4.0 - Added 11 AM startup trigger and re-evaluation branch. Added
+#           window_closed trigger and re-evaluation branch.
+#   1.3.0 - Added tv_on and tv_off triggers with immediate lux re-evaluation.
+#   1.2.0 - Fixed TV state checks throughout.
+#   1.1.0 - Migrated covers to guarded entities.
+#   1.0.0 - Initial release.
 alias: Do Not Cook the Fish
 description: >-
-  A real-world example of the gated trigger problem solved with the symmetrical
-  fix. Every gate that can block the action also fires the automation. Every
-  trigger re-checks state when fired.
- 
-  This automation manages dining room and living room shades based on outdoor
-  lux. The fish on the dining room table are the primary concern. The
-  west-facing dining room turns into a solar oven in the afternoon and the
-  fishbowl heats up if the shades stay open. The shades cannot fully close
-  when a window is open because the wind would damage them. The TV in the
-  living room creates glare on a lower lux threshold than heat does. The
-  automation only runs after 11 AM because morning low-angle sun is handled
-  manually.
- 
-  Read this file alongside the article: Why Your Home Assistant Automation
-  Triggers But Does Not Run: The Gated Trigger Problem.
-  https://xeazy.com/why-your-home-assistant-automation-triggers-but-does-not-run/ 
- 
-  TRIGGERS:
- 
-  Lux thresholds (state triggers expressed as templates):
-    - close_62_sun: outdoor lux > 3400 for 3 min. Bright sun, TV off.
-    - close_15_sun: outdoor lux > 4100 for 3 min. Intense sun, TV off.
-    - close_62_tv: outdoor lux > 2000 for 3 min. Moderate light, TV on.
-    - close_15_tv: outdoor lux > 2800 for 3 min. Brighter light, TV on.
-    - open_blinds: outdoor lux < 2500 for 20 min. Sunset, open back up.
- 
-  Gate-as-trigger (the symmetrical fix in practice):
-    - tv_on: TV transitions from off (unavailable) to on. Re-evaluate lux.
-    - tv_off: TV transitions to off. Re-evaluate lux.
-    - window_closed: either dining window transitions to closed. Re-eval.
-    - living_window_closed: either living window transitions to closed.
-    - startup_11am: the 11 AM time gate opens. Re-evaluate everything.
- 
-  GATES (top-level conditions):
- 
-    - Only After 11 AM: time gate. Blocks the automation before 11 AM.
-    - Not Manually Disabled: an input_boolean that lets the user disable
-      the automation without removing it.
-    - Only Active During Day or Evening Scene: a scene input_select that
-      blocks the automation during Sleep or Away scenes.
- 
-  All three top-level gates are checked on every trigger. If any gate is
-  closed, the automation halts. The startup_11am trigger exists specifically
-  because the time gate opening is itself a gate-open event that the symmetric
-  fix demands.
- 
-  ACTION BRANCHES:
- 
-  The action body is a choose block with seven branches. Each branch matches
-  on a specific trigger or set of triggers and re-evaluates the current state
-  of the world before acting.
- 
-    1. Sun close_62_sun: TV off, dining shades > 70%, close dining to 62%.
-    2. Sun close_15_sun: TV off, dining shades > 20%, close dining to 15%
-       and living to 62%.
-    3. TV close_62_tv: TV on, dining shades > 70%, close dining and living
-       to 62%.
-    4. TV close_15_tv: TV on, dining shades > 20%, close dining to 15% and
-       living to 62%.
-    5. Sun Setting open_blinds: lux below open threshold for 20 min, home
-       is occupied, open dining shades to 100%.
-    6. TV Turned On re-eval: TV just turned on. Re-evaluate current lux
-       and set shades to whatever position is correct for TV-on state.
-    7. TV Turned Off re-eval: TV just turned off. Re-evaluate current lux
-       and set shades to whatever position is correct for TV-off state.
-    8. Dining Window Closed or 11 AM re-eval: a dining window just closed
-       or the 11 AM time gate just opened. Re-evaluate lux and TV state and
-       set both dining and living shades accordingly.
-    9. Living Window Closed re-eval: a living window just closed.
-       Re-evaluate lux and TV state. Set living shades only. Dining shades
-       are governed by the dining branch and are not touched here.
- 
-  Each re-evaluation branch (branches 6 through 9) contains its own nested
-  choose block that handles every lux-and-TV-state combination, including a
-  default open-to-100% case when lux is below the open threshold. The default
-  case is what fixes the stuck-at-62% bug where re-evaluation events fired
-  after sunset but had no open case, leaving shades at their last closed
-  position indefinitely.
- 
-  TV STATE NOTE: this automation was built against an LG WebOS TV which
-  reports as 'unavailable' when off. There is no explicit off state. The TV
-  is considered on when its state is anything other than unavailable. Adapt
-  to your TV's reported states if different.
- 
-  LUX THRESHOLDS: tuned for Loja, Ecuador at 7° south latitude and 2100 m
-  elevation. The equatorial sun at altitude produces lux values that differ
-  significantly from northern latitudes. Your thresholds will differ.
- 
-  Changelog:
-    - 1.6.0 - Added living room window close re-evaluation. Two new state
-        triggers on living room window contacts going to off, sharing id:
-        living_window_closed. New re-evaluation branch in choose: that
-        gates on both living windows closed and sets living shades only.
-        Dining shades remain untouched in the new branch because dining
-        shades are governed independently by the dining branch.
-    - 1.5.0 - Added open-to-100% default case to all re-evaluation branches
-        (TV Turned On, TV Turned Off, Window Closed or 11 AM). When lux is
-        below lux_open (2500) at re-evaluation time, dining shades open to
-        100% immediately. Fixes stuck-at-62% bug when re-evaluation fires
-        after sunset with no open case.
-    - 1.4.0 - Added 11 AM startup trigger and re-evaluation branch. Added
-        window_closed trigger and re-evaluation branch.
-    - 1.3.0 - Added tv_on and tv_off triggers with immediate lux re-evaluation.
-    - 1.2.0 - Fixed TV state checks throughout.
-    - 1.1.0 - Migrated covers to guarded entities.
-    - 1.0.0 - Initial release.
- 
+  A worked example of the gated trigger problem and its symmetrical fix: every
+  gate that can block the action also fires the automation, and every trigger
+  re-checks the full state when it runs, so the shades never get stuck in the
+  wrong position.
+
+  It manages dining and living room shades from outdoor lux, TV state, and open
+  windows. The west-facing dining room turns into a solar oven in the afternoon,
+  and the fish on the table are the reason it exists. The shades cannot fully
+  close while a window is open, since wind would damage them, and the TV adds
+  glare at a lower lux threshold than heat does. The automation runs only after
+  11 AM, since morning low-angle sun is handled manually.
+
+  Full write-up: https://xeazy.com/why-your-home-assistant-automation-triggers-but-does-not-run/
+
+  TV state note: built against an LG WebOS TV, which reports as unavailable when
+  off and has no explicit off state. The TV is treated as on when its state is
+  anything other than unavailable. Adapt to your own TV's reported states.
+
+  Lux thresholds: tuned for Loja, Ecuador at 7 degrees south and 2100 m
+  elevation. The equatorial sun at altitude gives very different lux values from
+  northern latitudes, so your thresholds will differ.
+
+  License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking
+  Home (https://xeazy.com).
 triggers:
   - alias: Sun — Close Dining to 62%
     value_template: "{{ states('sensor.outdoor_lux') | float(0) > 3400 }}"

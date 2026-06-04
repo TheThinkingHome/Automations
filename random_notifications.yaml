@@ -1,10 +1,41 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Door - Main Bath Litter Box Obstruction - The Thinking Home (xeazy.com)
+# Randomly selected hardcoded sass instead of generative AI. When the bathroom
+# door stays closed the litter box is blocked, so the house nags you with a
+# random message until you open it.
+# Full write-up: https://xeazy.com/home-assistant-automation-and-why-randomness-beats-generative-ai/
+#
+# Version: 1.0.0
+# Changelog:
+#   1.0.0 - Public reference release. Fixed three issues from the original
+#           draft: mode single -> restart, so an open door clears the alert
+#           while the loop is still running; the loop cap, which now uses
+#           repeat.index instead of a manually incremented counter that did
+#           not carry across iterations; and the repeat delay, now hardcoded
+#           since Jinja is not supported in delay values. Pet names are
+#           generic placeholders. Message text cleaned.
 alias: Door - Main Bath Litter Box Obstruction
-description: >
-  Activates when the main bathroom door is closed for a defined duration,
-  marking the litter box as obstructed, sending a notification, and announcing a
-  random message every 'loop_delay' minutes (up to 'max_announcements' times)
-  while the door remains closed. Clears obstruction when the door opens. Key
-  parameters are defined as global variables for easier customization.
+description: >-
+  Activates when the main bathroom door is closed for 30 minutes, marking the
+  litter box as obstructed, creating a dashboard notification, and announcing a
+  random message every 5 minutes (up to max_announcements times) while the door
+  remains closed. Clears the obstruction when the door opens.
+
+  Full write-up: https://xeazy.com/home-assistant-automation-and-why-randomness-beats-generative-ai/
+
+  Key parameters live in the variables block for easy customization, including
+  the cat_messages list. Swap the entities and the message list to suit your
+  own household pets.
+
+  Note: the repeat delay is hardcoded at 5 minutes. Jinja templates are not
+  supported in delay values, so loop_delay_minutes documents the interval but
+  the delay itself is a literal 00:05:00.
+
+  License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking
+  Home (https://xeazy.com).
 triggers:
   - entity_id: binary_sensor.door_bath_main_contact
     to: "off"
@@ -16,14 +47,13 @@ triggers:
     to: "on"
     id: door_opened
     trigger: state
+conditions: []
 actions:
   - choose:
       - conditions:
           - condition: trigger
             id: door_closed
         sequence:
-          - variables:
-              announcement_count: 0
           - target:
               entity_id: "{{ litter_box_obstructed_boolean_entity_id }}"
             action: input_boolean.turn_on
@@ -31,7 +61,7 @@ actions:
           - data:
               title: Litter Box Obstruction Alert
               message: >-
-                The main bathroom door has been closed for 30 minutes, 
+                The main bathroom door has been closed for 30 minutes,
                 obstructing the cat litter box.
               notification_id: litter_box_obstruction_alert
             action: persistent_notification.create
@@ -40,16 +70,13 @@ actions:
                 - condition: template
                   value_template: "{{ states(door_sensor_entity_id) == 'off' }}"
                 - condition: template
-                  value_template: "{{ announcement_count < max_announcements }}"
+                  value_template: "{{ repeat.index <= max_announcements }}"
               sequence:
                 - data:
                     message_text: "{{ cat_messages | random }}"
                     high_priority_alert: true
                   action: script.controlled_voice_announcement
-                - delay:
-                    minutes: "{{ loop_delay_minutes }}"
-                - variables:
-                    announcement_count: "{{ announcement_count + 1 }}"
+                - delay: "00:05:00"
       - conditions:
           - condition: trigger
             id: door_opened
@@ -62,7 +89,7 @@ actions:
               notification_id: litter_box_obstruction_alert
             action: persistent_notification.dismiss
     default: []
-mode: single
+mode: restart
 variables:
   loop_delay_minutes: 5
   max_announcements: 10
@@ -70,84 +97,84 @@ variables:
   litter_box_obstructed_boolean_entity_id: input_boolean.cat_litter_box_obstructed
   cat_messages:
     - >-
-      Houston, we have a problem! The main bathroom door is closed and Ari and
-      Noodles can’t reach their litter box!
+      Houston, we have a problem! The main bathroom door is closed and Mittens
+      and Boots can't reach their litter box!
     - >-
       Alert! The bathroom door has been shut so long, the cats are planning a
       litter box heist!
     - >-
-      You can’t handle the truth! The bathroom door is blocking Noodles and
-      Ari’s litter box!
+      You can't handle the truth! The bathroom door is blocking Boots and
+      Mittens' litter box!
     - >-
       Code Meow! The litter box is crying for freedom behind the closed bathroom
       door!
     - >-
-      Help us, dear. You are our only hope! Ari and Noodles can't reach the
+      Help us, dear. You are our only hope! Mittens and Boots can't reach the
       litter box with the door closed!
     - >-
-      Yikes! The bathroom door’s locked tight, and the cats are plotting to
+      Yikes! The bathroom door's locked tight, and the cats are plotting to
       storm the litter box!
     - >-
-      The cats are saying, ‘There’s no place like the litter box,’ but the
+      The cats are saying, 'There's no place like the litter box,' but the
       bathroom door is still closed!
     - >-
       Paws for concern! The main bathroom door is shut, and the cats are sending
       SOS signals!
     - >-
-      The litter box awaits Ari and Noodles. Open that door... Make it so,
+      The litter box awaits Mittens and Boots. Open that door... Make it so,
       Number One!
     - >-
-      Catastrophe alert! The bathroom door’s blocking the litter box, and
-      Noodles and Ari are sharpening their claws!
+      Catastrophe alert! The bathroom door's blocking the litter box, and Boots
+      and Mittens are sharpening their claws!
     - >-
-      The bathroom door has been shut, and the litter box is screaming, ‘Show me
+      The bathroom door has been shut, and the litter box is screaming, 'Show me
       the kitties!
     - >-
       Holy whiskers! The main bathroom door is closed, securing the litter box
       like Fort Knox!
     - >-
-      Open the bathroom door for Ari and Noodles, you must. Wait longer, they
+      Open the bathroom door for Mittens and Boots, you must. Wait longer, they
       cannot. Yes, hmmm. To the litter box, they must go!
     - >-
-      To the litter box... and beyond! Ari and Noodles need your help to
-      complete  their mission!, Space Rangers.
+      To the litter box... and beyond! Mittens and Boots need your help to
+      complete their mission, Space Rangers.
     - >-
-      Go ahead, open the door. Make Ari and Noodles' day... Save the carpet.  
+      Go ahead, open the door. Make Mittens and Boots' day... Save the carpet.
       The litter box awaits!
     - >-
-      Hold it! Ari and Noodles are trying to hold it, but the closed bathroom
+      Hold it! Mittens and Boots are trying to hold it, but the closed bathroom
       door is a Class 5 feline emergency! Litter box access required, stat!
     - >-
-      The cats are in a galaxy far, far away from their litter box, Open the
+      The cats are in a galaxy far, far away from their litter box. Open the
       closed bathroom door!
     - >-
-      Claws out! The main bathroom door is blocking the litter box, and Ari and
-      Noodles are ready to pounce!
+      Claws out! The main bathroom door is blocking the litter box, and Mittens
+      and Boots are ready to pounce!
     - >-
       This isn't the closed door you are looking for. Move along... move along
-      and open it for Ari and Noodles' litter box access. (These *are* the cats
-      that need to go!)
+      and open it for Mittens and Boots' litter box access. These ARE the cats
+      that need to go!
     - >-
-      Loja Control, this is Ari and Noodles. The bathroom door is an
+      Loja Control, this is Mittens and Boots. The bathroom door is an
       impenetrable barrier to the litter box. Our patience is approaching zero.
       We request immediate door-opening action. Over.
     - >-
-      Great Scott! The bathroom door is *still* closed! Ari and Noodles need to
+      Great Scott! The bathroom door is STILL closed! Mittens and Boots need to
       get back... back to the litter box!
     - >-
-      A cat's got to know its limitations. And Ari and Noodles are reachin' 
+      A cat's got to know its limitations. And Mittens and Boots are reaching
       theirs. Time to open up the path to their litter box.
     - >-
-      I'm a cat, not a cammel! Ari and Noodles can't just beam through to the
+      I'm a cat, not a camel! Mittens and Boots can't just beam through to the
       litter box. We need you to open it!
     - >-
       Well, human? Are you gonna open that bathroom door, or just stand there
-      whistlin' Dixie? Ari and Noodles are waiting for the litter box?
+      whistlin' Dixie? Mittens and Boots are waiting for the litter box.
     - >-
-      If my calculations are correct, Ari and Noodles are approaching critical
+      If my calculations are correct, Mittens and Boots are approaching critical
       bladder capacity! The bathroom door must be opened immediately for the
       sake of the space-time-litter-box continuum!
     - >-
-      If Ari and Noodles are to live long and prosper (and keep the carpets
-      clean), access to the litter box is essential. It is the only logical  
-      path to household peace, and cleanliness.
+      If Mittens and Boots are to live long and prosper and keep the carpets
+      clean, access to the litter box is essential. It is the only logical path
+      to household peace and cleanliness.

@@ -1,5 +1,15 @@
-# -------------------------------------------------------------------------------------
-# Bedtime Detected - Weighted Confidence Sensor
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Bedtime Detected - Weighted Confidence Sensor - The Thinking Home (xeazy.com)
+# Version: 1.2.0
+#
+# NOTE: This is the original hand-coded weighted confidence sensor. The same
+# approach is now available as a reusable Home Assistant blueprint, which is
+# the easier way to build a sensor like this for your own home:
+#   Blueprint: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/weighted_confidence.md
+#   Article:   https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/
 #
 # This template creates a binary_sensor that uses a weighted scoring system to
 # infer a complex state like "Bedtime." This is more reliable than relying on a

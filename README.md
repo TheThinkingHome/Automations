@@ -14,8 +14,8 @@ Automations are the workhorses of Home Assistant, performing tasks in the backgr
    * An attempt at handling network-dependent integrations during a scheduled router reboot, so the reboot does not touch off a cascade of errors. It is unfinished and does not yet work reliably, and the approach may be flawed at the concept level. The idea is a good one and worth getting right, so the code is left here in the open in case someone wants to take it further. No write-up, since the approach is still unproven.
 * [Two-Way Switch Sync](https://github.com/TheThinkingHome/Automations/blob/main/two-way_switch_sync.yaml)
    * A simple, reliable automation to synchronize the state of two switches. It intelligently avoids infinite loops by ignoring changes made by other automations. [Instructions](https://xeazy.com/there-can-be-only-one/)
-* [Window_Cover_Safety](https://github.com/TheThinkingHome/Automations/tree/main)
-   * Prevents motorized blinds from closing on open windows to avoid damage from wind or obstruction. Instructions
+* [Window_Cover_Safety](https://github.com/TheThinkingHome/Automations/blob/main/window_covers_safety.yaml)
+   * Prevents motorized blinds from closing on open windows to avoid damage from wind or obstruction. [Instructions](https://xeazy.com/protecting-your-smart-home-from-itself/)
 * [Random_Voice_Notifications](https://github.com/TheThinkingHome/Automations/blob/main/random_notifications.yaml)
    * Monitors a door sensor and uses a persistent loop to send randomized voice alerts if an obstruction is detected, stopping automatically when the condition is resolved. [Instructions](https://xeazy.com/home-assistant-automation-and-why-randomness-beats-generative-ai/)
 * [Do Not Cook the Fish](https://github.com/TheThinkingHome/Automations/blob/main/do-not-cook-the-fish.yaml)
@@ -23,7 +23,7 @@ Automations are the workhorses of Home Assistant, performing tasks in the backgr
 * [Light Control - Office Occupancy](https://github.com/TheThinkingHome/Automations/blob/main/light_control_office_occupancy.yaml)
    * The clean teaching version of the wasp-in-a-box occupancy pattern. A door closing while motion is active captures the occupant and holds the light on, and a physical switch press sets a manual override that motion will not fight. Uses the three-condition context filter to tell a human press from an automation. [Instructions](https://xeazy.com/home-assistant-occupancy-detection-the-wasp-in-a-box-pattern/)
 * [Light Control - Master Shower Occupancy](https://github.com/TheThinkingHome/Automations/blob/main/light_control_master-shower_occupancy.yaml)
-   * The same wasp-in-a-box occupancy logic applied to a wet room, with an optional exhaust fan tied to the door. Motion, door state, and a lux reading drive the light, and a closed door keeps it on while someone is inside even after motion stops. [Instructions](https://xeazy.com/home-assistant-occupancy-detection-the-wasp-in-a-box-pattern/)
+   * The same wasp-in-a-box occupancy logic applied to a wet room, with an optional exhaust fan tied to the door. Motion, door state, and a lux reading drive the light, and a closed door keeps it on while someone is inside even after motion stops. [Instructions](https://xeazy.com/advanced-home-assistant-automations/)
 * [Litter Box Obstruction](https://github.com/TheThinkingHome/Automations/blob/main/main_bath_litter_box_obstruction.yaml)
    * Watches a bathroom door that blocks the cats from their litter box when it stays shut. After 30 minutes closed it flags an obstruction, sends a notification, and plays a randomized voice nag every few minutes until someone opens the door. [Instructions](https://xeazy.com/home-assistant-automation-and-why-randomness-beats-generative-ai/)
 

@@ -6,8 +6,11 @@
 # A wasp-in-a-box inferred occupancy teaching example for a single room.
 # Full write-up: https://xeazy.com/home-assistant-occupancy-detection-the-wasp-in-a-box-pattern/
 #
-# Version: 1.1.0
+# Version: 1.1.1
 # Changelog:
+#   1.1.1 - Wired the actions and conditions to the variables block; entity IDs
+#           are no longer hardcoded in the body. Triggers remain literal, since
+#           trigger entity lists are read at load and cannot reference variables.
 #   1.1.0 - Capture-wasp branch now cancels the occupancy timer when the wasp
 #           is captured, matching the article. Once an occupant is confirmed
 #           inside there is no need for a countdown.
@@ -37,6 +40,11 @@ description: >-
   Transient motion guard: motion detected within 5 seconds of the door
   opening is ignored. This filters the momentary motion trigger as an
   occupant walks out through the open door.
+
+  ADAPTATION: set your entities in the variables block at the bottom. The
+  actions and conditions read from there. The triggers must be edited
+  separately, since trigger entity lists are read at load and cannot
+  reference the variables.
 
   Helpers required:
     timer.office_occupancy_timer        -- duration 5 minutes
@@ -102,28 +110,27 @@ actions:
             action: input_boolean.turn_off
             continue_on_error: true
             target:
-              entity_id: input_boolean.office_wasp_hold
+              entity_id: "{{ wasp_boolean }}"
           - alias: Clear Manual Override
             action: input_boolean.turn_off
             continue_on_error: true
             target:
-              entity_id: input_boolean.office_manual_override
+              entity_id: "{{ manual_override }}"
           - alias: Start Timer if Light is On
             if:
-              - condition: state
-                entity_id: switch.office_lights
-                state: "on"
+              - condition: template
+                value_template: "{{ is_state(light_switch, 'on') }}"
             then:
               - action: timer.start
                 continue_on_error: true
                 target:
-                  entity_id: timer.office_occupancy_timer
+                  entity_id: "{{ occupancy_timer }}"
             else:
               - alias: Light Was Off — Cancel Any Stale Timer
                 action: timer.cancel
                 continue_on_error: true
                 target:
-                  entity_id: timer.office_occupancy_timer
+                  entity_id: "{{ occupancy_timer }}"
       - alias: Door Closed — Capture Wasp if Motion Active
         conditions:
           - condition: trigger
@@ -133,56 +140,53 @@ actions:
             delay: "00:00:05"
           - alias: Capture Wasp if Motion Detected
             if:
-              - condition: state
-                entity_id: binary_sensor.motion_office
-                state: "on"
+              - condition: template
+                value_template: "{{ is_state(motion_sensor, 'on') }}"
             then:
               - alias: Cancel Timer — Wasp is Captured, No Timeout Needed
                 action: timer.cancel
                 continue_on_error: true
                 target:
-                  entity_id: timer.office_occupancy_timer
+                  entity_id: "{{ occupancy_timer }}"
               - alias: Set Wasp Hold — Room is Occupied
                 action: input_boolean.turn_on
                 continue_on_error: true
                 target:
-                  entity_id: input_boolean.office_wasp_hold
+                  entity_id: "{{ wasp_boolean }}"
             else:
               - alias: No Motion — Cancel Timer and Turn Off Light
                 action: timer.cancel
                 continue_on_error: true
                 target:
-                  entity_id: timer.office_occupancy_timer
+                  entity_id: "{{ occupancy_timer }}"
               - action: switch.turn_off
                 continue_on_error: true
                 target:
-                  entity_id: switch.office_lights
+                  entity_id: "{{ light_switch }}"
       - alias: Motion Detected — Turn On Light and Start Timer
         conditions:
           - condition: trigger
             id: motion_detected
           - alias: Wasp Hold is Off
-            condition: state
-            entity_id: input_boolean.office_wasp_hold
-            state: "off"
+            condition: template
+            value_template: "{{ is_state(wasp_boolean, 'off') }}"
           - alias: Manual Override Not Active
-            condition: state
-            entity_id: input_boolean.office_manual_override
-            state: "off"
+            condition: template
+            value_template: "{{ is_state(manual_override, 'off') }}"
           - alias: Door Has Been Open for More Than 5 Seconds
             condition: template
             value_template: >-
-              {{ (now() - states.binary_sensor.door_office_contact.last_changed)
+              {{ (now() - states[door_sensor].last_changed)
                  .total_seconds() > 5 }}
         sequence:
           - action: switch.turn_on
             continue_on_error: true
             target:
-              entity_id: switch.office_lights
+              entity_id: "{{ light_switch }}"
           - action: timer.start
             continue_on_error: true
             target:
-              entity_id: timer.office_occupancy_timer
+              entity_id: "{{ occupancy_timer }}"
       - alias: Manual Switch On — Human Override
         conditions:
           - condition: trigger
@@ -198,12 +202,12 @@ actions:
             action: input_boolean.turn_off
             continue_on_error: true
             target:
-              entity_id: input_boolean.office_manual_override
+              entity_id: "{{ manual_override }}"
           - alias: Start Occupancy Timer — Human Declared Presence
             action: timer.start
             continue_on_error: true
             target:
-              entity_id: timer.office_occupancy_timer
+              entity_id: "{{ occupancy_timer }}"
       - alias: Manual Switch Off — Human Override
         conditions:
           - condition: trigger
@@ -219,34 +223,32 @@ actions:
             action: timer.cancel
             continue_on_error: true
             target:
-              entity_id: timer.office_occupancy_timer
+              entity_id: "{{ occupancy_timer }}"
           - alias: Release Wasp Hold
             action: input_boolean.turn_off
             continue_on_error: true
             target:
-              entity_id: input_boolean.office_wasp_hold
+              entity_id: "{{ wasp_boolean }}"
           - alias: Set Manual Override — Suppress Further Motion
             action: input_boolean.turn_on
             continue_on_error: true
             target:
-              entity_id: input_boolean.office_manual_override
+              entity_id: "{{ manual_override }}"
       - alias: Timer Finished — Turn Off if Wasp is Off
         conditions:
           - condition: trigger
             id: timer_finished
           - alias: Wasp Hold is Off
-            condition: state
-            entity_id: input_boolean.office_wasp_hold
-            state: "off"
+            condition: template
+            value_template: "{{ is_state(wasp_boolean, 'off') }}"
           - alias: Motion is Clear
-            condition: state
-            entity_id: binary_sensor.motion_office
-            state: "off"
+            condition: template
+            value_template: "{{ is_state(motion_sensor, 'off') }}"
         sequence:
           - action: switch.turn_off
             continue_on_error: true
             target:
-              entity_id: switch.office_lights
+              entity_id: "{{ light_switch }}"
 variables:
   wasp_boolean: input_boolean.office_wasp_hold
   manual_override: input_boolean.office_manual_override

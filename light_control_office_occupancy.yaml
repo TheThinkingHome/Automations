@@ -6,8 +6,11 @@
 # A wasp-in-a-box inferred occupancy teaching example for a single room.
 # Full write-up: https://xeazy.com/home-assistant-occupancy-detection-the-wasp-in-a-box-pattern/
 #
-# Version: 1.0.0
+# Version: 1.1.0
 # Changelog:
+#   1.1.0 - Capture-wasp branch now cancels the occupancy timer when the wasp
+#           is captured, matching the article. Once an occupant is confirmed
+#           inside there is no need for a countdown.
 #   1.0.0 - Initial release. Written as a teaching example for the
 #           wasp-in-a-box occupancy pattern article on xeazy.com.
 alias: Light Control - Office Occupancy
@@ -134,6 +137,11 @@ actions:
                 entity_id: binary_sensor.motion_office
                 state: "on"
             then:
+              - alias: Cancel Timer — Wasp is Captured, No Timeout Needed
+                action: timer.cancel
+                continue_on_error: true
+                target:
+                  entity_id: timer.office_occupancy_timer
               - alias: Set Wasp Hold — Room is Occupied
                 action: input_boolean.turn_on
                 continue_on_error: true

@@ -1,6 +1,19 @@
 # =============================================================================
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+# =============================================================================
+#
 # Package: Gate Garage Guard  (Public Reference Version)
 # File: config/packages/gate_garage_guard.yaml
+# Version: 1.0.0  (public reference, derived from the live v1.5.x system)
+#
+# Changelog:
+#   1.0.0 - First public reference release. Anonymized and simplified from the
+#           author's live package. The presence-based arrival and departure
+#           automations, the dual contact sensor health ledger, and other
+#           site-specific logic are removed so this file is a clean starting
+#           point rather than a drop-in.
 # =============================================================================
 #
 # WHAT THIS IS
@@ -66,8 +79,8 @@
 #   sensor failure automatically with a second contact sensor and a health
 #   ledger; that is out of scope here and covered in the follow-up.
 # =============================================================================
- 
- 
+
+
 # =============================================================================
 # 1. INPUTS
 # Two text helpers that drive the dashboard: a live status line and a latched
@@ -78,19 +91,19 @@ input_text:
     name: Gate Garage Package Status Message
     icon: mdi:message-text-clock
     initial: "System Ready"
- 
+
   gate_garage_package_error_latch:
     name: Gate Garage Package Error Memory
     icon: mdi:alert-circle
     initial: "Clear"
- 
- 
+
+
 # =============================================================================
 # 2. TEMPLATES
 # The cover entity, the dashboard error display, and the vibration filter.
 # =============================================================================
 template:
- 
+
   # ---------------------------------------------------------------------------
   # Error Display
   # A single dashboard sensor that shows either the current latched error or
@@ -105,11 +118,11 @@ template:
         state: >-
           {% set logic_error = states('input_text.gate_garage_package_error_latch') | default('Clear', true) %}
           {% set switch_status = states('switch.gate_relay') | default('unknown', true) %}
- 
+
           {# Coerce any empty / null-ish latch value back to a clean "Clear" #}
           {% set logic_error = 'Clear' if logic_error in ['unavailable', 'unknown', 'None', 'none', ''] else logic_error %}
           {% set switch_unavailable = switch_status in ['unavailable', 'unknown'] %}
- 
+
           {%- if switch_unavailable -%}
             Relay Unavailable
           {%- elif logic_error != 'Clear' -%}
@@ -117,7 +130,7 @@ template:
           {%- else -%}
             Clear
           {%- endif -%}
- 
+
   # ---------------------------------------------------------------------------
   # Vibration Guarded
   # The raw vibration sensor, but it only reports "on" after the vibration has
@@ -131,7 +144,7 @@ template:
         state: >-
           {{ is_state('binary_sensor.gate_vibration', 'on') }}
         delay_on: 5
- 
+
   # ---------------------------------------------------------------------------
   # Vibration Smart
   # The "is this real" verdict. It turns on when the guarded sensor confirms a
@@ -166,7 +179,7 @@ template:
             {% endif %}
           {% endif %}
         auto_off: 15
- 
+
   # ---------------------------------------------------------------------------
   # Last Vibration Time
   # Timestamp of the last confirmed (filtered) vibration event. Useful on a
@@ -181,7 +194,7 @@ template:
         unique_id: sensor_gate_garage_package_last_vibration_time
         icon: mdi:clock-alert
         state: "{{ now().strftime('%d-%m %H:%M') }}"
- 
+
   # ---------------------------------------------------------------------------
   # Last Opened Time
   # Timestamp of the last time the gate contact sensor reported "open".
@@ -195,7 +208,7 @@ template:
         unique_id: sensor_gate_garage_package_last_opened_time
         icon: mdi:clock-outline
         state: "{{ now().strftime('%d-%m %H:%M') }}"
- 
+
   # ---------------------------------------------------------------------------
   # The Cover Entity
   # This is the only thing you interact with. It reads the gate's real position
@@ -211,31 +224,31 @@ template:
       - name: "Gate Garage Package Guarded"
         unique_id: cover_gate_garage_package_guarded
         device_class: gate
- 
+
         state: >-
           {{ 'open' if is_state('binary_sensor.gate_contact', 'on') else 'closed' }}
- 
+
         availability: >-
           {{ states('switch.gate_relay') not in ['unavailable', 'unknown'] }}
- 
+
         open_cover:
           - action: script.gate_garage_package_manager
             data:
               command: 'open'
- 
+
         close_cover:
           - action: script.gate_garage_package_manager
             data:
               command: 'close'
- 
- 
+
+
 # =============================================================================
 # 3. SCRIPTS
 # The decision-making layer. The manager decides what to do; the actuation
 # script does it and verifies the result.
 # =============================================================================
 script:
- 
+
   # ---------------------------------------------------------------------------
   # Manager
   # The decision maker. Takes a command (open / close / toggle), checks the
@@ -259,7 +272,7 @@ script:
           entity_id: input_text.gate_garage_package_error_latch
         data:
           value: "Clear"
- 
+
       - alias: Set status to processing
         action: input_text.set_value
         continue_on_error: true
@@ -267,7 +280,7 @@ script:
           entity_id: input_text.gate_garage_package_status_message
         data:
           value: "Processing {{ command }}..."
- 
+
       - alias: Route the command
         choose:
           - alias: Close command
@@ -291,7 +304,7 @@ script:
                     data:
                       target_state: 'off'
                       direction: 'close'
- 
+
           - alias: Open command
             conditions:
               - condition: template
@@ -313,7 +326,7 @@ script:
                     data:
                       target_state: 'on'
                       direction: 'open'
- 
+
           - alias: Toggle command
             conditions:
               - condition: template
@@ -332,7 +345,7 @@ script:
                     data:
                       target_state: 'off'
                       direction: 'close'
- 
+
   # ---------------------------------------------------------------------------
   # Actuate and Verify
   # Fires the relay, waits for the gate to finish traveling, then checks the
@@ -358,16 +371,16 @@ script:
           entity_id: input_text.gate_garage_package_status_message
         data:
           value: "Actuating: {{ direction | title }}ing..."
- 
+
       - alias: Fire the relay
         action: switch.turn_on
         continue_on_error: true
         target:
           entity_id: switch.gate_relay
- 
+
       - alias: Wait for the gate to finish traveling
         delay: "00:00:15"
- 
+
       - alias: Verify the result
         choose:
           - alias: Sensor reached the target state
@@ -403,7 +416,7 @@ script:
                 [Gate Garage Guard] Commanded gate to {{ direction }}, but
                 binary_sensor.gate_contact did not reach '{{ target_state }}'
                 after the travel delay.
- 
+
   # ---------------------------------------------------------------------------
   # Resync (Blind Click)
   # The deliberate escape hatch for a failed contact sensor.

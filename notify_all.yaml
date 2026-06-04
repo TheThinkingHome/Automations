@@ -1,15 +1,32 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Notify All - The Thinking Home (xeazy.com)
+# A centralized notification script: one call sends rich notifications to all
+# your devices, with smart photo handling for local and remote images.
+# Full write-up: https://xeazy.com/one-script-to-notify-them-all/
+#
+# Version: 1.1.1
+# Changelog:
+#   1.1.1 - Fixed invalid condition syntax for the debug block.
+#   1.1.0 - Refactored to use device lists in variables for easier
+#           configuration. Reordered variables and updated the description with
+#           setup instructions.
+#   1.0.0 - Initial release.
 alias: Notify All
 description: >-
-  (Version 1.1.0) This script provides a centralized and powerful notification
-  service for Home Assistant, designed to be called from any automation. Its
-  primary goal is to simplify sending consistent, rich notifications to multiple
-  users and devices without duplicating code.
-
+  This script provides a centralized and powerful notification service for Home
+  Assistant, designed to be called from any automation. Its primary goal is to
+  simplify sending consistent, rich notifications to multiple users and devices
+  without duplicating code.
 
   The script accepts a title, message, and an optional photo as input. It
   automatically prepends a timestamp to the title for context and intelligently
   handles photo attachments from both URLs and local paths, ensuring they are
   viewable everywhere.
+
+  Full write-up: https://xeazy.com/one-script-to-notify-them-all/
 
   SETUP & DEPENDENCIES:
 
@@ -18,16 +35,12 @@ description: >-
      - input_text.home_assistant_base_url (e.g., http://192.168.1.100:8123)
      - input_text.home_assistant_external_url (e.g., your Nabu Casa URL)
 
-  2. Configure Devices: Edit the `android_devices` and `ios_devices` lists in
-  the variables section below to include your own notification services from the
+  2. Configure Devices: Edit the android_devices and ios_devices lists in the
+  variables section below to include your own notification services from the
   Home Assistant Companion App.
 
-  - Changelog:
-    - 1.1.1: Fixed invalid condition syntax for debug block.
-    - 1.1.0: Refactored to use device lists in variables for easier
-      configuration. Reordered variables and updated description with setup
-      instructions.
-    - 1.0.0: Initial release.
+  License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking
+  Home (https://xeazy.com).
 fields:
   message:
     description: The concise message for all notifications.
@@ -89,7 +102,7 @@ sequence:
           - condition: template
             value_template: "{{ debug_mode }}"
         sequence:
-          - service: persistent_notification.create
+          - action: persistent_notification.create
             continue_on_error: true
             data:
               title: "DEBUG ({{ now().strftime('%H:%M:%S') }}): Notify All - Vars"
@@ -104,7 +117,7 @@ sequence:
                 internal_photo_url }}<br/>&nbsp;&nbsp;External: {{
                 external_photo_url }}<br/><b>Final Title:</b><br/>&nbsp;&nbsp;{{
                 final_title }}
-          - service: system_log.write
+          - action: system_log.write
             data:
               level: debug
               message: >-
@@ -113,7 +126,7 @@ sequence:
   - alias: Send All Notifications
     parallel:
       - alias: Create Persistent Notification
-        service: persistent_notification.create
+        action: persistent_notification.create
         continue_on_error: true
         data:
           title: "{{ final_title }}"

@@ -1,26 +1,36 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Light Control - Master Shower Occupancy - The Thinking Home (xeazy.com)
+# Wasp-in-a-box inferred occupancy for the master shower.
+# Full write-up: https://xeazy.com/advanced-home-assistant-automations/
+#
+# Version: 2.0.5
+# Changelog:
+#   2.0.5 - Fixed a case mismatch on the Door Closed trigger id (door_Closed ->
+#           door_closed) so the Door Closed branch fires. Restores the
+#           door-close debounce wasp set and the exhaust-fan-on-close behavior.
+#   2.0.4 - Fixed sensor saturation bug. Timer finish now checks for active
+#           motion before turning off. Fixed sunny morning bug: motion extends
+#           the timer regardless of lux if the light is already on.
+#   2.0.3 - Added a 5-second debounce into the door closed sequence to catch
+#           the case where closing the door also triggers a motion sensor.
+#   2.0.2 - Added optional exhaust fan logic tied to the door sensor.
+#   2.0.1 - Added a variables block for all key entities to simplify adaptation.
+#   2.0.0 - Initial creation. Forked from Main Bathroom v1.0.3. Reworked all
+#           logic for a wasp-in-a-box model.
 alias: Light Control - Master Shower Occupancy
 description: >-
-  Version: 2.0.4. This automation provides (wasp-in-a-box inferred occupancy)
-  logic. It depends on a motion sensor group, a door sensor, and a lux sensor. 
-  It focuses purely on motion, door state, lux, and a timer to control the light
-  and an optional exhaust fan.
+  Wasp-in-a-box inferred occupancy logic for the master shower. It depends on a
+  motion sensor group, a door sensor, and a lux sensor, and focuses purely on
+  motion, door state, lux, and a timer to control the light and an optional
+  exhaust fan.
 
-  Changelog:
-    - 2.0.4: Fixed (Sensor Saturation) bug. When the timer finishes, the logic
-      now checks if motion is still active before turning off. Also fixed (Sunny
-      Morning) bug by allowing motion to extend the timer regardless of lux if
-      the light is already on.
-    - 2.0.3: Implement a 5-second (debounce logic) into the Door Closed sequence
-      to catch the scenario where closing the door simultaniously triggers one 
-      of the motion sensors.
-    - 2.0.2: Added optional exhaust fan logic tied to the door sensor.
-    - 2.0.1: Added `variables` block for all key entities to simplify
-      adaptation. 
-    - 2.0.0: Initial creation. Forked from Main Bathroom v1.0.3. Reworked
-      all logic for a (wasp-in-a-box) model.
+  Full write-up: https://xeazy.com/advanced-home-assistant-automations/
 
-  Key Entities Utilized:
-    - Triggers/Inputs:
+  Key Entities Used:
+    Triggers/Inputs:
       - binary_sensor.master_shower_occupancy_group (Motion)
       - binary_sensor.door_master_shower_contact (Door)
       - sensor.lux_sensor_master_safe (Lux)
@@ -28,15 +38,18 @@ description: >-
       - switch.bath_master_shower_lights (Light switch)
       - input_boolean.master_shower_occupancy_door_closed (Wasp-in-a-box boolean)
       - switch.bath_master_exhaust_fan (Optional Fan)
-    - Outputs/Controlled:
+    Outputs/Controlled:
       - switch.bath_master_shower_lights
       - timer.master_shower_occupancy_timer
       - input_boolean.master_shower_occupancy_door_closed
       - switch.bath_master_exhaust_fan
 
-  ADAPTATION: To adapt this for your home, you MUST update the entity IDs in two
-  places: 1. The `triggers:` block (hardcoded entity IDs). 2. The `variables:`
-  block (entity IDs used by all actions).
+  ADAPTATION: To adapt this for your home, you must update the entity IDs in two
+  places: 1. The triggers: block (hardcoded entity IDs). 2. The variables: block
+  (entity IDs used by all actions).
+
+  License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking
+  Home (https://xeazy.com).
 triggers:
   - entity_id: switch.bath_master_shower_lights
     from: "off"
@@ -59,7 +72,7 @@ triggers:
   - entity_id: binary_sensor.door_master_shower_contact
     from: "on"
     to: "off"
-    id: door_Closed
+    id: door_closed
     trigger: state
     alias: Door Closed
   - entity_id: binary_sensor.master_shower_occupancy_group

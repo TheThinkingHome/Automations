@@ -1,68 +1,117 @@
-alias: Two-Way Switch Sync
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Two-Way Switch Sync (Authority/Follower) - The Thinking Home (xeazy.com)
+# Full write-up: https://xeazy.com/there-can-be-only-one/
+alias: Two-Way Switch Sync (Authority/Follower)
 description: >-
-  (Version 1.1.0) This automation synchronizes the ON/OFF state of two switches.
-  When one switch is changed manually (physically or via the UI), the other
-  switch is updated to match. It's ideal for managing two switches that control
-  the same set of lights or should otherwise act as one.
+  Version: 1.0.0 Synchronizes two switches that represent one logical light.
+  Bidirectional during normal use - a change on either switch propagates to the
+  other. On Home Assistant start or Zigbee2MQTT reconnect, the AUTHORITY switch
+  wins and the FOLLOWER switch is brought into alignment. This prevents drift
+  after restarts, reconnects, or stale state republishes from driving the lights
+  to an unintended state.
 
-  SETUP:
-  1. Define your two switch entities in the `variables` section below.
-  2. Update the `entity_id` in the `triggers` section to match the variables.
+  Sync follows a change from any source - human, UI, physical press, or another
+  automation. There is no context filter, so an automation that flips one switch
+  will still bring the other along. The loop is prevented by the state-equality
+  guard, not by ignoring automation-driven changes.
 
-  The automation uses the trigger's context to prevent infinite loops, ensuring
-  it only syncs changes made by a user and not by other automations.
+  Self-healing properties:
+    - Bidirectional sync during normal user interaction
+    - HA start reconciliation (authority wins)
+    - Zigbee2MQTT reconnect reconciliation (authority wins)
+    - State-equality guard prevents the self-trigger loop
+    - Availability guards on both authority and follower reject
+      unavailable/unknown states before any service call fires
+
+  SETUP - edit four places to adapt this automation to your switches:
+
+    1. In the variables block at the bottom, set authority_switch and
+       follower_switch to your two entity IDs. The authority is the switch
+       that wins on conflict resolution after a restart or reconnect.
+       Pick the one closer to the actual load, or the one less likely to
+       report spurious state. If both are equivalent, pick either - the
+       choice only matters when the two disagree on a reconcile pass.
+
+    2. In the triggers block, update the entity_id list under the
+       pair_changed trigger to match your two switch entity IDs. (Trigger
+       entity lists are evaluated at automation load time and cannot
+       reference variables, which is why this is a separate edit from
+       step 1.)
+
+    3. If you do NOT use Zigbee2MQTT, either:
+       - Replace binary_sensor.zigbee2mqtt_running in the z2m_online
+         trigger with your coordinator's equivalent "running" or
+         "connected" sensor (ZHA, deCONZ, etc), or
+       - Delete the z2m_online trigger block entirely. The HA start
+         trigger alone will still catch drift on full restarts.
+
+    4. (Optional) Rename the automation alias to something descriptive
+       for your setup, e.g. "Light Control - Bathroom Vanity Sync".
+
+  License: GPL-3.0-or-later. Copyright (C) 2026 James Lander,
+  The Thinking Home (https://xeazy.com).
+  Full write-up: https://xeazy.com/there-can-be-only-one/
 
   Changelog:
-
-    - 1.1.0 (2025-08-11): Made the automation generic by using variables for
-      switch entities. Updated description with setup instructions.
-
-    - 1.0.0 (2025-05-19): Initial automation creation.
+    1.0.0 - Initial shareable release.
 triggers:
-  - entity_id: switch.entryway_living_room_lights
-    id: switch_1_changed
-    trigger: state
-  - entity_id: switch.hall_living_room_lights
-    id: switch_2_changed
-    trigger: state
-conditions:
-  - condition: template
-    value_template: "{{ trigger.to_state.context.parent_id == none }}"
-  - condition: template
-    value_template: "{{ trigger.to_state.state in ['on', 'off'] }}"
+  - trigger: state
+    entity_id:
+      - switch.authority_example
+      - switch.follower_example
+    id: pair_changed
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+  - trigger: state
+    entity_id: binary_sensor.zigbee2mqtt_running
+    to: "on"
+    id: z2m_online
+conditions: []
 actions:
   - choose:
       - conditions:
           - condition: trigger
-            id: switch_1_changed
+            id:
+              - pair_changed
           - condition: template
-            value_template: "{{ states(switch_2) != trigger.to_state.state }}"
+            value_template: "{{ trigger.to_state.state not in ['on', 'off'] }}"
         sequence:
-          - target:
-              entity_id: "{{ switch_2 }}"
-            action: switch.turn_{{ trigger.to_state.state }}
-          - data:
-              message: >-
-                SYNC: {{ state_attr(switch_1, 'friendly_name') }} changed.
-                Syncing {{ state_attr(switch_2, 'friendly_name') }}.
-              level: info
-            action: system_log.write
+          - stop: Ignoring unavailable/unknown transition
+      - conditions:
+          - condition: template
+            value_template: "{{ states(authority_switch) not in ['on', 'off'] }}"
+        sequence:
+          - stop: Authority switch not in a known state, cannot reconcile
+      - conditions:
+          - condition: template
+            value_template: "{{ states(follower_switch) not in ['on', 'off'] }}"
+        sequence:
+          - stop: Follower switch not in a known state, cannot reconcile
+      - conditions:
+          - condition: template
+            value_template: "{{ states(authority_switch) == states(follower_switch) }}"
+        sequence:
+          - stop: States already agree, nothing to do
       - conditions:
           - condition: trigger
-            id: switch_2_changed
+            id:
+              - pair_changed
           - condition: template
-            value_template: "{{ states(switch_1) != trigger.to_state.state }}"
+            value_template: "{{ trigger.entity_id == follower_switch }}"
         sequence:
-          - target:
-              entity_id: "{{ switch_1 }}"
-            action: switch.turn_{{ trigger.to_state.state }}
-          - data:
-              message: >-
-                SYNC: {{ state_attr(switch_2, 'friendly_name') }} changed.
-                Syncing {{ state_attr(switch_1, 'friendly_name') }}.
-              level: info
-            action: system_log.write
+          - action: switch.turn_{{ states(follower_switch) }}
+            target:
+              entity_id: "{{ authority_switch }}"
+    default:
+      - action: switch.turn_{{ states(authority_switch) }}
+        target:
+          entity_id: "{{ follower_switch }}"
 variables:
-  switch_1: switch.bedroom_hall_lights
-  switch_2: switch.living_room_hall_lights
+  authority_switch: switch.authority_example
+  follower_switch: switch.follower_example
 mode: single
+max_exceeded: silent

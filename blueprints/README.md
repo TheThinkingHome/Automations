@@ -86,6 +86,6 @@ If you already keep template entities in `configuration.yaml` under a `template:
 
 A brand-new package file needs a full Home Assistant restart to register the first time. After that, adding more `use_blueprint` blocks to the same file only needs Developer Tools, YAML, Reload Template Entities.
 
-## License and credit
+## License
 
-Use them, adapt them, share them. A link back to [xeazy.com](https://xeazy.com) is appreciated, never required.
+Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com) This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.

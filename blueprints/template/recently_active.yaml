@@ -7,6 +7,12 @@
 # https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 #
 # Changelog:
+#   2.1.0 - Added a comparison input (on/off, above, below) and a threshold
+#           input, so the same blueprint now also lingers on a numeric sensor
+#           crossing a value, not just an on/off source. comparison defaults to
+#           the on/off behavior, so sensors built on earlier versions are
+#           unaffected. Added an unavailable/unknown guard so a dead source
+#           reads off in every mode, then decays after the linger.
 #   2.0.0 - Rebuilt on delay_off instead of a now() based template, so the linger
 #           is timer-precise and the sensor no longer re-evaluates every minute.
 #           State is simply whether the source is on, and delay_off holds the on
@@ -19,17 +25,21 @@ blueprint:
   name: Recently Active
   author: James Lander (xeazy.com)
   description: >
-    Holds an on/off source as a state you can still ask about after the moment
-    has passed. It creates a binary sensor that reads "on" while the source
-    entity is on, and keeps reading "on" for a chosen number of seconds after
-    the source turns off. Point it at anything that reports on or off: a door or
-    window contact, a motion sensor, a switch, or an input_boolean. If the
-    source goes unavailable, the sensor decays to off after the linger rather
-    than sticking on.
+    Holds a source as a state you can still ask about after the moment has
+    passed. It creates a binary sensor that reads "on" while a condition holds,
+    and keeps reading "on" for a chosen number of seconds after the condition
+    clears.
 
-    Inputs: the source entity to watch, the linger in seconds, a name, a unique
-    id so the sensor can be renamed and managed in the interface, and a device
-    class for how it reads in the frontend.
+    The condition can be an on/off source (a door or window contact, a motion
+    sensor, a switch, an input_boolean), or a numeric sensor compared against a
+    threshold: on while the value is above it, or on while the value is below
+    it. If the source goes unavailable, the sensor decays to off after the
+    linger rather than sticking on.
+
+    Inputs: the source entity to watch, how to read it (on/off, above, or
+    below), the threshold for the numeric modes, the linger in seconds, a name,
+    a unique id so the sensor can be renamed and managed in the interface, and a
+    device class for how it reads in the frontend.
 
     Full write-up and worked examples: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 
@@ -42,12 +52,38 @@ blueprint:
   input:
     source_entity:
       name: Source entity
-      description: The on/off entity to track (binary_sensor, switch, input_boolean, and so on).
+      description: The entity to track. An on/off entity for on/off mode, or a numeric sensor for the above/below modes.
       selector:
         entity: {}
+    comparison:
+      name: Comparison
+      description: >
+        How to read the source. Use on/off for a binary source. Use above or
+        below for a numeric sensor compared against the threshold. The threshold
+        input is ignored in on/off mode.
+      default: "on"
+      selector:
+        select:
+          options:
+            - label: Source is on (on/off source)
+              value: "on"
+            - label: Value is above the threshold
+              value: "above"
+            - label: Value is below the threshold
+              value: "below"
+    threshold:
+      name: Threshold
+      description: The number to compare the source against in the above/below modes. Ignored in on/off mode.
+      default: 0
+      selector:
+        number:
+          min: -1000000
+          max: 1000000
+          step: 0.1
+          mode: box
     linger_seconds:
       name: Linger window (seconds)
-      description: How long the sensor keeps reading on after the source turns off.
+      description: How long the sensor keeps reading on after the condition clears.
       default: 60
       selector:
         number:
@@ -98,9 +134,21 @@ blueprint:
             - plug
 variables:
   source_entity: !input source_entity
+  comparison: !input comparison
+  threshold: !input threshold
 binary_sensor:
   name: !input sensor_name
   unique_id: !input unique_id
   device_class: !input device_class
-  state: "{{ states(source_entity) == 'on' }}"
+  state: >-
+    {% set s = states(source_entity) %}
+    {% if s in ['unavailable', 'unknown'] %}
+      false
+    {% elif comparison == 'above' %}
+      {{ s | float(0) > threshold }}
+    {% elif comparison == 'below' %}
+      {{ s | float(0) < threshold }}
+    {% else %}
+      {{ s == 'on' }}
+    {% endif %}
   delay_off: !input linger_seconds

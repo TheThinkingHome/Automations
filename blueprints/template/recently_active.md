@@ -178,9 +178,11 @@ The unavailable guard does a second job specific to the numeric modes. Without i
 
 ## Example Use
 
-A common one: an LLM analyzes snapshots from a front-door camera to flag unusual activity, but every ordinary entry trips the camera and the model dutifully reports a person walking through the door, which is noise. Point Recently Active at the door contact, and use its `on` state to suppress the analysis for a short window after the door is used. The full worked version is in the article linked at the top.
+A common one: an LLM analyzes snapshots from a front-door camera to flag unusual activity, but every ordinary entry trips the camera and the model dutifully reports a person walking through the door, which is noise. Point Recently Active at the door contact, and use its `on` state to suppress the analysis for a short window after the door is used.
 
 A numeric one: appliances draw power in bursts, so a plain "is it drawing power" check reads off during a lull and fires "cycle complete" mid-wash. Point Recently Active at the power sensor with `comparison: above`, a `threshold` just over the machine's idle draw, and a `linger_seconds` long enough to cover the longest quiet stretch. The sensor stays on through the pauses and only drops once the machine has truly stopped.
+
+For more worked examples, detailed setup instructions, and the fuller story behind each design choice, see the article: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 
 ## License
 

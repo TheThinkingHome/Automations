@@ -1,15 +1,15 @@
 # Recently Active
 
-A Home Assistant template blueprint that turns a fired-and-forgotten event into a state you can still ask about a little while later.
+A Home Assistant template blueprint that turns a fired-and-forgotten event into a persistent state you can still ask about a little while later.
 
-Home Assistant triggers fire once, at the instant a state crosses a line. The door opens, the event fires, and it is gone. Ask a moment later whether the door was just opened and there is nothing left to read, because Home Assistant evaluated that crossing once and moved on. Recently Active closes the gap. It builds a binary sensor that reads `on` while your source is on, and keeps reading `on` for a chosen number of seconds after the source turns off. So "the door is open" quietly becomes "the door was open within the last N seconds," which is the question your other automations actually want to ask.
+Home Assistant triggers fire once, at the instant a state crosses a line. The door opens, the event fires, and it is gone. Ask a moment later whether the door was just opened and there is nothing left to read, because Home Assistant evaluated that crossing once and moved on. *Recently Active* closes the gap. It builds a binary sensor that reads `on` while your source is on, and keeps reading `on` for a chosen number of seconds after the source turns off. So "the door is open" quietly becomes "the door was open within the last N seconds," which is the question your other automations actually want to ask.
 
 It is not limited to on/off sources. Point it at a numeric sensor and it reads `on` while the value is above a threshold, or while it is below one, with the same linger. That covers the dishwasher that pauses mid-cycle and the reading that dips across the line for a moment: the sensor holds steady instead of flapping on every brief crossing.
 
 Full write-up and a worked example: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 Questions and discussion: https://xeazy.com/logbook/d/36-recently-active-blueprint
 
-## What you get
+## What You Get
 
 - A `binary_sensor` that reads `on` while the condition holds, and for a set number of seconds after it clears.
 - Three ways to set the condition: an on/off source is on, a numeric sensor is above a threshold, or a numeric sensor is below a threshold.
@@ -22,7 +22,7 @@ How the timing works, up front: the linger runs on the binary sensor's own `dela
 
 Home Assistant 2026.5.4 or newer. That is the version it is verified on.
 
-## Step 1: Import the blueprint
+## Step 1: Import the Blueprint
 
 The quick way, one click:
 
@@ -36,13 +36,13 @@ Or by hand:
    ```
    https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/recently_active.yaml
    ```
-4. Confirm and import.
+4. Confirm and Import.
 
-Importing only registers the blueprint. It does not create a sensor yet. After import, the file lands at `config/blueprints/template/<author>/recently_active.yaml`, typically `TheThinkingHome/recently_active.yaml`. Open that folder and note the exact `<author>` subfolder name Home Assistant assigned, because you need it in the next step.
+Importing only registers the blueprint. It does not create a sensor yet. After import, the file will land at `config/blueprints/template/<author>/<blueprint_package>`. This blueprint should be located at `TheThinkingHome/recently_active.yaml`. Before continuing, verify that the Recently Active blueprint is installed at this location because you will need it in the next step.
 
-## Step 2: The catch with template blueprints
+## Step 2: The Catch with Template Blueprints
 
-Automation blueprints get a friendly "Create automation" button right on the Blueprints page. Template blueprints do not. You will not find Recently Active anywhere in the Create Helper list, and that is expected, not a fault. Template blueprints become real entities through a short piece of YAML called `use_blueprint`. It is a path, your settings, and that is it:
+Automation blueprints get a friendly "Create automation" button right on the Blueprints page. Template blueprints do not. You will not find Recently Active anywhere in the Create Helper list, and that is expected, not a fault. Template blueprints become real entities through a short piece of YAML called `use_blueprint`. It takes a path to the blueprint and a set of inputs:
 
 ```yaml
 use_blueprint:
@@ -59,7 +59,7 @@ use_blueprint:
 
 That block has to sit under Home Assistant's `template:` configuration. The tidy way to do that, and the way that scales once you make more of these, is a package.
 
-## Step 3: What a package is, and how to use one
+## Step 3: What a Package Is, and How to Create One
 
 A package is a single YAML file that holds a bundle of related configuration. Rather than scattering a sensor here and an automation there across your main files, you put everything for one feature into one file, and Home Assistant folds it into your overall configuration at startup. Packages are optional, but they keep related things together and easy to find.
 
@@ -126,13 +126,13 @@ template:
 
 If you already keep template entities in your `configuration.yaml` under a `template:` key, you can drop the `use_blueprint` block into that list instead. The package is simply the cleaner home once you have a few.
 
-## Step 4: Load it
+## Step 4: Load It
 
 A brand-new package file needs a full Home Assistant restart to register the first time. After that, adding more `use_blueprint` blocks to the same file only needs a quick reload through Developer Tools, YAML, Reload Template Entities.
 
 When it comes up you will have a `binary_sensor` named after your `sensor_name`. Watch it in Developer Tools, States: flip the source on, or push the value past the threshold, and it goes on; clear the condition and it holds on for your window, then drops to off.
 
-## A small note on the initial state
+## A Small Note on the Initial State
 
 Home Assistant's `delay_off` on a template binary_sensor has one bit of startup behavior that this blueprint inherits. After the entity is first created, and again after every Home Assistant restart, it starts at `unknown`. If your condition is true at that moment, the sensor immediately reads `on` and you would never notice. If your condition is false at that moment, the sensor may stay at `unknown` until the condition becomes true at least once. Home Assistant cannot tell whether a false result is a fresh transition (where `delay_off` should still be holding the entity `on`) or the actual initial state of a freshly created entity, so it picks the safer reading and waits.
 
@@ -144,9 +144,8 @@ To confirm a new sensor works without waiting for natural conditions to flip, yo
 
 For the record, this is documented behavior of Home Assistant's template binary_sensor with `delay_off`, not a quirk of this blueprint. The relevant threads are core issue [#64423](https://github.com/home-assistant/core/issues/64423), core issue [#66376](https://github.com/home-assistant/core/issues/66376), core issue [#67397](https://github.com/home-assistant/core/issues/67397), and community thread [#411956](https://community.home-assistant.io/t/sensor-with-delay-off-has-state-unknown-at-startup-when-off/411956).
 
-Building on `delay_off` is a deliberate choice. It is lightweight, accurate to the second, and the state that automations care about is the on-to-off transition when the linger expires, not the initial reading. That transition only ever happens after the sensor has been on at least once, which means the unknown window at startup does not affect anything you are actually triggering on. Precision and simplicity in the steady state are worth the cosmetic cost on the very first reading.
-
-## Where this fits
+Building on `delay_off` is a deliberate choice. It is lightweight, accurate to the second, and the state that automations care about is the on-to-off transition when the linger expires, not the initial reading. That transition only ever happens after the sensor has been on at least once, which means the unknown window at startup does not affect anything you are actually triggering on. Precision and simplicity in the steady state are worth the brief unknown reading on the very first creation.
+## Where This Fits
 
 There are three reasonable ways to ask "is this still recently true?" in Home Assistant, and each has a sweet spot.
 
@@ -168,11 +167,23 @@ This blueprint sits in between. It builds a single entity that other automations
 | `sensor_name` | No | `Recently Active` | any text | The friendly name, and what the entity id is built from. |
 | `device_class` | No | `occupancy` | any binary_sensor device class (`occupancy`, `motion`, `door`, and so on), or left blank | How the sensor reads in the frontend. `occupancy` shows Detected and Clear; blank shows plain On and Off. |
 
-## A small note on display
+## A Small Note on Display
 
 By default the sensor uses the `occupancy` device class, so the frontend shows Detected and Clear rather than plain On and Off. Change the device class input to relabel it, for example `running` for Running and Not running, or clear the field for a plain On and Off. Pick the class for what the new sensor means, not for what its source is: a "recently used" door is really a presence signal, so `occupancy` reads truer than `door`, which would show Open while the door has actually been shut for the whole window. The underlying state value is `on` or `off` whichever you pick, so it reads correctly in templates and conditions regardless.
 
-## Example use
+## A Small Note on Dead Sources
+
+The "What you get" list mentions that the sensor returns `off` when the source goes unavailable or unknown. That was a deliberate call. Returning `unknown` instead would have looked more honest, but it would break the on-to-off transition in a way that matters.
+
+The sensor's contract is two-state, on or off, because that is how consumers read it. Most automation conditions are written as `is_state('binary_sensor.foo', 'on')`, which treats off and unknown the same anyway. The bigger issue is transitions. If the source dies while the sensor is on, returning unknown would mean the entity goes from on to unknown, not on to off, and any automation listening for the linger-expired event would never fire. The current design makes a source death look like "linger ended cleanly," so suppression stops being applied, end-of-linger actions still run, and the system keeps moving.
+
+Brief source hiccups are already absorbed by `delay_off` itself. If the source goes unavailable for a few seconds while the sensor is on, the linger is already running and the sensor stays on. The unavailable guard only matters if the source stays dead longer than the linger, and at that point "this is not recently true" is the honest answer.
+
+The guard does extra work in the numeric modes. Without it, `'unavailable' | float(0)` evaluates to `0`, and for `comparison: below` with a positive threshold that reads as true, which would stick the sensor on forever. The guard prevents that.
+
+If you want to know when the source dies, monitor it directly with a check on its `unavailable` state. The Recently Active sensor is meant to be cheap to consume, and the on-to-off transition needs to fire cleanly for that to work.
+
+## Example Use
 
 A common one: an LLM analyzes snapshots from a front-door camera to flag unusual activity, but every ordinary entry trips the camera and the model dutifully reports a person walking through the door, which is noise. Point Recently Active at the door contact, and use its `on` state to suppress the analysis for a short window after the door is used. The full worked version is in the article linked at the top.
 

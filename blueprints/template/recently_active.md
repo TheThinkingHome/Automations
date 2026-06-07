@@ -132,6 +132,18 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a `binary_sensor` named after your `sensor_name`. Watch it in Developer Tools, States: flip the source on, or push the value past the threshold, and it goes on; clear the condition and it holds on for your window, then drops to off.
 
+## A small note on the initial state
+
+Home Assistant's `delay_off` on a template binary_sensor has one bit of startup behavior that this blueprint inherits. After the entity is first created, and again after every Home Assistant restart, it starts at `unknown`. If your condition is true at that moment, the sensor immediately reads `on` and you would never notice. If your condition is false at that moment, the sensor stays at `unknown` until the condition becomes true at least once. Home Assistant cannot tell whether a false result is a fresh transition (where `delay_off` should still be holding the entity `on`) or the actual initial state of a freshly created entity, so it picks the safer reading and waits.
+
+The first time the condition does become true, the sensor goes `on`, and from that point forward `delay_off` is warm. When the condition clears, the linger counts down and the sensor lands cleanly on `off`. Every cycle after that works exactly as the rest of this README describes. Restarts reset the entity to `unknown` and the same warming behavior applies: if the condition is true at restart, the sensor jumps straight to `on`; if false, it waits for the first true.
+
+In day-to-day use you do not notice this. An on/off source like a door contact or a motion sensor hits `on` within minutes of any restart, and the unknown window closes itself. The case that surprises people is a numeric source whose value sits on one side of the threshold for a long stretch. Outdoor illuminance overnight, a freezer holding cold, an idle appliance's power meter. The condition can stay false for hours, the sensor will read `unknown` for that whole stretch, and it will resolve the next time the value crosses.
+
+To confirm a new sensor works without waiting for natural conditions to flip, you can set the source's state from Developer Tools, States to a value that satisfies the condition, watch the sensor go `on`, and set it back. One catch: this fires real state-change events on the source, so anything else watching it will react.
+
+For the record, this is documented behavior of Home Assistant's template binary_sensor with `delay_off`, not a quirk of this blueprint. The relevant threads are core issue [#64423](https://github.com/home-assistant/core/issues/64423), core issue [#66376](https://github.com/home-assistant/core/issues/66376), core issue [#67397](https://github.com/home-assistant/core/issues/67397), and community thread [#411956](https://community.home-assistant.io/t/sensor-with-delay-off-has-state-unknown-at-startup-when-off/411956).
+
 ## Parameters
 
 | Input | Required | Default | Accepted values | What it does |

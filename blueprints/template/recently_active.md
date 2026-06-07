@@ -134,15 +134,27 @@ When it comes up you will have a `binary_sensor` named after your `sensor_name`.
 
 ## A small note on the initial state
 
-Home Assistant's `delay_off` on a template binary_sensor has one bit of startup behavior that this blueprint inherits. After the entity is first created, and again after every Home Assistant restart, it starts at `unknown`. If your condition is true at that moment, the sensor immediately reads `on` and you would never notice. If your condition is false at that moment, the sensor stays at `unknown` until the condition becomes true at least once. Home Assistant cannot tell whether a false result is a fresh transition (where `delay_off` should still be holding the entity `on`) or the actual initial state of a freshly created entity, so it picks the safer reading and waits.
+Home Assistant's `delay_off` on a template binary_sensor has one bit of startup behavior that this blueprint inherits. After the entity is first created, and again after every Home Assistant restart, it starts at `unknown`. If your condition is true at that moment, the sensor immediately reads `on` and you would never notice. If your condition is false at that moment, the sensor may stay at `unknown` until the condition becomes true at least once. Home Assistant cannot tell whether a false result is a fresh transition (where `delay_off` should still be holding the entity `on`) or the actual initial state of a freshly created entity, so it picks the safer reading and waits.
 
 The first time the condition does become true, the sensor goes `on`, and from that point forward `delay_off` is warm. When the condition clears, the linger counts down and the sensor lands cleanly on `off`. Every cycle after that works exactly as the rest of this README describes. Restarts reset the entity to `unknown` and the same warming behavior applies: if the condition is true at restart, the sensor jumps straight to `on`; if false, it waits for the first true.
 
-In day-to-day use you do not notice this. An on/off source like a door contact or a motion sensor hits `on` within minutes of any restart, and the unknown window closes itself. The case that surprises people is a numeric source whose value sits on one side of the threshold for a long stretch. Outdoor illuminance overnight, a freezer holding cold, an idle appliance's power meter. The condition can stay false for hours, the sensor will read `unknown` for that whole stretch, and it will resolve the next time the value crosses.
+In day-to-day use you do not notice this. An on/off source like a door contact or a motion sensor hits `on` within minutes of any restart, and the unknown window closes itself. The case that surprises people is a numeric source whose value sits on one side of the threshold for a long stretch. Outdoor illuminance overnight, a freezer holding cold, an idle appliance's power meter. The condition can stay false for hours, the sensor may read `unknown` for that whole stretch, and it will resolve the next time the value crosses.
 
 To confirm a new sensor works without waiting for natural conditions to flip, you can set the source's state from Developer Tools, States to a value that satisfies the condition, watch the sensor go `on`, and set it back. One catch: this fires real state-change events on the source, so anything else watching it will react.
 
 For the record, this is documented behavior of Home Assistant's template binary_sensor with `delay_off`, not a quirk of this blueprint. The relevant threads are core issue [#64423](https://github.com/home-assistant/core/issues/64423), core issue [#66376](https://github.com/home-assistant/core/issues/66376), core issue [#67397](https://github.com/home-assistant/core/issues/67397), and community thread [#411956](https://community.home-assistant.io/t/sensor-with-delay-off-has-state-unknown-at-startup-when-off/411956).
+
+Building on `delay_off` is a deliberate choice. It is lightweight, accurate to the second, and the state that automations care about is the on-to-off transition when the linger expires, not the initial reading. That transition only ever happens after the sensor has been on at least once, which means the unknown window at startup does not affect anything you are actually triggering on. Precision and simplicity in the steady state are worth the cosmetic cost on the very first reading.
+
+## Where this fits
+
+There are three reasonable ways to ask "is this still recently true?" in Home Assistant, and each has a sweet spot.
+
+A trigger with `for:` is the simplest. The trigger only fires once the source has held its state for the full duration. No extra entities, no helpers, no template plumbing. It is the right tool when the linger is short and lives inside a single automation. Think 30 seconds or less, where you do not need the held state to be visible anywhere else and you do not need it to survive a Home Assistant restart.
+
+A `timer` helper with two automations, one to start it and one to act when it ends, is the right tool when the linger is long and needs to persist across a restart, or when you want to pause, cancel, or extend it from the interface. Timers survive a Home Assistant restart, can be paused and resumed, and show their remaining time on a card. They cost a helper and a couple of automations, but for long-running windows of an hour or more, that cost is fair.
+
+This blueprint sits in between. It builds a single entity that other automations can read directly as a condition, runs on the binary sensor's own `delay_off`, is accurate to the second, is lightweight enough to make several of without thinking about it, and reads like one block of YAML once the package is in place. For windows between roughly 30 seconds and an hour, especially when several automations need to read the same "recently true" state, it is the cleanest fit.
 
 ## Parameters
 

@@ -7,6 +7,10 @@
 # https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 #
 # Changelog:
+#   2.1.1 - Refactored the state template to a single Jinja expression so it
+#           renders cleanly as True or False. The v2.1.0 multi-line if/elif
+#           form rendered with surrounding whitespace that could leave the
+#           entity stuck at "unknown" instead of resolving to off.
 #   2.1.0 - Added a comparison input (on/off, above, below) and a threshold
 #           input, so the same blueprint now also lingers on a numeric sensor
 #           crossing a value, not just an on/off source. comparison defaults to
@@ -140,15 +144,5 @@ binary_sensor:
   name: !input sensor_name
   unique_id: !input unique_id
   device_class: !input device_class
-  state: >-
-    {% set s = states(source_entity) %}
-    {% if s in ['unavailable', 'unknown'] %}
-      false
-    {% elif comparison == 'above' %}
-      {{ s | float(0) > threshold }}
-    {% elif comparison == 'below' %}
-      {{ s | float(0) < threshold }}
-    {% else %}
-      {{ s == 'on' }}
-    {% endif %}
+  state: "{{ false if states(source_entity) in ['unavailable', 'unknown'] else (states(source_entity) | float(0) > threshold) if comparison == 'above' else (states(source_entity) | float(0) < threshold) if comparison == 'below' else (states(source_entity) == 'on') }}"
   delay_off: !input linger_seconds

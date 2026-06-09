@@ -33,7 +33,11 @@ Linked Entities Pro fixes all of that:
 
 ## Import
 
-One-click import URL (open in Home Assistant):
+One-click import (opens in your Home Assistant):
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FTheThinkingHome%2FAutomations%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Flinked_entities_pro_beta.yaml)
+
+Or paste this URL into Home Assistant's blueprint import dialog manually:
 
 ```
 https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro_beta.yaml

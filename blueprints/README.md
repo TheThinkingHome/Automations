@@ -2,7 +2,19 @@
 
 A collection of Home Assistant blueprints from [xeazy.com](https://xeazy.com). Each one is useful, kept deliberately simple, and tested on a real instance before it ships. Questions and discussion live on the forum: https://xeazy.com/logbook
 
-## Blueprints
+## Automation Blueprints
+
+Blueprints that watch for events and run actions in response.
+
+### Linked Entities Pro
+
+Two switches that control the same fixture have to stay in sync, or the next press lands wrong. The wall switch and the smart bulb behind it, the Zigbee relay and the Tasmota module wired to the same lamp, an `input_boolean` standing in for a physical control: the moment they disagree, the press goes the wrong way and the dashboard misleads. Linked Entities Pro keeps them aligned. Any number of entities, any mix of integrations, in one linked group, so a change on any of them propagates to the others. On Home Assistant restart, or when a bridge sensor reconnects after a reboot, a designated authority entity acts as the tiebreaker so drift resolves the same way every time. The published switch-sync blueprints either treat every entity as a peer with no answer for restart, or carry a recursion guard that fails about a third of the time. This one fixes both, with a stricter context filter and a deterministic reconcile branch.
+
+**[Full directions and one-click import ->](automation/linked_entities_pro.md)**
+
+## Template Blueprints
+
+Blueprints that build derived sensors and helpers from your existing entities.
 
 ### Recently Active
 
@@ -18,11 +30,11 @@ Some states are not one sensor's job. Whether the house is at bedtime, whether a
 
 ---
 
-Everything below is the general guide for importing and using any template blueprint here: how one is imported, where it lives, and how you turn it into a working entity. Each blueprint's own page, linked above, adds the specifics unique to it.
+Everything below is the general guide for importing and using the blueprints here. Importing works the same way no matter what kind of blueprint it is. After import, an automation blueprint behaves like any other automation, while a template blueprint needs one extra step to become a working entity. Each blueprint's own page, linked above, adds the specifics unique to it.
 
 ## How the blueprints are organized
 
-They live under `blueprints/`, sorted by the kind of entity they build: `template/` for template entities such as sensors and binary sensors, with `automation/` and `script/` to follow as the collection grows. Home Assistant works out which kind a blueprint is from inside the file, so the folder is only for tidiness.
+They live under `blueprints/`, sorted by the kind of entity they build: `automation/` for automations, `template/` for template entities such as sensors and binary sensors, with `script/` to follow as the collection grows. Home Assistant works out which kind a blueprint is from inside the file, so the folder is only for tidiness.
 
 ## Importing a blueprint
 
@@ -33,7 +45,11 @@ Every blueprint page has a one-click import button. To do it by hand instead:
 3. Paste the blueprint's raw URL, listed on its page, and click Preview.
 4. Confirm and import.
 
-Importing only registers the blueprint. It does not create anything yet. A template blueprint lands at `config/blueprints/template/<author>/<name>.yaml`. Open that folder and note the exact `<author>` subfolder Home Assistant assigned, because you point at it when you build an entity.
+Importing only registers the blueprint. What you do with it next depends on the kind.
+
+**Automation blueprints** appear on the Blueprints page with a Create Automation button beside them. Click it, fill in the inputs the blueprint asks for, save, and the automation is running. That is the whole flow.
+
+**Template blueprints** do not get a Create button and never show up in the Create Helper list. They land at `config/blueprints/template/<author>/<name>.yaml`. Open that folder and note the exact `<author>` subfolder Home Assistant assigned, because you point at it when you build an entity. The next section walks through that.
 
 ## Turning a template blueprint into an entity
 

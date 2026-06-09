@@ -120,8 +120,6 @@ Want to be that tester? [Drop into the forum thread](https://xeazy.com/logbook/d
 
 ## License
 
-Licensed under [GPL-3.0](LICENSE). Free to use, modify, and share, with the requirement that derivative works carry the same license. A link back to xeazy.com is appreciated but not required.
+Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
 
----
-
-*Built by James Lander at [The Thinking Home](https://xeazy.com).*
+This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.

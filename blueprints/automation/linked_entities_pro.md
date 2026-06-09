@@ -120,7 +120,7 @@ Want to be that tester? [Drop into the forum thread](https://xeazy.com/logbook/d
 
 ## License
 
-MIT. Use it, fork it, share it. A link back to xeazy.com is appreciated but not required.
+Licensed under [GPL-3.0](LICENSE). Free to use, modify, and share, with the requirement that derivative works carry the same license. A link back to xeazy.com is appreciated but not required.
 
 ---
 

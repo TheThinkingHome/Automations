@@ -1,0 +1,174 @@
+blueprint:
+  name: Sensor Failover
+  description: |
+    # Sensor Failover
+
+    *A numeric sensor that falls back to a pool of backups when the primary goes offline.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/sensor-failover/) - the design and worked examples.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Creates a numeric template sensor that returns the primary's reading whenever it is available, falls back to an average of online backups when the primary is offline, and reports an optional default value (or goes unavailable) when everything is down. The average can be weighted if some backups are more trustworthy than others.
+
+    Originally built to keep a flaky Aqara FP2 lux reading usable by falling back to two other room lux sensors, but generalized to any numeric sensor and any number of backups.
+
+    **Version: 1.0.0**
+
+    Changelog:
+      1.0.0 - Initial release. Primary plus weighted backup pool. Simple average by default, optional weights for advanced cases. Optional default value when all sources offline. Active_source and online_backups attributes for transparency.
+
+  domain: template
+  author: James Lander (xeazy.com)
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/sensor_failover.yaml
+  homeassistant:
+    min_version: 2026.5.4
+  input:
+    sources:
+      name: Sources
+      icon: mdi:source-branch
+      description: The trusted primary, and the backups used when it is offline.
+      input:
+        primary_entity:
+          name: Primary entity
+          description: The sensor used whenever it is available.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+        backup_entities:
+          name: Backup entities
+          description: Used when the primary is unavailable. Averaged when more than one is online.
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: sensor
+    output:
+      name: Output
+      icon: mdi:label
+      description: How the resulting sensor appears in Home Assistant.
+      input:
+        sensor_name:
+          name: Sensor name
+          description: The friendly name shown on the resulting sensor.
+          default: Sensor Failover
+          selector:
+            text:
+        unique_id:
+          name: Unique ID
+          description: A unique id so the sensor is registered and can be renamed, placed in an area, or have its device class changed from the interface. Make it distinct for every sensor you build, for example living_room_lux_with_fallback.
+          selector:
+            text:
+        unit_of_measurement:
+          name: Unit of measurement
+          description: The unit shown on the resulting sensor, for example lx, °C, or %.
+          selector:
+            text:
+    advanced:
+      name: Advanced (optional)
+      icon: mdi:tune
+      description: Leave both blank for sensible defaults.
+      input:
+        backup_weights:
+          name: Backup weights
+          description: 'Comma-separated numbers, one per backup entity, in the same order. Blank means equal weighting. For example, 70, 30 makes the first backup count more than twice as much as the second when both are online.'
+          default: ""
+          selector:
+            text:
+        default_value:
+          name: Default value
+          description: Used when the primary and all backups are offline. Blank means the sensor reports unavailable instead.
+          default: ""
+          selector:
+            text:
+
+variables:
+  primary_entity: !input primary_entity
+  backup_entities: !input backup_entities
+  backup_weights: !input backup_weights
+  default_value: !input default_value
+
+sensor:
+  name: !input sensor_name
+  unique_id: !input unique_id
+  unit_of_measurement: !input unit_of_measurement
+  availability: |
+    {% set p_ok = has_value(primary_entity) and states(primary_entity) | is_number %}
+    {% if p_ok %}
+      true
+    {% else %}
+      {% set ns = namespace(any_ok=false) %}
+      {% for entity_id in backup_entities %}
+        {% if has_value(entity_id) and states(entity_id) | is_number %}
+          {% set ns.any_ok = true %}
+        {% endif %}
+      {% endfor %}
+      {% set d = default_value | trim %}
+      {{ ns.any_ok or (d != '' and d | is_number) }}
+    {% endif %}
+  state: |
+    {% set p_ok = has_value(primary_entity) and states(primary_entity) | is_number %}
+    {% if p_ok %}
+      {{ states(primary_entity) | float }}
+    {% else %}
+      {% set weight_tokens = backup_weights.split(',') | map('trim') | reject('eq', '') | list %}
+      {% set ns = namespace(all_numeric=true) %}
+      {% for tok in weight_tokens %}
+        {% if not (tok | is_number) %}
+          {% set ns.all_numeric = false %}
+        {% endif %}
+      {% endfor %}
+      {% set use_weights = weight_tokens | length == backup_entities | length and ns.all_numeric %}
+      {% set acc = namespace(weighted_sum=0.0, total_weight=0.0) %}
+      {% for entity_id in backup_entities %}
+        {% if has_value(entity_id) and states(entity_id) | is_number %}
+          {% set w = (weight_tokens[loop.index0] | float(1)) if use_weights else 1 %}
+          {% set acc.weighted_sum = acc.weighted_sum + (states(entity_id) | float * w) %}
+          {% set acc.total_weight = acc.total_weight + w %}
+        {% endif %}
+      {% endfor %}
+      {% if acc.total_weight > 0 %}
+        {{ (acc.weighted_sum / acc.total_weight) | round(2) }}
+      {% else %}
+        {% set d = default_value | trim %}
+        {% if d != '' and d | is_number %}
+          {{ d | float }}
+        {% endif %}
+      {% endif %}
+    {% endif %}
+  attributes:
+    active_source: |
+      {% set p_ok = has_value(primary_entity) and states(primary_entity) | is_number %}
+      {% if p_ok %}
+        primary
+      {% else %}
+        {% set ns = namespace(any_ok=false) %}
+        {% for entity_id in backup_entities %}
+          {% if has_value(entity_id) and states(entity_id) | is_number %}
+            {% set ns.any_ok = true %}
+          {% endif %}
+        {% endfor %}
+        {% if ns.any_ok %}
+          backups
+        {% else %}
+          {% set d = default_value | trim %}
+          {% if d != '' and d | is_number %}
+            default
+          {% else %}
+            none
+          {% endif %}
+        {% endif %}
+      {% endif %}
+    online_backups: |
+      {% set ns = namespace(list=[]) %}
+      {% for entity_id in backup_entities %}
+        {% if has_value(entity_id) and states(entity_id) | is_number %}
+          {% set ns.list = ns.list + [entity_id] %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.list }}

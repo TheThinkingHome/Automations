@@ -52,7 +52,7 @@ Blueprints are reusable templates you import once and use with different inputs,
 Watch for events and run actions in response.
 
 * [Linked Entities Pro](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro.md)
-   * Keeps two or more entities perfectly in sync, with a tiebreaker that wins on restart. Switches, lights, fans, input_booleans, and groups mix freely in the same linked group, and a change on any of them propagates to the others. On Home Assistant restart, or when a bridge sensor reconnects, a designated authority entity resolves drift the same way every time. Beta, until an external tester confirms it works on their setup. [Instructions](https://xeazy.com/linked-entity-pro/)
+   * Keeps two or more entities perfectly in sync, with a tiebreaker that wins on restart. Switches, lights, fans, input_booleans, and groups mix freely in the same linked group, and a change on any of them propagates to the others. On Home Assistant restart, or when a bridge sensor reconnects, a designated authority entity resolves drift the same way every time. Beta, until an external tester confirms it works on their setup. [Instructions](https://xeazy.com/linked-entities-pro/)
 
 #### Template Blueprints
 

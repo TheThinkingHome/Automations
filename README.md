@@ -45,11 +45,21 @@ Template entities allow for the creation of custom sensors and other entities ba
 
 ### 📐 Blueprints
 
-Blueprints are reusable templates you import once and use with different inputs, so the same tested logic can run in many places without copy-paste.
+Blueprints are reusable templates you import once and use with different inputs, so the same tested logic can run in many places without copy-paste. They are grouped by the kind of entity they build.
+
+#### Automation Blueprints
+
+Watch for events and run actions in response.
+
+* [Linked Entities Pro](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro.md)
+   * Keeps two or more entities perfectly in sync, with a tiebreaker that wins on restart. Switches, lights, fans, input_booleans, and groups mix freely in the same linked group, and a change on any of them propagates to the others. On Home Assistant restart, or when a bridge sensor reconnects, a designated authority entity resolves drift the same way every time. Beta, until an external tester confirms it works on their setup. [Instructions](https://xeazy.com/linked-entity-pro/)
+
+#### Template Blueprints
+
+Build derived sensors and helpers from your existing entities.
 
 * [Recently Active](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/recently_active.md)
    * Turns a fired-once event into a state you can ask about later. It builds a binary sensor that stays on while a source is on, and for a set number of seconds after it turns off. Point it at any on/off entity: a contact sensor, a switch, an input_boolean. [Instructions](https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/)
-
 * [Weighted Confidence](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/weighted_confidence.md)
    * Infers a fuzzy state like "is it bedtime" from many signals at once, each carrying its own weight. The sensor turns on when enough agreeing weight crosses a threshold you set, a required signal can veto the result outright, and it reads numbers as readily as on and off. Pairs with Recently Active to bring time into the vote. Beta, so the signal format may still shift between releases. [Instructions](https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/)
 

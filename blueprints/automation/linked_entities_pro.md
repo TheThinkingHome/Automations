@@ -2,7 +2,7 @@
 
 A Home Assistant automation blueprint that keeps two or more entities in lockstep, with a deterministic tiebreaker for the moments when the group can briefly disagree.
 
-When a wall switch and a smart bulb are wired to control the same light, or a Zigbee relay and a Tasmota module sit on the same lamp, the moment they disagree the next press lands wrong. The dashboard shows one thing, the fixture does another, and the room is broken until someone notices. The naive bidirectional sync automation either ping-pongs in a loop, or carries a recursion guard so loose that it fires intermittently. *Linked Entities Pro* fixes both. A strict three-condition context filter cleanly separates a real human press from an automated update, so the followers' state changes never trip the trigger again. Any number of entities can sit in one linked group, in any mix of integrations, and a change on any of them propagates to the others.
+When a wall switch and a smart bulb are wired to control the same light, or a Zigbee relay and a Tasmota module sit on the same lamp, the moment they disagree the next press lands wrong. The dashboard shows one thing, the fixture does another, and the room is broken until someone notices. The naive bidirectional sync automation either ping-pongs in a loop, or carries a recursion guard so loose that it fires intermittently. *Linked Entities Pro* fixes both. A state-equality gate stops every run when the other linked entities already match the source's new state, so the followers' responses cannot drive the loop any further. Any number of entities can sit in one linked group, in any mix of integrations, and a change on any of them propagates to the others.
 
 Two events can leave the group out of sync. On Home Assistant restart, entities come back online in unpredictable order, some still carrying stale states from before. On a Zigbee2MQTT bridge reconnect, the bridge republishes every device's last-known state at once, which looks like every switch in the house just got pressed by an invisible hand. In both moments the linked entities can disagree, and the blueprint cannot tell from the events alone which state represents reality. That is where the *authority entity* comes in. You designate one entity in the group as the source of truth for these moments. When a reconcile event fires, the authority's current state is treated as correct and the others are commanded into alignment. During ordinary use the authority has no special role: any linked entity can drive the others. It only matters in those two narrow situations.
 
@@ -12,12 +12,12 @@ Full write-up and the longer story behind the design: <https://xeazy.com/linked-
 
 - Bidirectional sync across two or more entities. A change on any of them propagates to the others.
 - Cross-domain support. Switches, lights, input_booleans, fans, and groups can mix freely in the same linked group.
-- A three-condition context filter that distinguishes physical presses from automated changes, so the followers' updates do not loop back as new triggers.
+- A state-equality gate that stops a run when the other linked entities already match the source's new state, so the followers' responses cannot loop the trigger back on itself.
 - A reconcile branch that runs on Home Assistant start and on an optional bridge sensor reporting back online, with a designated authority entity acting as the tiebreaker.
 - An optional suppress-during binary sensor that pauses the automation during maintenance windows or reboot indicators.
 - Debug logging that can be toggled on during setup and off in normal operation.
 
-Trigger filtering on the linked entities is restricted to `to: ['on', 'off']`, so devices coming back online from `unavailable` are not treated as physical presses. The reconcile branch waits up to 30 seconds for the authority to enter a known state before acting, so an unavailable authority on boot does not corrupt the alignment.
+Trigger filtering on the linked entities is restricted to `to: ['on', 'off']`, so devices coming back online from `unavailable` do not fire the trigger. The reconcile branch waits up to 30 seconds for the authority to enter a known state before acting, so an unavailable authority on boot does not corrupt the alignment.
 
 ## Where This Fits
 
@@ -82,7 +82,7 @@ Two events sit outside the peer sync model and have their own branch.
 
 A Home Assistant restart brings entities back up in unpredictable order. Some report stale states from before the restart, some come up unavailable for a while and then settle, and the linked group can disagree for several seconds while everything finishes loading. The reconcile branch reads the authority entity's state, waits up to 30 seconds for it to enter a known on or off state, then commands every other entity in the group to match. If the authority is still unavailable after the 30-second wait, the reconcile exits cleanly and waits for the next event to try again.
 
-A Zigbee2MQTT bridge reconnect is the second event. Z2M republishes every device's last-known state on reconnect with a null parent context, which is indistinguishable from a physical press at the event level. Without a guard, that republish cascade can drive the followers in random directions. The reconcile trigger sensor input solves this: point it at `binary_sensor.zigbee2mqtt_running`, and the reconcile branch runs on its off-to-on transition, treating the authority as truth and aligning everything else.
+A Zigbee2MQTT bridge reconnect is the second event. Z2M republishes every device's last-known state on reconnect, which arrives as a cascade of state-change events in unpredictable order. The peer sync branch reading those alone would race; whichever entity republishes last would drive everyone else to its state, regardless of which state is actually correct. The reconcile trigger sensor input solves this: point it at `binary_sensor.zigbee2mqtt_running`, and the reconcile branch runs on its off-to-on transition, treating the authority as truth and aligning everything else.
 
 Users of other Zigbee integrations or other transports can usually leave the reconcile trigger sensor blank: ZHA does not republish on coordinator reconnect, Z-Wave JS tracks node state internally and does not flood events, and WiFi devices reconnect per device, not as a cascade. See the table further down.
 
@@ -118,7 +118,7 @@ For more worked examples, including mixed-integration groups and the longer stor
 
 | Integration | Recommended sensor | Why |
 | --- | --- | --- |
-| Zigbee2MQTT | `binary_sensor.zigbee2mqtt_running` | Z2M republishes every device's state on bridge reconnect with `parent_id=null`, indistinguishable from physical presses. This is the canonical use case. |
+| Zigbee2MQTT | `binary_sensor.zigbee2mqtt_running` | Z2M republishes every device's state on bridge reconnect, which arrives as a cascade of state changes in unpredictable order. This is the canonical use case. |
 | ZHA | Usually leave blank | ZHA does not republish states on coordinator reconnect. The Home Assistant start reconcile is enough. |
 | Z-Wave JS | Usually leave blank | The driver tracks node state internally and does not flood events on reconnect. |
 | WiFi (Shelly, Tasmota, etc.) | Usually leave blank | Reconnects are per device, not cascaded. |

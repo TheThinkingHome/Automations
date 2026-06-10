@@ -271,6 +271,24 @@ actions:
             delay:
               milliseconds: "{{ sync_delay_ms }}"
 
+          - alias: Verify Source Still in Captured State
+            if:
+              - condition: template
+                value_template: "{{ states(trigger.entity_id) != trigger.to_state.state }}"
+            then:
+              - alias: Debug Log Stale Dispatch Canceled
+                if:
+                  - condition: template
+                    value_template: "{{ debug_enabled }}"
+                then:
+                  - action: system_log.write
+                    continue_on_error: true
+                    data:
+                      level: info
+                      message: >-
+                        {{ _caller_prefix }} Dispatch canceled. Source {{ trigger.entity_id }} flipped during delay from {{ trigger.to_state.state }} to {{ states(trigger.entity_id) }}.
+              - stop: Source flipped during delay. Dispatch canceled.
+
           - alias: Propagate State to All Other Linked Entities
             action: "homeassistant.turn_{{ trigger.to_state.state }}"
             continue_on_error: true

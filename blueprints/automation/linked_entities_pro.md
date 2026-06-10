@@ -68,11 +68,13 @@ Give the automation a name, save it, and the sync is live.
 
 The full parameter reference is in the table at the end of this page.
 
-## A Small Note on Physical Presses
+## A Small Note on Loop Prevention
 
-The peer sync branch has to tell a real physical press apart from an automated state change, or it would loop. The blueprint uses a strict three-condition filter on the trigger context: the event has a context id, has no parent context id, and has no user id. A physical press from a switch (or any source that arrives outside an automation) satisfies all three. An automation-driven change carries this blueprint's own context as its parent id, which fails the second condition. A change from the Home Assistant frontend carries a user id, which fails the third.
+A bidirectional sync automation can chase its own tail if it is not careful. When the blueprint commands a follower into alignment, that follower's state change fires the same trigger that started the work, and a naive design will keep going. *Linked Entities Pro Beta* breaks the loop with a state-equality check: before doing anything, the automation asks whether the other linked entities already match the source's new state. If they do, it stops. If they do not, it dispatches the commands. The followers respond, their state changes fire the trigger again, the gate checks again, and as soon as everyone agrees the work ends.
 
-The result is clean: presses propagate, the followers' updates do not propagate further. Most published sync blueprints check only the parent id, which lets some edge cases through; this one closes the door on all three at once.
+The reason this is enough comes from how Home Assistant handles state changes. `state_changed` only fires when the state actually changes. If the blueprint commands an already-on switch to turn on, the device reports back its unchanged state, and no event fires. So the gate only has to handle real propagation, never imaginary echoes.
+
+This design has a useful property the strict context-filter approach does not: any state change propagates, regardless of who caused it. A physical press, a dashboard toggle, a scene automation, a voice command. All of them flow through the same gate and reach the followers the same way.
 
 ## A Small Note on Restart and Bridge Drift
 
@@ -84,11 +86,15 @@ A Zigbee2MQTT bridge reconnect is the second event. Z2M republishes every device
 
 Users of other Zigbee integrations or other transports can usually leave the reconcile trigger sensor blank: ZHA does not republish on coordinator reconnect, Z-Wave JS tracks node state internally and does not flood events, and WiFi devices reconnect per device, not as a cascade. See the table further down.
 
-## A Small Note on Rapid Presses
+## A Small Note on Cascade Timing
 
-The automation runs in `mode: single` with `max_exceeded: silent`. If a second physical press arrives while the first run is still dispatching, the second is dropped silently rather than racing the first. The followers end up at the state of the first press. A short pause between presses (a fraction of a second is enough on most hardware) is the user-visible workaround.
+A sync run has three phases. First, the trigger fires and the loop-prevention gate decides whether to proceed. Second, the automation waits for `sync_delay_ms` before dispatching. Third, the dispatch fires and the followers report their new states some milliseconds later. Most of the time this is invisible; the cascade ends in well under a second. Two cases are worth knowing about.
 
-This is a deliberate trade. The alternative, `mode: queued`, would honor every press in order but lets the followers fall behind on a flurry of toggles, which is its own kind of confusing. Single mode keeps the followers truthful to the most recent settled state and drops the redundant ones, which is the right default for a sync automation.
+**A second press during the delay** is handled cleanly. The automation runs in `mode: restart`, so the new trigger cancels the in-flight run before it dispatches anything. The new press takes over, the loop-prevention gate evaluates the new state, and the system settles to that. This is the behavior you want: press on, change your mind a moment later, press off, and the followers go off (or stay off). The first press never leaves the source.
+
+**A second press *after* the dispatch but before the followers have finished responding** is the limitation. The dispatch is already out the door; the followers are turning on. When you press off in the middle of that, the source reports off, the loop-prevention gate looks around and sees the followers haven't responded yet, and the run quietly skips. Then the followers' responses arrive, each one looking like a fresh "turn on" event, and the cascade propagates back into the source. Net effect: the second press is lost and the group converges to the state the first press wanted. The system never gets stuck or loops; it just lands on the wrong side of the toggle.
+
+In practice the window for this is small. With the default 200 ms sync delay and typical Zigbee response of 250-500 ms, the second-press window is roughly half a second between the dispatch and the slowest follower's reply. If you find yourself flipping the same entity in opposite directions inside that window often, raise `sync_delay_ms` to extend the safe cancellation window, or simply press again after the cascade settles. The reconcile branches catch any drift the next time Home Assistant restarts or the bridge reconnects.
 
 ## Worked Example
 
@@ -126,7 +132,7 @@ For more worked examples, including mixed-integration groups and the longer stor
 | `authority_entity` | No | first entity in `linked_entities` | one entity from the same domain set | The tiebreaker entity. Used only on reconcile events, never during ordinary use. |
 | `reconcile_on_ha_start` | No | `true` | `true`, `false` | When true, a reconcile runs on Home Assistant start. |
 | `reconcile_trigger_sensor` | No | none | any `binary_sensor` | When set, a reconcile runs on the sensor's off-to-on transition. Catches bridge-reconnect cascades. |
-| `sync_delay_ms` | No | `200` | a whole number of milliseconds, 0 to 5000 | Milliseconds between dispatched actions. Set to 0 for small pairs on fast hardware. Increase on busy meshes. |
+| `sync_delay_ms` | No | `200` | a whole number of milliseconds, 0 to 5000 | Milliseconds between the trigger and the dispatched commands. Doubles as the cancellation window for rapid opposite presses, so a larger value gives `mode: restart` more room to absorb in-flight changes. Setting it at or above the slowest device's response latency (typically 200 to 500 ms for Zigbee) eliminates redundant commands during the cascade. Set to 0 for a pair on fast hardware where there is nothing for the delay to absorb. |
 | `suppress_during` | No | none | any `binary_sensor` | When this sensor is on, the automation is suppressed entirely. Useful for maintenance windows or reboot indicators. |
 | `debug_enabled` | No | `false` | `true`, `false` | When true, writes a log line for every trigger and action. Turn off in normal operation. |
 

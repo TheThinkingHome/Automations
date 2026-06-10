@@ -2,7 +2,7 @@
 
 A Home Assistant automation blueprint that keeps two or more entities in sync. When they briefly disagree, a chosen tiebreaker wins.
 
-Picture a switch for the hallway lights and a switch for the stairway lights. They sit on separate circuits, but anyone walking through presses both. Now picture a wall switch wired to the lights, paired with a second switch across the room that has no wires of its own and only sends events to Home Assistant. Or picture a smart bulb that stays powered all the time, controlled by a wall switch that sends events instead of cutting power. In each of these setups, the controllers can fall out of sync. When they do, the next press lands wrong or gets ignored, the dashboard shows one thing while the fixture does another, and the room is broken until someone notices. The naive two-way sync automation either ping-pongs in a loop, or carries a recursion guard so loose that it fires intermittently. *Linked Entities Pro* fixes both. A state-equality gate stops every run when the other linked entities already match the source's new state, so the followers' responses cannot drive the loop any further. Any number of entities can sit in one linked group, in any mix of integrations, and a change on any of them propagates to the others.
+Picture two independent switches, a switch for the hallway lights and a switch for the stairway lights. Anyone walking through presses both. Now picture a wall switch wired to the lights, paired with a second virtual switch across the room. Or picture a smart bulb that stays powered all the time, controlled by another virtual wall switch that sends events instead of controlling the bulb directly. In each of these setups, the controllers can fall out of sync. When they do, the next press lands wrong or gets ignored, the dashboard shows one thing while the fixture does another, and the room is broken until someone notices. The naive two-way sync automation either ping-pongs in a loop, or carries a recursion guard so loose that it fires intermittently. *Linked Entities Pro* fixes both. A state-equality gate stops every run when the other linked entities match the source's new state, so the followers' responses cannot drive the loop any further. Any number of entities can sit in one linked group, in any mix of integrations, and a change on any of them propagates to the others.
 
 Two events can leave the group out of sync. On Home Assistant restart, entities come back online in unpredictable order, some still carrying stale states from before. On a Zigbee2MQTT bridge reconnect, the bridge republishes every device's last-known state at once, which looks like every switch in the house just got pressed by an invisible hand. In both moments the linked entities can disagree, and the blueprint cannot tell from the events alone which state represents reality. That is where the *authority entity* comes in. You designate one entity in the group as the source of truth for these moments. When a reconcile event fires, the authority's current state is treated as correct and the others are commanded into alignment. During ordinary use the authority has no special role: any linked entity can drive the others. It only matters in those two narrow situations.
 
@@ -12,9 +12,9 @@ Full write-up and the longer story behind the design: <https://xeazy.com/linked-
 
 - Two-way sync across two or more entities. A change on any of them propagates to the others.
 - Cross-domain support. Switches, lights, input_booleans, fans, and groups can mix freely in the same linked group.
-- A state-equality gate that stops a run when the other linked entities already match the source's new state, so the followers' responses cannot loop the trigger back on itself.
+- A state-equality gate that stops a run when the other linked entities match the source's new state, so the followers' responses cannot loop the trigger back on itself.
 - A reconcile branch that runs on Home Assistant start and on an optional bridge sensor reporting back online, with a designated authority entity acting as the tiebreaker.
-- An optional suppress-during binary sensor that pauses the automation during maintenance windows or reboot indicators.
+- An optional suppress-during binary sensor that pauses the automation during maintenance windows, reboot indicators, or whatever you can dream up.
 - Debug logging that can be toggled on during setup and off in normal operation.
 
 Trigger filtering on the linked entities is restricted to `to: ['on', 'off']`, so devices coming back online from `unavailable` do not fire the trigger. The reconcile branch waits up to 30 seconds for the authority to enter a known state before acting, so an unavailable authority on boot does not corrupt the alignment.
@@ -27,7 +27,7 @@ A one-direction automation is the right tool when the dependency really is one-w
 
 A pair of mirrored automations, one for A drives B and one for B drives A, covers the two-way case. They are easy to write and easy to break. Without a recursion guard you get a ping-pong loop. With a naive guard you get a loop that fires intermittently. With a strict guard you get drift on restart that nothing resolves. Most published switch-sync blueprints sit here.
 
-Native Home Assistant Light Groups handle groups of any size when every member is in the `light` domain. The group acts as the controllable parent. What groups do not give you: cross-domain mixing (a wall switch and a relay are not lights), or alignment of the underlying entities after a bridge reconnect that republishes them out of order.
+Native Home Assistant Light Groups handle groups of any size when every member is in the `light` domain. The group acts as the controllable parent: turn the group on and every member turns on. But the sync only flows downward, from the group to its members. Change one member directly, from its own wall switch or its own card, and the siblings do not follow. Groups also do not give you cross-domain mixing (a wall switch and a relay are not lights), or alignment of the underlying entities after a bridge reconnect that republishes them out of order.
 
 This blueprint sits where you want two-way sync across two or more entities, want it to survive restarts and bridge reconnects without drift, and want to mix domains (switches, lights, input_booleans, fans, groups) freely.
 
@@ -106,7 +106,7 @@ Configure the blueprint like this:
 - **Authority Entity**: `switch.kitchen_counter_relay` (closer to the load, so it carries the true state if the two disagree)
 - **Reconcile on Home Assistant Start**: ON
 - **Reconcile Trigger Sensor**: `binary_sensor.zigbee2mqtt_running`
-- **Sync Delay**: 0 (a two-entity pair has no mesh-load risk, so no throttling is needed)
+- **Sync Delay**: 0 (a two-entity pair has no mesh-load risk, so throttling is not needed)
 - **Suppress During**: blank
 - **Debug Logging**: ON for the first day, OFF after
 

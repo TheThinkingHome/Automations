@@ -6,7 +6,7 @@ Picture two independent switches, a switch for the hallway lights and a switch f
 
 Two events can leave the group out of sync. On Home Assistant restart, entities come back online in unpredictable order, some still carrying stale states from before. On a Zigbee2MQTT bridge reconnect, the bridge republishes every device's last-known state at once, which looks like every switch in the house just got pressed by an invisible hand. In both moments the linked entities can disagree, and the blueprint cannot tell from the events alone which state represents reality. That is where the *authority entity* comes in. You designate one entity in the group as the source of truth for these moments. When a reconcile event fires, the authority's current state is treated as correct and the others are commanded into alignment. During ordinary use the authority has no special role: any linked entity can drive the others. It only matters in those two narrow situations.
 
-Full write-up and the longer story behind the design: <https://xeazy.com/linked-entity-pro/>  Questions and discussion: <https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint>
+Full write-up and the longer story behind the design: <https://xeazy.com/linked-entities-pro/>  Questions and discussion: <https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint>
 
 ## What You Get
 
@@ -112,7 +112,7 @@ Configure the blueprint like this:
 
 Press the wall switch and the relay follows. Toggle the relay from the dashboard and the wall switch follows. Restart Home Assistant and the wall switch is pulled into alignment with the relay. Cycle the Z2M addon and the same thing happens. The two states never drift apart.
 
-For more worked examples, including mixed-integration groups and the longer story behind each design choice, see the article: <https://xeazy.com/linked-entity-pro/>
+For more worked examples, including mixed-integration groups and the longer story behind each design choice, see the article: <https://xeazy.com/linked-entities-pro/>
 
 ## Reconcile Trigger Sensor by Integration
 

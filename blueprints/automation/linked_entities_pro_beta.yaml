@@ -22,7 +22,7 @@ blueprint:
     **Version: 1.0.0 (Beta)**
 
     Changelog:
-      1.0.0 - Initial beta release. On/off sync only. Authority-on-reconcile model. Cross-domain entity selector. Three-condition context filter for physical-press detection. HA start and optional reconcile-trigger-sensor branches for restart and bridge-reconnect drift recovery. Suppress-during gate. Debug logging.
+      1.0.0 - Initial beta release. On/off sync only. Authority-on-reconcile model. Cross-domain entity selector. State equality breaks sync loops, so changes from physical presses, dashboards, automations, scenes, and voice all propagate. Mode restart so rapid toggles resolve to the latest state. HA start and optional reconcile-trigger-sensor branches for restart and bridge-reconnect drift recovery. Suppress-during gate. Debug logging.
 
   domain: automation
   author: James Lander (xeazy.com)
@@ -149,7 +149,7 @@ blueprint:
           selector:
             boolean: {}
 
-mode: single
+mode: restart
 max_exceeded: silent
 
 triggers:
@@ -223,18 +223,36 @@ actions:
     then:
       - stop: Reconcile on Home Assistant start is disabled.
 
+  - alias: Skip Peer Sync if States Already Agree
+    if:
+      - condition: trigger
+        id: linked_entity_changed
+      - alias: All followers already match the source's new state
+        condition: template
+        value_template: >-
+          {{ linked_entities_var
+             | reject('eq', trigger.entity_id) | list
+             | map('states') | reject('eq', trigger.to_state.state) | list | length == 0 }}
+    then:
+      - alias: Debug Log Skip
+        if:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        then:
+          - action: system_log.write
+            continue_on_error: true
+            data:
+              level: info
+              message: >-
+                {{ _caller_prefix }} Skip. All linked entities already match. Source: {{ trigger.entity_id }} -> {{ trigger.to_state.state }}.
+      - stop: All linked entities already agree.
+
   - alias: Dispatch by Trigger
     choose:
       - alias: Linked Entity Changed - Peer Sync
         conditions:
           - condition: trigger
             id: linked_entity_changed
-          - alias: Physical or user-initiated change only
-            condition: template
-            value_template: >-
-              {{ trigger.to_state.context.id is not none
-                 and trigger.to_state.context.parent_id is none
-                 and trigger.to_state.context.user_id is none }}
         sequence:
           - alias: Debug Log Peer Sync
             if:

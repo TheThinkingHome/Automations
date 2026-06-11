@@ -7,6 +7,10 @@
 # https://xeazy.com/sensor-failover-blueprint/
 #
 # Changelog:
+#   1.0.1 - Handles the all-zero-weights edge case gracefully. If every
+#           backup weight is zero, the blueprint now falls back to equal
+#           weighting instead of letting total_weight collapse to zero
+#           and dumping the user to default_value or unavailable.
 #   1.0.0 - Initial release. Wraps a numeric sensor with a pool of backups so a
 #           single flaky source no longer surfaces as unavailable to downstream
 #           automations. Primary's reading is returned when available. When the
@@ -81,7 +85,8 @@ blueprint:
       description: >
         The device class for the resulting sensor. Controls how the value
         displays and is grouped. Pick one that matches your source, or type
-        your own. If your sensor has no natural class, use enum.
+        your own. If your numeric sensor measures something obscure, choose
+        the closest match from the Home Assistant sensor device class list.
       default: illuminance
       selector:
         select:
@@ -167,13 +172,16 @@ sensor:
       {{ states(primary_entity) | float }}
     {% else %}
       {% set weight_tokens = backup_weights.split(',') | map('trim') | reject('eq', '') | list %}
-      {% set ns = namespace(all_numeric=true) %}
+      {% set ns = namespace(all_numeric=true, any_nonzero=false) %}
       {% for tok in weight_tokens %}
         {% if not (tok | is_number) %}
           {% set ns.all_numeric = false %}
         {% endif %}
+        {% if tok | float(0) != 0 %}
+          {% set ns.any_nonzero = true %}
+        {% endif %}
       {% endfor %}
-      {% set use_weights = weight_tokens | length == backup_entities | length and ns.all_numeric %}
+      {% set use_weights = weight_tokens | length == backup_entities | length and ns.all_numeric and ns.any_nonzero %}
       {% set acc = namespace(weighted_sum=0.0, total_weight=0.0) %}
       {% for entity_id in backup_entities %}
         {% if has_value(entity_id) and states(entity_id) | is_number %}

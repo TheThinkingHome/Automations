@@ -14,7 +14,7 @@ Questions and discussion: https://xeazy.com/logbook/d/36-recently-active-bluepri
 - A `binary_sensor` that reads `on` while the condition holds, and for a set number of seconds after it clears.
 - Three ways to set the condition: an on/off source is on, a numeric sensor is above a threshold, or a numeric sensor is below a threshold.
 - Works with any on/off source (a `binary_sensor`, a `switch`, an `input_boolean`) or any numeric `sensor`.
-- If the source goes unavailable or unknown, the sensor returns `off`, so a dead source never sticks the sensor on and never silently suppresses whatever depends on it.
+- If the source goes unavailable, unknown, or reports a non-numeric value in the above/below modes, the sensor returns `off`, so a malformed source never sticks the sensor on and never silently suppresses whatever depends on it.
 
 How the timing works, up front: the linger runs on the binary sensor's own `delay_off`, so the off transition lands exactly when your window closes, to the second, and the condition clearing is caught instantly. What it does not give you is a timer you can pause, cancel, or watch count down. If you need any of that, a timer helper or History Stats is the better tool. This one is for clean, short linger in a single line.
 
@@ -170,11 +170,11 @@ By default the sensor uses the `occupancy` device class, so the frontend shows D
 
 ## A Small Note on Dead Sources
 
-The "What You Get" list mentions that the sensor returns `off` when the source goes unavailable or unknown. That was a deliberate call. Returning `unknown` instead would have looked more honest, but it would break the on-to-off transition that this design hinges on.
+The "What You Get" list mentions that the sensor returns `off` when the source goes unavailable, unknown, or non-numeric in the threshold modes. That was a deliberate call. Returning `unknown` instead would have looked more honest, but it would break the on-to-off transition that this design hinges on.
 
 If the source dies while the sensor is `on`, returning unknown would mean the entity goes from `on` to `unknown`, not `on` to `off`, and any automation listening for the linger-expired event would never fire. The current design makes a source death look like "linger ended cleanly," so suppression stops being applied, end-of-linger actions still run, and the system keeps moving. Brief source hiccups never get this far, since the linger is already running and `delay_off` holds the sensor `on` through a few seconds of unavailability. The article linked at the top covers the rest, including what to monitor for source health separately.
 
-The unavailable guard does a second job specific to the numeric modes. Without it, `'unavailable' | float(0)` evaluates to `0`, which for `comparison: below` with a positive threshold reads as true, sticking the sensor `on` forever. The guard prevents that.
+The guard against malformed source states does a second job specific to the numeric modes. Without it, any string value evaluates to `0` via Jinja's float fallback, which for `comparison: below` with a positive threshold reads as true, sticking the sensor `on` forever. The v2.1.2 patch extended the guard from just `unavailable` and `unknown` to any non-numeric state, so a flaky integration reporting `Error`, `n/a`, or `calibrating` no longer turns into 0 and triggers a false linger.
 
 ## Example Use
 
@@ -182,9 +182,23 @@ A common one: an LLM analyzes snapshots from a front-door camera to flag unusual
 
 A numeric one: appliances draw power in bursts, so a plain "is it drawing power" check reads off during a lull and fires "cycle complete" mid-wash. Point Recently Active at the power sensor with `comparison: above`, a `threshold` just over the machine's idle draw, and a `linger_seconds` long enough to cover the longest quiet stretch. The sensor stays on through the pauses and only drops once the machine has truly stopped.
 
+A driveway one: you pull the FJ40 in after dark and the Reolink NVR catches the motion, flipping its binary sensor to `on`. The moment you park and kill the engine, the motion clears. A strict "lights when motion" automation would drop the driveway and porch lights instantly. Point Recently Active at the camera's motion sensor with a five-minute linger, and the lights stay up while you gather things from the truck, even though the camera now thinks the space is empty.
+
+A network one: a smart home hub drops off the network for ten seconds during a DHCP renewal, just often enough to fire spurious offline alerts. Point Recently Active at the device's ping latency sensor with `comparison: below`, a threshold well above normal latency (say `1000` ms), and a 60-second linger. While the device responds, latency stays under threshold and the wrapper reads on. During a brief outage the latency sensor goes unavailable, the wrapper holds on through the linger window, and dashboards and dependent automations stay quiet through the transient hiccup.
+
 For more worked examples, detailed setup instructions, and the fuller story behind each design choice, see the article: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 
 ## License
 
 Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
 This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.
+
+## Changelog
+
+| Version | Notes |
+|---|---|
+| 2.1.2 | Extended the unavailable guard. Previously only `unavailable` and `unknown` states triggered the off-fallback in the threshold modes; now any non-numeric state does. A flaky integration reporting `Error` or `n/a` no longer turns into 0 via Jinja's float fallback and falsely triggers a `below`-mode linger. |
+| 2.1.1 | Refactored the state template to a single Jinja expression so it renders cleanly as True or False. The v2.1.0 multi-line if/elif form rendered with surrounding whitespace that could leave the entity stuck at `unknown` instead of resolving to off. |
+| 2.1.0 | Added a `comparison` input (on/off, above, below) and a `threshold` input, so the same blueprint now also lingers on a numeric sensor crossing a value, not just an on/off source. `comparison` defaults to the on/off behavior, so sensors built on earlier versions are unaffected. Added an unavailable/unknown guard so a dead source reads off in every mode, then decays after the linger. |
+| 2.0.0 | Rebuilt on `delay_off` instead of a `now()` based template, so the linger is timer-precise and the sensor no longer re-evaluates every minute. State is simply whether the source is on, and `delay_off` holds the on state for the chosen number of seconds after the source goes quiet. Added a `unique_id` input so the sensor is registered and can be renamed, placed in an area, and reclassified in the interface, and a `device_class` input for how it reads in the frontend. |
+| 1.0.0 | Initial release. `now()` based linger, no `unique_id` or `device_class`. |

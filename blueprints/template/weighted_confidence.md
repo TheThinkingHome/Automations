@@ -153,13 +153,15 @@ Each item in the `signals` list takes these. A signal needs only an `entity` and
 | `entity` | Yes | none | any entity id | The entity this signal reads. Anything with a state, not only binary sensors. |
 | `weight` | No | `1` | any number, including `0` | How much the signal counts toward the score. `0` makes a pure gate that adds nothing but can still be `required`. |
 | `operator` | No | `equals` | `equals`, `not_equals`, `above`, `below`, `between` | How agreement is judged. The first two compare text, the last three read the state as a number. |
-| `state` | Used by `equals` and `not_equals` | `"on"` | a single value, or a list of values | The value or values that count as agreement under `equals`, or that disqualify under `not_equals`. |
-| `value` | Used by `above` and `below` | none | a number | The number the entity's value is compared against. |
-| `low` | Used by `between` | none | a number | The inclusive lower bound. |
-| `high` | Used by `between` | none | a number | The inclusive upper bound. |
+| `state` | Used by `equals` and `not_equals` | `"on"` | a single value, or a list of values | The value or values that count as agreement under `equals`, or that disqualify under `not_equals`. Lists are compared as text, so numeric lists work whether quoted or unquoted. |
+| `value` | Used by `above` and `below` | none | a number | The number the entity's value is compared against. Must be set for the operator to match anything. |
+| `low` | Used by `between` | none | a number | The inclusive lower bound. Must be set for the operator to match anything. |
+| `high` | Used by `between` | none | a number | The inclusive upper bound. Must be set for the operator to match anything. |
 | `unavailable` | No | `drop` | `drop`, `agree`, `disagree` | What to do when the entity is unavailable or unknown. `drop` leaves it out, `agree` counts its weight as agreeing, `disagree` counts its weight against. On a `required` signal, `disagree` also vetoes while the entity is unavailable. |
 | `required` | No | `false` | `true`, `false` | Makes the signal a hard gate. Available and not agreeing forces the sensor off, whatever the score. Pair it with `unavailable: disagree` to force off while the signal is unavailable too; on the default `drop`, an unavailable required signal simply drops out. |
 | `name` | No | the entity id | any text | The label shown in the `contributing` and `not_met` attributes, so they read in plain language. |
+
+The `value`, `low`, and `high` fields are not validated up front. If you set `operator: above` and forget to provide a `value`, or misspell `high` as `hihg`, the signal will silently not match rather than throwing an error or defaulting the missing bound to zero. Check the `not_met` attribute for any signal you expect to be matching but is not; if it consistently sits there during the moment its condition should hold, the bound fields are the place to look.
 
 ### Text and numbers
 
@@ -268,3 +270,11 @@ The door is two signals doing two jobs. The weight-zero gate is the instant veto
 
 Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
 This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.
+
+## Changelog
+
+| Version | Notes |
+|---|---|
+| 1.1.1-beta | Two bug fixes for silent failure modes. The `equals` and `not_equals` operators now match numeric lists correctly: previously, `state: [1, 2, 3]` (unquoted in YAML) parsed as a list of integers and the string state returned by `states()` never matched. The `above`, `below`, and `between` operators now require their bound fields (`value`, `low`, `high`) to be defined: previously a missing or misspelled field defaulted to 0 via Jinja's float fallback, producing arbitrary match behavior. The fix makes a misconfigured signal silently disagree instead, which shows up cleanly in the `not_met` attribute. |
+| 1.1.0-beta | A required signal set to `unavailable: disagree` now vetoes while it is unavailable, so a required signal whose state cannot be confirmed forces the result off instead of silently dropping out. Non-required `disagree` is unchanged, counting against the score only. |
+| 1.0.0-beta | Public preview. Percentage-of-available-weight scoring with per-signal weight, operators (`equals`, `not_equals`, `above`, `below`, `between`), a per-signal unavailable policy (`drop`, `agree`, `disagree`), an optional `required` hard gate, and a configurable agreement state that may be a single value or a list. Exposes `confidence`, `score`, `threshold`, `contributing`, `not_met`, and `unavailable` attributes. |

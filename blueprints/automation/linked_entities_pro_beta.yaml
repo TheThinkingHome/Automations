@@ -1,3 +1,27 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Linked Entities Pro (Beta) - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
+# Work in progress. Public preview, still in beta.
+# Full write-up, worked examples, and directions:
+# https://xeazy.com/linked-entities-pro/
+#
+# Changelog:
+#   1.0.1-beta - Unknown Flip fix. The "Verify Source Still in Captured State"
+#                check no longer cancels dispatch when the source briefly drops
+#                to unknown or unavailable during the sync_delay_ms window.
+#                The check now only cancels when the source has explicitly
+#                flipped to the opposite known state ('on' or 'off').
+#   1.0.0-beta - Initial beta release. On/off sync only. Authority-on-reconcile
+#                model. Cross-domain entity selector. State equality breaks
+#                sync loops, so changes from physical presses, dashboards,
+#                automations, scenes, and voice all propagate. Mode restart so
+#                rapid toggles resolve to the latest state. HA start and
+#                optional reconcile-trigger-sensor branches for restart and
+#                bridge-reconnect drift recovery. Suppress-during gate. Debug
+#                logging.
+
 blueprint:
   name: Linked Entities Pro (Beta)
   description: |
@@ -15,14 +39,13 @@ blueprint:
 
     Switches, lights, fans, input_booleans, and groups can mix freely in the same linked group. A change on any entity propagates to the others. On Home Assistant restart or when an optional bridge sensor reconnects, a designated authority entity acts as the tiebreaker to resolve drift.
 
+    This release syncs binary on/off state only. Brightness, color, and fan speed do not propagate, by design - those are planned for v1.1.0.
+
     Originally built to keep a Zigbee wall switch and a Tasmota relay in lockstep, but generalized to N entities and any mix of integrations.
 
     **Work in progress.** This is a public preview. Feedback is welcome on the forum. Once an external tester confirms it works in their environment, the blueprint graduates from beta and the file is republished at `blueprints/automation/linked_entities_pro.yaml`.
 
-    **Version: 1.0.0 (Beta)**
-
-    Changelog:
-      1.0.0 - Initial beta release. On/off sync only. Authority-on-reconcile model. Cross-domain entity selector. State equality breaks sync loops, so changes from physical presses, dashboards, automations, scenes, and voice all propagate. Mode restart so rapid toggles resolve to the latest state. HA start and optional reconcile-trigger-sensor branches for restart and bridge-reconnect drift recovery. Suppress-during gate. Debug logging.
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
   domain: automation
   author: James Lander (xeazy.com)
@@ -171,8 +194,8 @@ triggers:
     id: reconcile_sensor
 
 variables:
-  _version: "1.0.0"
-  _caller_prefix: "[Linked Entities Pro Beta v1.0.0]"
+  _version: "1.0.1"
+  _caller_prefix: "[Linked Entities Pro Beta v1.0.1]"
   linked_entities_var: !input linked_entities
   authority_entity_input: !input authority_entity
   authority_entity_resolved: >-
@@ -274,7 +297,9 @@ actions:
           - alias: Verify Source Still in Captured State
             if:
               - condition: template
-                value_template: "{{ states(trigger.entity_id) != trigger.to_state.state }}"
+                value_template: >-
+                  {{ states(trigger.entity_id) in ['on', 'off']
+                     and states(trigger.entity_id) != trigger.to_state.state }}
             then:
               - alias: Debug Log Stale Dispatch Canceled
                 if:

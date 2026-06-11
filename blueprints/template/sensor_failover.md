@@ -14,7 +14,7 @@ Full write-up and the longer story behind the design: <https://xeazy.com/sensor-
 - A pool of backups gets averaged when the primary is offline. Backups that are themselves offline are skipped; the average is over the ones still online.
 - Optional weights for the backups if some are more trustworthy than others. Comma-separated numbers, one per backup, in the same order. Blank means equal weighting.
 - An optional default value for the case where the primary and all backups are offline at once. Blank means the sensor reports unavailable instead.
-- A `device_class` so the resulting sensor displays correctly and groups with similar sensors. Common values: `illuminance`, `temperature`, `humidity`, `power`, `energy`. Required; if your sensor has no natural class, use `enum`.
+- A `device_class` so the resulting sensor displays correctly and groups with similar sensors. Defaults to `illuminance` (matching the original lux use case); override with `temperature`, `humidity`, `power`, `energy`, or any other valid sensor device class. If your sensor has no natural class, use `enum`.
 - A `state_class` so Home Assistant's statistics engine knows whether the reading is a `measurement`, a `total_increasing` counter, or a resettable `total`. Defaults to `measurement`, which is right for most numeric sensors.
 - An `active_source` attribute that reports `primary`, `backups`, `default`, or `none`, so a dashboard tile or anyone debugging can see at a glance which source is feeding the value.
 - An `online_backups` attribute that lists the backup entities currently contributing. Empty when none are available.
@@ -56,13 +56,40 @@ After import, the blueprint appears on the Blueprints page.
 
 ## Step 2: The Catch with Template Blueprints
 
-Template blueprints work a little differently from automation blueprints. There is no Create button you can click on the Blueprints page to instantiate them. Instead, you reference the blueprint from a YAML config block, fill in the inputs there, and reload.
+Automation blueprints get a friendly Create button right on the Blueprints page. Template blueprints do not. You will not find Sensor Failover anywhere in the Create Helper list, and that is expected, not a fault. Template blueprints become real entities through a short piece of YAML called `use_blueprint`. It takes a path to the blueprint and a set of inputs:
 
-This sounds worse than it is. The block is six or seven lines and you only write it once per sensor.
+```yaml
+use_blueprint:
+  path: TheThinkingHome/sensor_failover.yaml
+  input:
+    primary_entity: sensor.fp2_living_room_illuminance
+    backup_entities:
+      - sensor.zigbee_lux_north
+      - sensor.zigbee_lux_south
+    sensor_name: Living Room Lux Failover
+    unique_id: living_room_lux_failover
+    unit_of_measurement: lx
+    device_class: illuminance
+```
 
-## Step 3: Add the Sensor to Your Config
+`path` is relative to `config/blueprints/template/`, so it is the `<author>` folder from Step 1 plus the filename. `primary_entity`, `backup_entities`, `unique_id`, and `unit_of_measurement` are the required settings; `device_class` defaults to `illuminance` and must be corrected for any other sensor type (`temperature`, `humidity`, `power`, and so on). The other inputs have sensible defaults. For weighted averaging across backups and a configurable default-when-everything-is-offline value, see the optional inputs in the reference below.
 
-Drop the following block into a Home Assistant package file, or into your `configuration.yaml` under a `template:` key. The inputs match the ones listed in the Parameters table below.
+That block has to sit under Home Assistant's `template:` configuration. The tidy way to do that, and the way that scales once you make more of these, is a package.
+
+## Step 3: What a Package Is, and How to Create One
+
+A package is a single YAML file that holds a bundle of related configuration. Rather than scattering a sensor here and an automation there across your main files, you put everything for one feature into one file, and Home Assistant folds it into your overall configuration at startup. Packages are optional, but they keep related things together and easy to find.
+
+If you have never used packages, switch them on once. In your `configuration.yaml`, add the two lines below. If you already have a `homeassistant:` section, just add the `packages:` line underneath it:
+
+```yaml
+homeassistant:
+  packages: !include_dir_named packages
+```
+
+Then create a folder named `packages` next to your `configuration.yaml`. Every YAML file you drop in there is now a package.
+
+Now make a package file, for example `packages/sensor_failover.yaml`, and put your `use_blueprint` block inside a `template:` list:
 
 ```yaml
 template:
@@ -73,7 +100,7 @@ template:
         backup_entities:
           - sensor.zigbee_lux_north
           - sensor.zigbee_lux_south
-        sensor_name: Living Room Lux
+        sensor_name: Living Room Lux Failover
         unique_id: living_room_lux_failover
         unit_of_measurement: lx
         device_class: illuminance
@@ -82,13 +109,15 @@ template:
         default_value: ""
 ```
 
-Save the file.
+Each sensor you build from the blueprint is one more list item in the same file. They can wrap different primaries, with different backup pools, different weights, and different defaults, all in one place. Give each one its own `unique_id`, since reusing one collides the two sensors.
+
+If you already keep template entities in your `configuration.yaml` under a `template:` key, you can drop the `use_blueprint` block into that list instead. The package is simply the cleaner home once you have a few.
 
 ## Step 4: Load It
 
-A new package file needs a full Home Assistant restart the first time, so the package loader picks it up. After that, adding more `use_blueprint` blocks to the same file only needs Developer Tools, then YAML, then Reload Template Entities.
+A brand-new package file needs a full Home Assistant restart to register the first time. After that, adding more `use_blueprint` blocks to the same file only needs a quick reload through Developer Tools, YAML, Reload Template Entities. If you put the block in `configuration.yaml` directly under an existing `template:` key, you can skip the restart and just reload template entities.
 
-You should now see your new sensor in the entity list. It is named exactly what you put in `sensor_name`, and its entity id is derived from `unique_id`.
+When it comes up you will have a `sensor` named after your `sensor_name`. Its entity id is derived from the slugified name: `Living Room Lux Failover` becomes `sensor.living_room_lux_failover`. Watch it in Developer Tools, States: the value follows the primary's reading when the primary is online, and flips to the backup pool's average (or to your default value, if set) when the primary is unavailable. The `active_source` attribute reports `primary`, `backups`, `default`, or `none`, so you can see at a glance which tier is feeding the value.
 
 ## A Small Note on Why Primary Wins
 
@@ -125,18 +154,18 @@ template:
         backup_entities:
           - sensor.zigbee_lux_north
           - sensor.zigbee_lux_south
-        sensor_name: Living Room Lux
+        sensor_name: Living Room Lux Failover
         unique_id: living_room_lux_failover
         unit_of_measurement: lx
+        device_class: illuminance
+        state_class: measurement
         backup_weights: "70, 30"
         default_value: ""
-        device_class: "illuminance"
-        state_class: "measurement"
 ```
 
 This says: trust the FP2 when available, fall back to a weighted average of the two Zigbee lux sensors when it is not (70% weight to the north sensor, 30% to the south), report unavailable if everything is offline at once, and register the sensor with Home Assistant as an illuminance measurement so it displays correctly and feeds into the statistics engine.
 
-Downstream automations that previously read `sensor.fp2_living_room_illuminance` directly can be repointed at `sensor.living_room_lux` and stop encountering `unavailable`. A dashboard tile can show the new sensor with an attribute display for `active_source` so you can see when the FP2 has dropped out.
+Downstream automations that previously read `sensor.fp2_living_room_illuminance` directly can be repointed at `sensor.living_room_lux_failover` and stop encountering `unavailable`. A dashboard tile can show the new sensor with an attribute display for `active_source` so you can see when the FP2 has dropped out.
 
 For more worked examples, including temperature and humidity scenarios and the longer story behind each design choice, see the article: <https://xeazy.com/sensor-failover-blueprint/>
 
@@ -146,11 +175,11 @@ For more worked examples, including temperature and humidity scenarios and the l
 | --- | --- | --- | --- | --- |
 | `primary_entity` | Yes | none | any `sensor` | The trusted source. Used whenever it is available. |
 | `backup_entities` | Yes | none | one or more `sensor` entities | Sources used when the primary is offline. Averaged when more than one is online. |
-| `sensor_name` | Yes | `Sensor Failover` | any text | The friendly name shown on the resulting sensor. |
+| `sensor_name` | No | `Sensor Failover` | any text | The friendly name shown on the resulting sensor. |
 | `unique_id` | Yes | none | any text, must be unique across your config | A unique id so the sensor is registered and can be renamed or placed in an area from the interface. Use a distinct value for every sensor you build, for example `living_room_lux_failover`. |
 | `unit_of_measurement` | Yes | none | any text | The unit shown on the resulting sensor, for example `lx`, `°C`, or `%`. |
-| `device_class` | Yes | none | any valid Home Assistant sensor device class | Sets the device class on the resulting sensor, which affects display, grouping, and unit validation. Common values: `illuminance`, `temperature`, `humidity`, `pressure`, `power`, `energy`, `battery`, `current`, `voltage`, `co2`, `pm25`, `moisture`, `signal_strength`. See the [Home Assistant sensor device classes](https://www.home-assistant.io/integrations/sensor/#device-class) for the full list. If your sensor has no natural class, use `enum`. |
-| `state_class` | Yes | `measurement` | `measurement`, `total_increasing`, `total`, `measurement_angle` | Sets the state class for statistics. `measurement` is correct for most readings that go up and down (lux, temperature, humidity). `total_increasing` is for cumulative counters that only grow (energy meters). `total` is for resettable counters. |
+| `device_class` | Yes | `illuminance` | any valid Home Assistant sensor device class | Sets the device class on the resulting sensor, which affects display, grouping, and unit validation. Defaults to `illuminance` for the original lux use case; override for any other sensor type. Common values: `illuminance`, `temperature`, `humidity`, `pressure`, `power`, `energy`, `battery`, `current`, `voltage`, `co2`, `pm25`, `moisture`, `signal_strength`. See the [Home Assistant sensor device classes](https://www.home-assistant.io/integrations/sensor/#device-class) for the full list. If your sensor has no natural class, use `enum`. |
+| `state_class` | No | `measurement` | `measurement`, `total_increasing`, `total`, `measurement_angle` | Sets the state class for statistics. `measurement` is correct for most readings that go up and down (lux, temperature, humidity). `total_increasing` is for cumulative counters that only grow (energy meters). `total` is for resettable counters. |
 | `backup_weights` | No | blank | comma-separated numbers, one per backup, in the same order | Weighted average when filled, equal weighting when blank. If the count of weights does not match the count of backups, or any weight is not a number, the blueprint falls back to equal weighting. |
 | `default_value` | No | blank | any number, or blank | The value returned when the primary and all backups are offline. Blank means the sensor reports unavailable in that case. |
 

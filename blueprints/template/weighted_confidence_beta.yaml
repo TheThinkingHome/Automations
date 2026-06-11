@@ -8,6 +8,20 @@
 # https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/
 #
 # Changelog:
+#   1.1.1-beta - Two bug fixes for silent failure modes.
+#                (1) The equals and not_equals operators now match numeric
+#                lists correctly. Previously, `state: [1, 2, 3]` (unquoted in
+#                YAML) parsed as a list of integers, and the string state
+#                returned by states() never matched. The blueprint now coerces
+#                list members to strings before the membership check, so
+#                `state: [1, 2, 3]` and `state: ["1", "2", "3"]` are
+#                equivalent.
+#                (2) The above, below, and between operators now require their
+#                bound fields (value, low, high) to be defined. Previously a
+#                missing or misspelled field defaulted to 0 via Jinja's float
+#                fallback, producing arbitrary match behavior. The fix makes
+#                a misconfigured signal silently disagree instead, which shows
+#                up cleanly in the not_met attribute.
 #   1.1.0-beta - A required signal set to unavailable: disagree now vetoes while
 #                it is unavailable, so a required signal whose state cannot be
 #                confirmed forces the result off instead of silently dropping
@@ -20,6 +34,16 @@
 #                agreement state that may be a single value or a list. Exposes
 #                confidence, score, threshold, contributing, not_met, and
 #                unavailable attributes.
+#
+# DEVELOPER NOTE: The signal evaluation logic in this blueprint is replicated
+# five times -- once in the binary_sensor state, and once each in the
+# confidence, score, contributing, and not_met attributes. Home Assistant
+# template entities do not allow variables to be shared between the state block
+# and the attributes blocks, so the evaluation loop must be inlined in each
+# template that needs it. If you change the operator logic, the unavailable
+# policy, or add a new operator, you MUST apply the change in all five places.
+# The unavailable attribute is the one exception; it only lists entities, so
+# its loop is much simpler.
 blueprint:
   name: Weighted Confidence (Beta)
   author: James Lander (xeazy.com)
@@ -41,9 +65,10 @@ blueprint:
       operator how to judge agreement: equals (default), not_equals, above,
                below, or between.
       state    for equals and not_equals: the value, or a list of values, that
-               counts. Defaults to "on".
-      value    for above and below: the number to compare against.
-      low/high for between: the inclusive numeric range.
+               counts. Defaults to "on". Lists are compared as text, so numeric
+               lists work whether quoted or unquoted.
+      value    for above and below: the number to compare against. Must be set.
+      low/high for between: the inclusive numeric range. Both must be set.
       unavailable  what to do when the entity is unavailable or unknown: drop
                (default, leaves it out of the maths), agree (counts its weight
                as agreeing), or disagree (counts its weight against). On a
@@ -162,11 +187,11 @@ binary_sensor:
     {% set op = s.operator | default('equals') %}
     {% set match = s.state | default('on') %}
     {% set num = cur | float(none) %}
-    {% if op == 'not_equals' %}{% set met = (cur not in match) if (match is iterable and match is not string) else (cur != match | string) %}
-    {% elif op == 'above' %}{% set met = num is not none and num > (s.value | float(0)) %}
-    {% elif op == 'below' %}{% set met = num is not none and num < (s.value | float(0)) %}
-    {% elif op == 'between' %}{% set met = num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-    {% else %}{% set met = (cur in match) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
+    {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
+    {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
+    {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
+    {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
+    {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
     {% set ns.total = ns.total + w %}
     {% if met %}{% set ns.agree = ns.agree + w %}{% endif %}
     {% if (s.required | default(false)) and not met %}{% set ns.veto = true %}{% endif %}
@@ -186,11 +211,11 @@ binary_sensor:
       {% set op = s.operator | default('equals') %}
       {% set match = s.state | default('on') %}
       {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in match) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in match) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
+      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
+      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
+      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
+      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
+      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
       {% set ns.total = ns.total + w %}
       {% if met %}{% set ns.agree = ns.agree + w %}{% endif %}
       {% endif %}
@@ -208,11 +233,11 @@ binary_sensor:
       {% set op = s.operator | default('equals') %}
       {% set match = s.state | default('on') %}
       {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in match) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in match) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
+      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
+      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
+      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
+      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
+      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
       {% set ns.total = ns.total + w %}
       {% if met %}{% set ns.agree = ns.agree + w %}{% endif %}
       {% endif %}
@@ -228,11 +253,11 @@ binary_sensor:
       {% set op = s.operator | default('equals') %}
       {% set match = s.state | default('on') %}
       {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in match) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in match) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
+      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
+      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
+      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
+      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
+      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
       {% if met %}{% set ns.items = ns.items + [s.name | default(s.entity)] %}{% endif %}
       {% endif %}
       {% endfor %}
@@ -245,11 +270,11 @@ binary_sensor:
       {% set op = s.operator | default('equals') %}
       {% set match = s.state | default('on') %}
       {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in match) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in match) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
+      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
+      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
+      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
+      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
+      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
       {% if not met %}{% set ns.items = ns.items + [s.name | default(s.entity)] %}{% endif %}
       {% endif %}
       {% endfor %}

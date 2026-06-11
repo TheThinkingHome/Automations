@@ -1,3 +1,19 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Sensor Failover - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+# Full write-up, worked examples, and directions:
+# https://xeazy.com/sensor-failover-blueprint/
+#
+# Changelog:
+#   1.0.0 - Initial release. Wraps a numeric sensor with a pool of backups so a
+#           single flaky source no longer surfaces as unavailable to downstream
+#           automations. Primary's reading is returned when available. When the
+#           primary is offline, online backups are averaged, optionally
+#           weighted. When everything is offline, an optional default value is
+#           returned or the sensor reports unavailable. Exposes active_source
+#           and online_backups attributes for transparency.
 blueprint:
   name: Sensor Failover
   description: |
@@ -15,104 +31,122 @@ blueprint:
 
     Creates a numeric template sensor that returns the primary's reading whenever it is available, falls back to an average of online backups when the primary is offline, and reports an optional default value (or goes unavailable) when everything is down. The average can be weighted if some backups are more trustworthy than others.
 
+    A sensor is treated as offline in four cases: state is `unavailable`, state is `unknown`, state is blank, or state is not a number. In any of those cases the source is skipped and the next tier is used.
+
     Originally built to keep a flaky Aqara FP2 lux reading usable by falling back to two other room lux sensors, but generalized to any numeric sensor and any number of backups.
 
-    **Version: 1.0.0**
-
-    Changelog:
-      1.0.0 - Initial release. Primary plus weighted backup pool. Simple average by default, optional weights for advanced cases. Optional default value when all sources offline. Optional device_class and state_class inputs. Active_source and online_backups attributes for transparency.
-
-  domain: template
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   author: James Lander (xeazy.com)
+  domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/sensor_failover.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
-    sources:
-      name: Sources
-      icon: mdi:source-branch
-      description: The trusted primary, and the backups used when it is offline.
-      input:
-        primary_entity:
-          name: Primary entity
-          description: The sensor used whenever it is available.
-          selector:
-            entity:
-              filter:
-                - domain: sensor
-        backup_entities:
-          name: Backup entities
-          description: Used when the primary is unavailable. Averaged when more than one is online.
-          selector:
-            entity:
-              multiple: true
-              filter:
-                - domain: sensor
-    output:
-      name: Output
-      icon: mdi:label
-      description: How the resulting sensor appears in Home Assistant.
-      input:
-        sensor_name:
-          name: Sensor name
-          description: The friendly name shown on the resulting sensor.
-          default: Sensor Failover
-          selector:
-            text:
-        unique_id:
-          name: Unique ID
-          description: A unique id so the sensor is registered and can be renamed, placed in an area, or have its device class changed from the interface. Make it distinct for every sensor you build, for example living_room_lux_with_fallback.
-          selector:
-            text:
-        unit_of_measurement:
-          name: Unit of measurement
-          description: The unit shown on the resulting sensor, for example lx, °C, or %.
-          selector:
-            text:
-    advanced:
-      name: Advanced (optional)
-      icon: mdi:tune
-      description: Leave any of these blank for sensible defaults.
-      input:
-        backup_weights:
-          name: Backup weights
-          description: 'Comma-separated numbers, one per backup entity, in the same order. Blank means equal weighting. For example, 70, 30 makes the first backup count more than twice as much as the second when both are online.'
-          default: ""
-          selector:
-            text:
-        default_value:
-          name: Default value
-          description: Used when the primary and all backups are offline. Blank means the sensor reports unavailable instead.
-          default: ""
-          selector:
-            text:
-        device_class:
-          name: Device class
-          description: 'Optional. Sets the device class for the resulting sensor, which controls how the value displays. Common values: illuminance, temperature, humidity, pressure, power, energy, battery, current, voltage, co2, pm25, moisture, signal_strength. Leave blank for no class. See the Home Assistant docs for the full list.'
-          default: ""
-          selector:
-            text:
-        state_class:
-          name: State class
-          description: 'Optional. Sets the state class for statistics. Valid values are measurement (for most readings like lux, temperature, humidity), total_increasing (for cumulative counters like energy meters), and total (for resettable counters). Leave blank for no class.'
-          default: ""
-          selector:
-            text:
+    primary_entity:
+      name: Primary entity
+      description: The trusted numeric sensor. Used whenever it is available.
+      selector:
+        entity: {}
+    backup_entities:
+      name: Backup entities
+      description: >
+        Numeric sensors used when the primary is unavailable. Averaged when
+        more than one is online. Backups that are themselves offline are
+        skipped.
+      selector:
+        entity:
+          multiple: true
+    sensor_name:
+      name: Sensor name
+      description: The name for the sensor this blueprint creates.
+      default: Sensor Failover
+      selector:
+        text: {}
+    unique_id:
+      name: Unique ID
+      description: >
+        A unique id so the sensor is registered and you can rename it, place
+        it in an area, or change its device class from the interface. Make it
+        distinct for every sensor you build, for example
+        living_room_lux_failover.
+      selector:
+        text: {}
+    unit_of_measurement:
+      name: Unit of measurement
+      description: The unit shown on the resulting sensor, for example lx, °C, or %.
+      selector:
+        text: {}
+    device_class:
+      name: Device class
+      description: >
+        The device class for the resulting sensor. Controls how the value
+        displays and is grouped. Pick one that matches your source, or type
+        your own. If your sensor has no natural class, use enum.
+      default: illuminance
+      selector:
+        select:
+          custom_value: true
+          options:
+            - illuminance
+            - temperature
+            - humidity
+            - pressure
+            - battery
+            - current
+            - voltage
+            - power
+            - energy
+            - co2
+            - pm25
+            - moisture
+            - signal_strength
+            - frequency
+            - speed
+    state_class:
+      name: State class
+      description: >
+        The state class for statistics. Use measurement for most readings that
+        go up and down (lux, temperature, humidity). Use total_increasing for
+        cumulative counters (energy meters). Use total for resettable counters.
+      default: measurement
+      selector:
+        select:
+          custom_value: true
+          options:
+            - measurement
+            - total_increasing
+            - total
+    backup_weights:
+      name: Backup weights
+      description: >
+        Optional. Comma-separated numbers, one per backup entity, in the same
+        order. Blank means equal weighting. For example, 70, 30 makes the
+        first backup count more than twice as much as the second when both
+        are online.
+      default: ""
+      selector:
+        text: {}
+    default_value:
+      name: Default value
+      description: >
+        Optional. Used when the primary and all backups are offline. Blank
+        means the sensor reports unavailable instead.
+      default: ""
+      selector:
+        text: {}
 
 variables:
   primary_entity: !input primary_entity
   backup_entities: !input backup_entities
   backup_weights: !input backup_weights
   default_value: !input default_value
-  device_class_input: !input device_class
-  state_class_input: !input state_class
 
 sensor:
   name: !input sensor_name
   unique_id: !input unique_id
   unit_of_measurement: !input unit_of_measurement
-  device_class: "{% if device_class_input %}{{ device_class_input }}{% endif %}"
-  state_class: "{% if state_class_input %}{{ state_class_input }}{% endif %}"
+  device_class: !input device_class
+  state_class: !input state_class
   availability: |
     {% set p_ok = has_value(primary_entity) and states(primary_entity) | is_number %}
     {% if p_ok %}

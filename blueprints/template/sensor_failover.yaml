@@ -20,7 +20,7 @@ blueprint:
     **Version: 1.0.0**
 
     Changelog:
-      1.0.0 - Initial release. Primary plus weighted backup pool. Simple average by default, optional weights for advanced cases. Optional default value when all sources offline. Active_source and online_backups attributes for transparency.
+      1.0.0 - Initial release. Primary plus weighted backup pool. Simple average by default, optional weights for advanced cases. Optional default value when all sources offline. Optional device_class and state_class inputs. Active_source and online_backups attributes for transparency.
 
   domain: template
   author: James Lander (xeazy.com)
@@ -72,7 +72,7 @@ blueprint:
     advanced:
       name: Advanced (optional)
       icon: mdi:tune
-      description: Leave both blank for sensible defaults.
+      description: Leave any of these blank for sensible defaults.
       input:
         backup_weights:
           name: Backup weights
@@ -86,17 +86,33 @@ blueprint:
           default: ""
           selector:
             text:
+        device_class:
+          name: Device class
+          description: 'Optional. Sets the device class for the resulting sensor, which controls how the value displays. Common values: illuminance, temperature, humidity, pressure, power, energy, battery, current, voltage, co2, pm25, moisture, signal_strength. Leave blank for no class. See the Home Assistant docs for the full list.'
+          default: ""
+          selector:
+            text:
+        state_class:
+          name: State class
+          description: 'Optional. Sets the state class for statistics. Valid values are measurement (for most readings like lux, temperature, humidity), total_increasing (for cumulative counters like energy meters), and total (for resettable counters). Leave blank for no class.'
+          default: ""
+          selector:
+            text:
 
 variables:
   primary_entity: !input primary_entity
   backup_entities: !input backup_entities
   backup_weights: !input backup_weights
   default_value: !input default_value
+  device_class_input: !input device_class
+  state_class_input: !input state_class
 
 sensor:
   name: !input sensor_name
   unique_id: !input unique_id
   unit_of_measurement: !input unit_of_measurement
+  device_class: "{% if device_class_input %}{{ device_class_input }}{% endif %}"
+  state_class: "{% if state_class_input %}{{ state_class_input }}{% endif %}"
   availability: |
     {% set p_ok = has_value(primary_entity) and states(primary_entity) | is_number %}
     {% if p_ok %}

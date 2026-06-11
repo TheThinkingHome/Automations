@@ -14,8 +14,8 @@ Full write-up and the longer story behind the design: <https://xeazy.com/sensor-
 - A pool of backups gets averaged when the primary is offline. Backups that are themselves offline are skipped; the average is over the ones still online.
 - Optional weights for the backups if some are more trustworthy than others. Comma-separated numbers, one per backup, in the same order. Blank means equal weighting.
 - An optional default value for the case where the primary and all backups are offline at once. Blank means the sensor reports unavailable instead.
-- An optional `device_class` so the resulting sensor displays correctly and groups with similar sensors. Common values: `illuminance`, `temperature`, `humidity`, `power`, `energy`. Blank means no class is set.
-- An optional `state_class` so Home Assistant's statistics engine knows whether the reading is a `measurement`, a `total_increasing` counter, or a resettable `total`. Blank means no class is set.
+- A `device_class` so the resulting sensor displays correctly and groups with similar sensors. Common values: `illuminance`, `temperature`, `humidity`, `power`, `energy`. Required; if your sensor has no natural class, use `enum`.
+- A `state_class` so Home Assistant's statistics engine knows whether the reading is a `measurement`, a `total_increasing` counter, or a resettable `total`. Defaults to `measurement`, which is right for most numeric sensors.
 - An `active_source` attribute that reports `primary`, `backups`, `default`, or `none`, so a dashboard tile or anyone debugging can see at a glance which source is feeding the value.
 - An `online_backups` attribute that lists the backup entities currently contributing. Empty when none are available.
 - A unique_id so the sensor is registered: rename it in the interface, place it in an area, all from the UI.
@@ -62,7 +62,7 @@ This sounds worse than it is. The block is six or seven lines and you only write
 
 ## Step 3: Add the Sensor to Your Config
 
-Drop the following block into a Home Assistant package file, or into your `configuration.yaml` under a `template:` key. The inputs match the sections you saw in the blueprint's UI: sources, output, advanced.
+Drop the following block into a Home Assistant package file, or into your `configuration.yaml` under a `template:` key. The inputs match the ones listed in the Parameters table below.
 
 ```yaml
 template:
@@ -76,10 +76,10 @@ template:
         sensor_name: Living Room Lux
         unique_id: living_room_lux_failover
         unit_of_measurement: lx
+        device_class: illuminance
+        state_class: measurement
         backup_weights: ""
         default_value: ""
-        device_class: ""
-        state_class: ""
 ```
 
 Save the file.
@@ -149,10 +149,10 @@ For more worked examples, including temperature and humidity scenarios and the l
 | `sensor_name` | Yes | `Sensor Failover` | any text | The friendly name shown on the resulting sensor. |
 | `unique_id` | Yes | none | any text, must be unique across your config | A unique id so the sensor is registered and can be renamed or placed in an area from the interface. Use a distinct value for every sensor you build, for example `living_room_lux_failover`. |
 | `unit_of_measurement` | Yes | none | any text | The unit shown on the resulting sensor, for example `lx`, `°C`, or `%`. |
+| `device_class` | Yes | none | any valid Home Assistant sensor device class | Sets the device class on the resulting sensor, which affects display, grouping, and unit validation. Common values: `illuminance`, `temperature`, `humidity`, `pressure`, `power`, `energy`, `battery`, `current`, `voltage`, `co2`, `pm25`, `moisture`, `signal_strength`. See the [Home Assistant sensor device classes](https://www.home-assistant.io/integrations/sensor/#device-class) for the full list. If your sensor has no natural class, use `enum`. |
+| `state_class` | Yes | `measurement` | `measurement`, `total_increasing`, `total`, `measurement_angle` | Sets the state class for statistics. `measurement` is correct for most readings that go up and down (lux, temperature, humidity). `total_increasing` is for cumulative counters that only grow (energy meters). `total` is for resettable counters. |
 | `backup_weights` | No | blank | comma-separated numbers, one per backup, in the same order | Weighted average when filled, equal weighting when blank. If the count of weights does not match the count of backups, or any weight is not a number, the blueprint falls back to equal weighting. |
 | `default_value` | No | blank | any number, or blank | The value returned when the primary and all backups are offline. Blank means the sensor reports unavailable in that case. |
-| `device_class` | No | blank | any valid Home Assistant sensor device class, or blank | Sets the device class on the resulting sensor, which affects display, grouping, and unit validation. Common values: `illuminance`, `temperature`, `humidity`, `pressure`, `power`, `energy`, `battery`, `current`, `voltage`, `co2`, `pm25`, `moisture`, `signal_strength`. Blank means no class is set. See the [Home Assistant sensor device classes](https://www.home-assistant.io/integrations/sensor/#device-class) for the full list. |
-| `state_class` | No | blank | `measurement`, `total_increasing`, `total`, or blank | Sets the state class for statistics. `measurement` is correct for most readings that go up and down (lux, temperature, humidity). `total_increasing` is for cumulative counters that only grow (energy meters). `total` is for resettable counters. Blank means no class is set. |
 
 ## License
 

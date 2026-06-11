@@ -27,28 +27,27 @@
 #   1.0.0 - Initial release. now() based linger, no unique_id or device_class.
 blueprint:
   name: Recently Active
+  description: |
+    # Recently Active
+
+    *Holds a fired-and-forgotten event as a state you can still ask about a little while later.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/) - the design and worked examples.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/d/36-recently-active-blueprint) - the forum thread for this blueprint.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Creates a binary sensor that reads `on` while a condition holds, and keeps reading `on` for a chosen number of seconds after the condition clears. So "the door is open" quietly becomes "the door was open within the last N seconds," which is the question other automations actually want to ask.
+
+    The condition can be an on/off source (a door or window contact, a motion sensor, a switch, an input_boolean), or a numeric sensor compared against a threshold: on while the value is above it, or on while the value is below it. If the source goes unavailable, the sensor decays to off after the linger rather than sticking on.
+
+    Originally built so automations could ask "was the door just used" five seconds after the door event, then generalized to any on/off source or numeric threshold.
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   author: James Lander (xeazy.com)
-  description: >
-    Holds a source as a state you can still ask about after the moment has
-    passed. It creates a binary sensor that reads "on" while a condition holds,
-    and keeps reading "on" for a chosen number of seconds after the condition
-    clears.
-
-    The condition can be an on/off source (a door or window contact, a motion
-    sensor, a switch, an input_boolean), or a numeric sensor compared against a
-    threshold: on while the value is above it, or on while the value is below
-    it. If the source goes unavailable, the sensor decays to off after the
-    linger rather than sticking on.
-
-    Inputs: the source entity to watch, how to read it (on/off, above, or
-    below), the threshold for the numeric modes, the linger in seconds, a name,
-    a unique id so the sensor can be renamed and managed in the interface, and a
-    device class for how it reads in the frontend.
-
-    Full write-up and worked examples: https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
-
-    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking
-    Home (https://xeazy.com).
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/recently_active.yaml
   homeassistant:

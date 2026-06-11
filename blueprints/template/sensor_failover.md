@@ -14,9 +14,11 @@ Full write-up and the longer story behind the design: <https://xeazy.com/sensor-
 - A pool of backups gets averaged when the primary is offline. Backups that are themselves offline are skipped; the average is over the ones still online.
 - Optional weights for the backups if some are more trustworthy than others. Comma-separated numbers, one per backup, in the same order. Blank means equal weighting.
 - An optional default value for the case where the primary and all backups are offline at once. Blank means the sensor reports unavailable instead.
+- An optional `device_class` so the resulting sensor displays correctly and groups with similar sensors. Common values: `illuminance`, `temperature`, `humidity`, `power`, `energy`. Blank means no class is set.
+- An optional `state_class` so Home Assistant's statistics engine knows whether the reading is a `measurement`, a `total_increasing` counter, or a resettable `total`. Blank means no class is set.
 - An `active_source` attribute that reports `primary`, `backups`, `default`, or `none`, so a dashboard tile or anyone debugging can see at a glance which source is feeding the value.
 - An `online_backups` attribute that lists the backup entities currently contributing. Empty when none are available.
-- A unique_id so the sensor is registered: rename it in the interface, place it in an area, change its device class, all from the UI.
+- A unique_id so the sensor is registered: rename it in the interface, place it in an area, all from the UI.
 
 A sensor is treated as "offline" when its state is `unavailable`, `unknown`, blank, or not a number. The blueprint never feeds a malformed value into the output.
 
@@ -76,6 +78,8 @@ template:
         unit_of_measurement: lx
         backup_weights: ""
         default_value: ""
+        device_class: ""
+        state_class: ""
 ```
 
 Save the file.
@@ -126,9 +130,11 @@ template:
         unit_of_measurement: lx
         backup_weights: "70, 30"
         default_value: ""
+        device_class: "illuminance"
+        state_class: "measurement"
 ```
 
-This says: trust the FP2 when available, fall back to a weighted average of the two Zigbee lux sensors when it is not (70% weight to the north sensor, 30% to the south), and report unavailable if everything is offline at once.
+This says: trust the FP2 when available, fall back to a weighted average of the two Zigbee lux sensors when it is not (70% weight to the north sensor, 30% to the south), report unavailable if everything is offline at once, and register the sensor with Home Assistant as an illuminance measurement so it displays correctly and feeds into the statistics engine.
 
 Downstream automations that previously read `sensor.fp2_living_room_illuminance` directly can be repointed at `sensor.living_room_lux` and stop encountering `unavailable`. A dashboard tile can show the new sensor with an attribute display for `active_source` so you can see when the FP2 has dropped out.
 
@@ -141,10 +147,12 @@ For more worked examples, including temperature and humidity scenarios and the l
 | `primary_entity` | Yes | none | any `sensor` | The trusted source. Used whenever it is available. |
 | `backup_entities` | Yes | none | one or more `sensor` entities | Sources used when the primary is offline. Averaged when more than one is online. |
 | `sensor_name` | Yes | `Sensor Failover` | any text | The friendly name shown on the resulting sensor. |
-| `unique_id` | Yes | none | any text, must be unique across your config | A unique id so the sensor is registered and can be renamed, placed in an area, or have its device class changed from the interface. Use a distinct value for every sensor you build, for example `living_room_lux_failover`. |
+| `unique_id` | Yes | none | any text, must be unique across your config | A unique id so the sensor is registered and can be renamed or placed in an area from the interface. Use a distinct value for every sensor you build, for example `living_room_lux_failover`. |
 | `unit_of_measurement` | Yes | none | any text | The unit shown on the resulting sensor, for example `lx`, `°C`, or `%`. |
 | `backup_weights` | No | blank | comma-separated numbers, one per backup, in the same order | Weighted average when filled, equal weighting when blank. If the count of weights does not match the count of backups, or any weight is not a number, the blueprint falls back to equal weighting. |
 | `default_value` | No | blank | any number, or blank | The value returned when the primary and all backups are offline. Blank means the sensor reports unavailable in that case. |
+| `device_class` | No | blank | any valid Home Assistant sensor device class, or blank | Sets the device class on the resulting sensor, which affects display, grouping, and unit validation. Common values: `illuminance`, `temperature`, `humidity`, `pressure`, `power`, `energy`, `battery`, `current`, `voltage`, `co2`, `pm25`, `moisture`, `signal_strength`. Blank means no class is set. See the [Home Assistant sensor device classes](https://www.home-assistant.io/integrations/sensor/#device-class) for the full list. |
+| `state_class` | No | blank | `measurement`, `total_increasing`, `total`, or blank | Sets the state class for statistics. `measurement` is correct for most readings that go up and down (lux, temperature, humidity). `total_increasing` is for cumulative counters that only grow (energy meters). `total` is for resettable counters. Blank means no class is set. |
 
 ## License
 

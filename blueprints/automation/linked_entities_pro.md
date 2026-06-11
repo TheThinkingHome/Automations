@@ -4,9 +4,11 @@ A Home Assistant automation blueprint that keeps two or more entities in sync. W
 
 Picture two independent switches, a switch for the hallway lights and a switch for the stairway lights. Anyone walking through presses both. Now picture a wall switch wired to the lights, paired with a second virtual switch across the room. Or picture a smart bulb that stays powered all the time, controlled by another virtual wall switch that sends events instead of controlling the bulb directly. In each of these setups, the controllers can fall out of sync. When they do, the next press lands wrong or gets ignored, the dashboard shows one thing while the fixture does another, and the room is broken until someone notices. The naive two-way sync automation either ping-pongs in a loop, or carries a recursion guard so loose that it fires intermittently. *Linked Entities Pro* fixes both. A state-equality gate stops every run when the other linked entities match the source's new state, so the followers' responses cannot drive the loop any further. Any number of entities can sit in one linked group, in any mix of integrations, and a change on any of them propagates to the others.
 
+**A note on scope.** This release syncs binary on/off state only. Brightness, color, and fan speed do not propagate, by design. Light and fan domains are supported because their on/off state still syncs cleanly; brightness/color/speed propagation is planned for v1.1.0.
+
 Two events can leave the group out of sync. On Home Assistant restart, entities come back online in unpredictable order, some still carrying stale states from before. On a Zigbee2MQTT bridge reconnect, the bridge republishes every device's last-known state at once, which looks like every switch in the house just got pressed by an invisible hand. In both moments the linked entities can disagree, and the blueprint cannot tell from the events alone which state represents reality. That is where the *authority entity* comes in. You designate one entity in the group as the source of truth for these moments. When a reconcile event fires, the authority's current state is treated as correct and the others are commanded into alignment. During ordinary use the authority has no special role: any linked entity can drive the others. It only matters in those two narrow situations.
 
-Full write-up and the longer story behind the design: <https://xeazy.com/linked-entities-pro/>  Questions and discussion: <https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint>
+Full write-up and the longer story behind the design: <https://xeazy.com/linked-entity-pro/>  Questions and discussion: <https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint>
 
 ## What You Get
 
@@ -112,7 +114,7 @@ Configure the blueprint like this:
 
 Press the wall switch and the relay follows. Toggle the relay from the dashboard and the wall switch follows. Restart Home Assistant and the wall switch is pulled into alignment with the relay. Cycle the Z2M addon and the same thing happens. The two states never drift apart.
 
-For more worked examples, including mixed-integration groups and the longer story behind each design choice, see the article: <https://xeazy.com/linked-entities-pro/>
+For more worked examples, including mixed-integration groups and the longer story behind each design choice, see the article: <https://xeazy.com/linked-entity-pro/>
 
 ## Reconcile Trigger Sensor by Integration
 
@@ -136,6 +138,8 @@ For more worked examples, including mixed-integration groups and the longer stor
 | `suppress_during` | No | none | any `binary_sensor` | When this sensor is on, the automation is suppressed entirely. Useful for maintenance windows or reboot indicators. |
 | `debug_enabled` | No | `false` | `true`, `false` | When true, writes a log line for every trigger and action. Turn off in normal operation. |
 
+A note on groups. If you add a group entity to the linked list along with one of its own members, the sync still works correctly. The state-equality gate prevents the infinite loop you would otherwise get. The cost is one or two redundant `homeassistant.turn_*` service calls per state change, since the group commands its member which is already being commanded directly. For cleanliness, prefer to link either the group or its members, not both.
+
 ## Beta Status
 
 This is a public preview. The blueprint runs in production at the original home it was built for, with two pairs verified: a Zigbee wall switch and a Tasmota relay (cross-integration), and two Z2M switches on the same fixture (same-integration). It has not yet been validated by an external tester on a different setup. Once an external tester confirms it works in their environment, the blueprint graduates from beta. At that point the file is republished at `blueprints/automation/linked_entities_pro.yaml` (without the `_beta` suffix) and the version becomes 1.0.0 stable.
@@ -147,3 +151,10 @@ Want to be that tester? [Drop into the forum thread](https://xeazy.com/logbook/d
 Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>)
 
 This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.
+
+## Changelog
+
+| Version | Notes |
+| --- | --- |
+| 1.0.1-beta | Unknown Flip fix. The dispatch verify step no longer cancels when the source briefly drops to `unknown` or `unavailable` during the `sync_delay_ms` window. It now only cancels when the source has explicitly flipped to the opposite known state (`on` or `off`). README: brightness/speed disclaimer promoted to the intro. Note added about mixing a group entity with one of its own members (works, but produces redundant service calls). |
+| 1.0.0-beta | Initial beta release. On/off sync only. Authority-on-reconcile model. Cross-domain entity selector (switches, lights, input_booleans, fans, groups). State equality breaks sync loops, so changes from physical presses, dashboards, automations, scenes, and voice all propagate. Mode restart so rapid toggles resolve to the latest state. HA start and optional reconcile-trigger-sensor branches for restart and bridge-reconnect drift recovery. Suppress-during gate. Debug logging. |

@@ -7,6 +7,11 @@
 # https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/
 #
 # Changelog:
+#   2.1.2 - Extended the unavailable guard. Previously only `unavailable` and
+#           `unknown` states triggered the off-fallback in the threshold modes;
+#           now any non-numeric state does. A flaky integration reporting
+#           `Error` or `n/a` no longer turns into 0 via Jinja's float fallback
+#           and falsely triggers a `below`-mode linger.
 #   2.1.1 - Refactored the state template to a single Jinja expression so it
 #           renders cleanly as True or False. The v2.1.0 multi-line if/elif
 #           form rendered with surrounding whitespace that could leave the
@@ -143,5 +148,5 @@ binary_sensor:
   name: !input sensor_name
   unique_id: !input unique_id
   device_class: !input device_class
-  state: "{{ false if states(source_entity) in ['unavailable', 'unknown'] else (states(source_entity) | float(0) > threshold) if comparison == 'above' else (states(source_entity) | float(0) < threshold) if comparison == 'below' else (states(source_entity) == 'on') }}"
+  state: "{{ false if states(source_entity) in ['unavailable', 'unknown'] else ((states(source_entity) | is_number) and (states(source_entity) | float > threshold)) if comparison == 'above' else ((states(source_entity) | is_number) and (states(source_entity) | float < threshold)) if comparison == 'below' else (states(source_entity) == 'on') }}"
   delay_off: !input linger_seconds

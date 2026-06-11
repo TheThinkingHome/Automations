@@ -7,6 +7,18 @@
 # https://xeazy.com/sensor-failover-blueprint/
 #
 # Changelog:
+#   1.0.2 - Adds a last-resort fallback for the all-online-weights-are-zero
+#           case at runtime. When every backup currently reporting has
+#           weight zero (for example weights "100, 0" with the weight-100
+#           sensor offline, leaving only the weight-zero sensor online),
+#           the blueprint now equal-averages the available backups instead
+#           of letting total_weight collapse to zero and falling to
+#           default_value or unavailable. This lets users stage a
+#           "last-resort tier" of weight-zero sensors that contribute
+#           nothing to the average while better-weighted sensors are alive,
+#           and take over only when every weighted sensor is offline. More
+#           than one weight-zero sensor is allowed; if several are the
+#           only ones reporting, they are averaged equally.
 #   1.0.1 - Handles the all-zero-weights edge case gracefully. If every
 #           backup weight is zero, the blueprint now falls back to equal
 #           weighting instead of letting total_weight collapse to zero
@@ -127,7 +139,11 @@ blueprint:
         Optional. Comma-separated numbers, one per backup entity, in the same
         order. Blank means equal weighting. For example, 70, 30 makes the
         first backup count more than twice as much as the second when both
-        are online.
+        are online. Weight zero means the sensor contributes nothing to the
+        weighted average while better-weighted sensors are online, and is
+        used as a last-resort backup only when every weighted sensor is
+        offline. More than one weight-zero sensor is allowed; if several
+        are the only ones reporting, they are averaged equally.
       default: ""
       selector:
         text: {}
@@ -182,16 +198,23 @@ sensor:
         {% endif %}
       {% endfor %}
       {% set use_weights = weight_tokens | length == backup_entities | length and ns.all_numeric and ns.any_nonzero %}
-      {% set acc = namespace(weighted_sum=0.0, total_weight=0.0) %}
+      {% set acc = namespace(weighted_sum=0.0, total_weight=0.0, available=[]) %}
       {% for entity_id in backup_entities %}
         {% if has_value(entity_id) and states(entity_id) | is_number %}
           {% set w = (weight_tokens[loop.index0] | float(1)) if use_weights else 1 %}
           {% set acc.weighted_sum = acc.weighted_sum + (states(entity_id) | float * w) %}
           {% set acc.total_weight = acc.total_weight + w %}
+          {% set acc.available = acc.available + [entity_id] %}
         {% endif %}
       {% endfor %}
       {% if acc.total_weight > 0 %}
         {{ (acc.weighted_sum / acc.total_weight) | round(2) }}
+      {% elif acc.available | length > 0 %}
+        {% set ns2 = namespace(sum=0.0) %}
+        {% for entity_id in acc.available %}
+          {% set ns2.sum = ns2.sum + (states(entity_id) | float) %}
+        {% endfor %}
+        {{ (ns2.sum / (acc.available | length)) | round(2) }}
       {% else %}
         {% set d = default_value | trim %}
         {% if d != '' and d | is_number %}

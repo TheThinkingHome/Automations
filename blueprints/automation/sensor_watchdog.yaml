@@ -1,0 +1,482 @@
+blueprint:
+  name: Sensor Watchdog with Reboot
+  description: >-
+    Monitor a set of sensors for failure modes (unavailable, frozen, stuck) and
+    automatically power-cycle the upstream device to recover. Designed for
+    flaky devices that need a periodic kick, such as Aqara FP2 presence
+    sensors that wedge, Zigbee router plugs that drop their routing table,
+    or WiFi cameras that lock up.
+
+    Three detection modes (advanced settings) let users choose between
+    catching every heartbeat (responsive, heaviest event load) and only
+    catching hard failures (minimal, lightest). The middle mode catches
+    state changes only, skipping heartbeats.
+
+    Optional active time window restricts staleness detection to waking
+    hours so empty quiet rooms do not trigger false reboots overnight.
+    Optional daily scheduled reboot acts as preventive maintenance.
+    Optional restart guard sensor blocks recovery during HA restart
+    windows.
+
+    Requires Home Assistant 2024.10 or later for templated enabled fields
+    on triggers. If using responsive or lighter detection mode, you must
+    create a timer helper and pass its entity id via the Heartbeat Timer
+    input. Minimal mode does not require a timer.
+  domain: automation
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sensor_watchdog.yaml
+  homeassistant:
+    min_version: 2024.10.0
+
+  input:
+    monitored_section:
+      name: 📡 Monitored Sensors
+      icon: mdi:radar
+      description: The sensors to monitor and the switch to cycle on recovery.
+      input:
+        monitored_entities:
+          name: Monitored Entities
+          description: >-
+            The sensors to monitor for unavailable and staleness conditions.
+            Typically multiple entities from the same physical device
+            (e.g., the lux and presence outputs of one FP2).
+          selector:
+            entity:
+              multiple: true
+        recovery_switch:
+          name: Recovery Switch
+          description: >-
+            The switch that powers the upstream device. Cycled (off, wait,
+            on) to recover the device. Typically a smart plug.
+          selector:
+            entity:
+              domain: switch
+
+    timing_section:
+      name: ⚙️ Timing
+      icon: mdi:timer-cog-outline
+      description: Basic timing tunables.
+      input:
+        recovery_off_seconds:
+          name: Recovery Off Duration
+          description: >-
+            How long to hold the recovery switch off between off and on.
+            Long enough that the device fully power-cycles.
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 60
+              unit_of_measurement: seconds
+              mode: box
+        unavailable_timeout_seconds:
+          name: Unavailable Timeout
+          description: >-
+            How long a monitored entity must be unavailable or unknown
+            before recovery fires. Set to a value longer than typical
+            transient outages.
+          default: 30
+          selector:
+            number:
+              min: 5
+              max: 600
+              unit_of_measurement: seconds
+              mode: box
+
+    advanced_section:
+      name: 🛠 Advanced
+      icon: mdi:cog-outline
+      description: Detection modes, scheduled reboot, active window, and guards.
+      collapsed: true
+      input:
+        detection_mode:
+          name: Detection Mode
+          description: >-
+            Responsive catches every device report including heartbeats
+            (heaviest, lowest latency). Lighter catches value changes only
+            (light, slight latency on quiet devices). Minimal does no
+            freeze detection and relies on unavailable and scheduled
+            reboot (lightest, no timer helper needed).
+          default: responsive
+          selector:
+            select:
+              options:
+                - label: "Responsive (state_reported events, heaviest)"
+                  value: responsive
+                - label: "Lighter (state changes only)"
+                  value: lighter
+                - label: "Minimal (unavailable + scheduled reboot only)"
+                  value: minimal
+        stale_threshold_minutes:
+          name: Stale Threshold
+          description: >-
+            How long without a report (responsive) or without a value
+            change (lighter) before staleness is declared. Ignored in
+            minimal mode. Set this longer than the natural quiet stretches
+            of your device under normal conditions.
+          default: 5
+          selector:
+            number:
+              min: 1
+              max: 1440
+              unit_of_measurement: minutes
+              mode: box
+        heartbeat_timer:
+          name: Heartbeat Timer
+          description: >-
+            A timer helper used to track when monitored entities last
+            reported (or last changed, in lighter mode). Required in
+            responsive and lighter modes. Create via Settings, Devices &
+            Services, Helpers, Create Helper, Timer. Leave the timer
+            duration blank; this blueprint sets it dynamically. In
+            minimal mode this input is ignored.
+          default:
+          selector:
+            entity:
+              domain: timer
+        active_window_enabled:
+          name: Restrict Staleness to Active Window
+          description: >-
+            When enabled, the staleness branch only fires within the
+            active time window below. Useful for FP2-style sensors that
+            naturally fall silent overnight in empty rooms. Unavailable
+            detection and scheduled reboot are not affected by this
+            window.
+          default: false
+          selector:
+            boolean:
+        active_after:
+          name: Active Window Start
+          description: >-
+            Start of the active window (24-hour format). Window must not
+            cross midnight; active_after must be earlier than
+            active_before. Ignored when window is disabled.
+          default: "06:00:00"
+          selector:
+            time:
+        active_before:
+          name: Active Window End
+          description: End of the active window. Ignored when window is disabled.
+          default: "23:00:00"
+          selector:
+            time:
+        scheduled_reboot_enabled:
+          name: Enable Scheduled Reboot
+          description: >-
+            When enabled, the recovery cycle fires once per day at the
+            scheduled time as preventive maintenance. Independent of
+            detection mode; works in all modes.
+          default: false
+          selector:
+            boolean:
+        scheduled_reboot_time:
+          name: Scheduled Reboot Time
+          description: >-
+            Time of day to fire the daily preventive reboot. Ignored
+            when scheduled reboot is disabled.
+          default: "04:30:00"
+          selector:
+            time:
+        restart_guard_sensor:
+          name: Restart Guard Sensor
+          description: >-
+            Optional. If set, all recovery branches skip when this
+            sensor's state is 'on' or 'true'. Used to prevent
+            power-cycling during HA restart windows. Panorama users
+            point this at sensor.restarting_status.
+          default:
+          selector:
+            entity: {}
+        debug_enabled:
+          name: Debug Logging
+          description: >-
+            When enabled, the automation writes a log line for each
+            branch it enters. Turn on during setup to verify behaviour,
+            then turn off in normal operation.
+          default: false
+          selector:
+            boolean:
+
+mode: queued
+max: 10
+
+trigger_variables:
+  _detection_mode: !input detection_mode
+  _monitored_entities: !input monitored_entities
+  _stale_threshold_minutes: !input stale_threshold_minutes
+  _active_window_enabled: !input active_window_enabled
+  _active_after: !input active_after
+  _active_before: !input active_before
+  _restart_guard_sensor: !input restart_guard_sensor
+  _debug_enabled: !input debug_enabled
+  _recovery_switch: !input recovery_switch
+  _recovery_off_seconds: !input recovery_off_seconds
+
+triggers:
+  # ─────────────────────────────────────────────────────────────────────
+  # Unavailable detection — always on
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input monitored_entities
+    to:
+      - unavailable
+      - unknown
+    for:
+      seconds: !input unavailable_timeout_seconds
+    id: unavailable
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Heartbeat reset — responsive mode (every state_reported event)
+  # NOTE: This trigger fires for ALL state_reported events in HA. The
+  # action's first branch template-filters for entities in the monitored
+  # list. This is the documented cost of responsive mode.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: event
+    event_type: state_reported
+    enabled: "{{ _detection_mode == 'responsive' }}"
+    id: heartbeat_responsive
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Heartbeat reset — lighter mode (state changes only)
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input monitored_entities
+    enabled: "{{ _detection_mode == 'lighter' }}"
+    id: heartbeat_lighter
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stale detection — timer finished event (responsive and lighter modes)
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input heartbeat_timer
+    enabled: "{{ _detection_mode != 'minimal' }}"
+    id: stale
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Scheduled reboot — fires once per day at the configured time
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: time
+    at: !input scheduled_reboot_time
+    enabled: !input scheduled_reboot_enabled
+    id: scheduled
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Self-recovery — recovery switch went off unexpectedly
+  # The 'for:' delay is computed as recovery_off_seconds + 30 to ensure
+  # the recovery cycle's own turn_off does not fire this trigger. The
+  # cycle turns the switch back on within recovery_off_seconds, which
+  # cancels the 'for:' delay before it completes.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input recovery_switch
+    to: "off"
+    for:
+      seconds: "{{ _recovery_off_seconds + 30 }}"
+    id: switch_off
+
+actions:
+  - choose:
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 1: Heartbeat reset (responsive mode)
+      # Filters for entity_id in monitored list, then resets timer.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Heartbeat reset (responsive)"
+        conditions:
+          - condition: trigger
+            id: heartbeat_responsive
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.entity_id in _monitored_entities }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - service: system_log.write
+                data:
+                  level: debug
+                  message: >-
+                    sensor_watchdog: heartbeat (responsive) from
+                    {{ trigger.event.data.entity_id }}; resetting timer
+                  logger: sensor_watchdog
+          - service: timer.start
+            target:
+              entity_id: !input heartbeat_timer
+            data:
+              duration: "{{ _stale_threshold_minutes * 60 }}"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 2: Heartbeat reset (lighter mode)
+      # State trigger already filtered to monitored entities. No
+      # additional entity check needed.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Heartbeat reset (lighter)"
+        conditions:
+          - condition: trigger
+            id: heartbeat_lighter
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - service: system_log.write
+                data:
+                  level: debug
+                  message: >-
+                    sensor_watchdog: heartbeat (lighter) from
+                    {{ trigger.entity_id }}; resetting timer
+                  logger: sensor_watchdog
+          - service: timer.start
+            target:
+              entity_id: !input heartbeat_timer
+            data:
+              duration: "{{ _stale_threshold_minutes * 60 }}"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 3: Stale recovery
+      # Timer expired. Apply restart guard and active window, then run
+      # the recovery cycle.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Stale recovery"
+        conditions:
+          - condition: trigger
+            id: stale
+          - condition: state
+            entity_id: !input recovery_switch
+            state: "on"
+          - condition: template
+            value_template: >-
+              {% if _restart_guard_sensor in [none, ''] %}
+                true
+              {% else %}
+                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
+              {% endif %}
+          - condition: template
+            value_template: >-
+              {% if not _active_window_enabled %}
+                true
+              {% else %}
+                {% set t_now = now().strftime('%H:%M:%S') %}
+                {{ t_now >= _active_after and t_now < _active_before }}
+              {% endif %}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - service: system_log.write
+                data:
+                  level: debug
+                  message: "sensor_watchdog: stale detected; cycling recovery switch"
+                  logger: sensor_watchdog
+          - service: switch.turn_off
+            target:
+              entity_id: !input recovery_switch
+          - delay:
+              seconds: !input recovery_off_seconds
+          - service: switch.turn_on
+            target:
+              entity_id: !input recovery_switch
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 4: Unavailable recovery
+      # Sensor went unavailable. Apply restart guard, then cycle.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Unavailable recovery"
+        conditions:
+          - condition: trigger
+            id: unavailable
+          - condition: state
+            entity_id: !input recovery_switch
+            state: "on"
+          - condition: template
+            value_template: >-
+              {% if _restart_guard_sensor in [none, ''] %}
+                true
+              {% else %}
+                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
+              {% endif %}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - service: system_log.write
+                data:
+                  level: debug
+                  message: >-
+                    sensor_watchdog: unavailable detected on
+                    {{ trigger.entity_id }}; cycling recovery switch
+                  logger: sensor_watchdog
+          - service: switch.turn_off
+            target:
+              entity_id: !input recovery_switch
+          - delay:
+              seconds: !input recovery_off_seconds
+          - service: switch.turn_on
+            target:
+              entity_id: !input recovery_switch
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 5: Scheduled recovery
+      # Time-based preventive reboot. Apply restart guard, then cycle.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Scheduled recovery"
+        conditions:
+          - condition: trigger
+            id: scheduled
+          - condition: state
+            entity_id: !input recovery_switch
+            state: "on"
+          - condition: template
+            value_template: >-
+              {% if _restart_guard_sensor in [none, ''] %}
+                true
+              {% else %}
+                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
+              {% endif %}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - service: system_log.write
+                data:
+                  level: debug
+                  message: "sensor_watchdog: scheduled reboot; cycling recovery switch"
+                  logger: sensor_watchdog
+          - service: switch.turn_off
+            target:
+              entity_id: !input recovery_switch
+          - delay:
+              seconds: !input recovery_off_seconds
+          - service: switch.turn_on
+            target:
+              entity_id: !input recovery_switch
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 6: Self-recovery
+      # Recovery switch went off unexpectedly. Turn it back on.
+      # Always-on; no guards. The switch should never be off for long.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Self-recovery"
+        conditions:
+          - condition: trigger
+            id: switch_off
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - service: system_log.write
+                data:
+                  level: debug
+                  message: >-
+                    sensor_watchdog: recovery switch went off
+                    unexpectedly; turning back on
+                  logger: sensor_watchdog
+          - service: switch.turn_on
+            target:
+              entity_id: !input recovery_switch

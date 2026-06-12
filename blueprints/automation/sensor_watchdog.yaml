@@ -1,5 +1,5 @@
 blueprint:
-  name: Sensor Watchdog with Reboot
+  name: Sensor Watchdog
   description: >-
     Monitor a set of sensors for failure modes (unavailable, frozen, stuck) and
     automatically power-cycle the upstream device to recover. Designed for

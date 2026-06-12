@@ -115,13 +115,15 @@ For v1.0.0 the active window cannot cross midnight. Set the start earlier than t
 
 ## A Small Note on What Counts as Offline
 
-The unavailable detector watches for transitions to two specific states: `unavailable` and `unknown`. These are Home Assistant's standard markers for "I cannot reach this device" or "the integration has no value for this entity." A monitored entity moving into either state for longer than the offline timeout fires the recovery cycle.
+The offline detector watches for transitions to two specific states by default: `unavailable` and `unknown`. These are Home Assistant's standard markers for "I cannot reach this device" or "the integration has no value for this entity." A monitored entity moving into either state for longer than the offline timeout fires the recovery cycle.
 
-Some integrations do not use those states. The clearest example is the built-in `ping` integration: when the target host is unreachable, a `ping` binary_sensor reports `off`, not `unavailable`. By default the blueprint does not treat `off` as a failure, because the vast majority of binary_sensor entities (presence detectors, door contacts, etc.) go to `off` as part of normal operation. Treating every `off` transition as a failure would cycle the recovery switch every time someone left a room.
+Some integrations do not use those states. The clearest example is the built-in `ping` integration: when the target host is unreachable, a `ping` binary_sensor reports `off`, not `unavailable`. By default the blueprint does not treat `off` as a failure, because the vast majority of binary_sensor entities (presence detectors, door contacts, motion sensors, etc.) go to `off` as part of normal operation. Treating every `off` transition as a failure would cycle the recovery switch every time someone left a room or closed a door.
 
-For ping-style monitoring, enable the `treat_off_as_offline` input. It adds a second offline trigger watching for `off` transitions on the monitored entities, with the same offline timeout. The result: a ping monitor for a WiFi router can monitor `binary_sensor.router_ping`, set the recovery switch to the router's Zigbee plug, set `treat_off_as_offline` to true, and use minimal detection mode. When the router stops responding to pings the binary_sensor goes `off`, the timeout completes, the plug cycles, and the router comes back online.
+For ping-style monitoring, enable the `treat_off_as_offline` input. It adds a second offline trigger watching for `off` transitions on the monitored entities, with the same offline timeout. When the router stops responding to pings the binary_sensor goes `off`, the timeout completes, the plug cycles, and the router comes back online. See the WiFi router worked example below for a complete configuration.
 
-If you mix ping-style entities with normal binary_sensors in the same blueprint instance, do not enable `treat_off_as_offline`. The setting applies to all monitored entities in that instance; normal binary_sensors going `off` would trigger false recoveries. Use a separate blueprint instance for each device class.
+**The setting is per-instance, not per-entity.** Every monitored entity in a blueprint instance shares the same `treat_off_as_offline` value. That means you cannot mix ping-style entities and normal binary_sensors in one instance: a presence sensor and a ping sensor on the same instance with `treat_off_as_offline` enabled would cycle the recovery switch every time the room emptied. The right approach for users with both types of devices is one instance per device class: one watchdog instance per FP2 (with `treat_off_as_offline` disabled), one watchdog instance per ping-monitored router (with `treat_off_as_offline` enabled). They can share a HA install but never an instance.
+
+This split is also natural because the FP2 and the router have different recovery switches anyway. The pairing rule from earlier ("entities all on the same plug") already pushes you toward one instance per physical device, and the offline-state setting is one more reason to keep instances narrow.
 
 ## A Small Note on One Attempt Per Freeze
 
@@ -139,7 +141,9 @@ The blueprint avoids this with a `for:` delay on the self-recovery trigger: the 
 
 The practical effect: a manual or accidental turn-off of the recovery switch takes a few tens of seconds to be corrected, not instantaneously. For a router plug that has other devices behind it, that is a small but acceptable network gap. For a use case where the recovery switch is dedicated to a single device, the gap is invisible.
 
-## Worked Example
+## Worked Examples
+
+### FP2 presence sensors
 
 The original use case: three Aqara FP2 presence sensors at The Panorama, each plugged into its own smart plug. The living room FP2 wedges about twice a week and a power cycle fixes it. Three instances of the blueprint, one per FP2, watching both the presence and illuminance entities and cycling the matching plug:
 
@@ -148,7 +152,7 @@ Living Room FP2:
 - Monitored Entities: `binary_sensor.fp2_living_room_presence`, `sensor.fp2_living_room_illuminance`
 - Recovery Switch: `switch.fp2_living_room_plug`
 - Recovery Off Duration: 10 seconds
-- Unavailable Timeout: 30 seconds
+- Offline Timeout: 30 seconds
 - Detection Mode: Lighter
 - Stale Threshold: 30 minutes
 - Heartbeat Timer: `timer.fp2_living_room_heartbeat`
@@ -157,13 +161,48 @@ Living Room FP2:
 - Active Window End: 23:00:00
 - Enable Scheduled Reboot: enabled
 - Scheduled Reboot Time: 04:30:00
+- Treat 'off' as Offline: **disabled** (the presence entity legitimately goes `off` when the room is empty)
 - Restart Guard Sensor: `sensor.restarting_status`
 
 The living room is active enough during the day that 30 minutes without a value change reliably means the FP2 has wedged, and quiet enough at night that the active window prevents false positives. The scheduled cycle at 04:30 catches any silent wedge the freshness detector misses, and the restart guard keeps the blueprint quiet during the 03:00-04:00 reboot window. The same configuration with the entities and timer swapped applies to the master and guest FP2s.
 
+`Treat 'off' as Offline` is left off because the presence entity going `off` is a normal event (the room emptied), not a failure. The offline detector catches the FP2's failure modes (`unavailable` and `unknown` states) without needing to treat `off` as a problem.
+
 Downstream automations that previously had to defend themselves against an `unavailable` FP2 (with `availability:` templates, `default_value` filters, or wrapping template sensors) can be left in place; the FP2 itself recovers within minutes of any wedge, and the unavailable window becomes short enough that downstream consumers rarely notice.
 
-For more worked examples, including the router plug and WiFi camera scenarios, see the article: <https://xeazy.com/sensor-watchdog-blueprint/>
+### WiFi router with a ping sensor
+
+A second use case from The Panorama: a flaky WiFi router that occasionally locks up and needs a power cycle to come back. Monitored via HA's built-in `ping` integration; recovered by the Zigbee smart plug it lives on. This goes in a **separate** blueprint instance from any FP2 or normal-binary-sensor instances, because `Treat 'off' as Offline` is a per-instance setting that applies to every monitored entity in that instance.
+
+First, configure HA's ping integration in `configuration.yaml`:
+
+```yaml
+binary_sensor:
+  - platform: ping
+    host: 192.168.1.1
+    name: router_gateway_ping
+    count: 3
+    scan_interval: 30
+```
+
+This produces `binary_sensor.router_gateway_ping`, which reports `on` when the gateway is reachable and `off` when it is not. Then create the watchdog instance from the blueprint:
+
+- Monitored Entities: `binary_sensor.router_gateway_ping`
+- Recovery Switch: `switch.wifi_router_zigbee_plug`
+- Recovery Off Duration: 15 seconds
+- Offline Timeout: 90 seconds
+- Detection Mode: **Minimal** (the ping sensor sits at `on` for days when the router is healthy; freshness detection in `responsive` or `lighter` mode would falsely flag the long-quiet stretches)
+- Heartbeat Timer: (blank; minimal mode does not need one)
+- Treat 'off' as Offline: **enabled** (the whole reason we are using a ping sensor)
+- Enable Scheduled Reboot: enabled
+- Scheduled Reboot Time: 04:00:00
+- Restart Guard Sensor: `sensor.restarting_status`
+
+In minimal mode the offline detector is the workhorse. The 90-second offline timeout rides out brief network blips and short DHCP renewals without falsely cycling the router. When the gateway has been unreachable for more than 90 seconds the plug cycles, the router boots, and the gateway comes back online within another minute or so. The 04:00 scheduled cycle is preventive maintenance, useful for routers with slow memory leaks.
+
+The Zigbee plug for the recovery switch is deliberate. If the recovery switch were a WiFi smart plug, it would also be offline during the outage and the cycle could not run. A Zigbee plug stays reachable through the Zigbee coordinator regardless of what the WiFi network is doing.
+
+For more worked examples, including Zigbee router plugs, smart cameras, and NAS scenarios, see the article: <https://xeazy.com/sensor-watchdog-blueprint/>
 
 ## Parameters
 
@@ -181,7 +220,7 @@ For more worked examples, including the router plug and WiFi camera scenarios, s
 | `active_before` | No | `23:00:00` | a time (HH:MM:SS) | End of the active window. Must be later than `active_after`. v1.0.0 does not support windows that cross midnight. Ignored when the window is disabled. |
 | `scheduled_reboot_enabled` | No | `false` | `true`, `false` | When enabled, the recovery cycle fires once per day at the scheduled time. Works in all detection modes including minimal. |
 | `scheduled_reboot_time` | No | `04:30:00` | a time (HH:MM:SS) | The time of day to fire the scheduled cycle. Ignored when the scheduled cycle is disabled. |
-| `treat_off_as_offline` | No | `false` | `true`, `false` | When enabled, a monitored entity transitioning to `off` is treated the same as one transitioning to `unavailable` or `unknown`, and triggers recovery after the offline timeout. Useful for binary_sensor entities created by HA's ping integration, which report `off` (not `unavailable`) when the target is unreachable. Leave off for sensors that go `off` as part of normal operation (presence sensors, switches, etc.). |
+| `treat_off_as_offline` | No | `false` | `true`, `false` | When enabled, a monitored entity transitioning to `off` is treated the same as one transitioning to `unavailable` or `unknown` and triggers recovery after the offline timeout. Enable only for entities whose `off` state means failure (e.g., binary_sensors from HA's `ping` integration, which report `off` when the target is unreachable). Leave disabled for entities whose `off` state is normal operation (presence sensors, motion sensors, door contacts, switches). The setting is per-instance: every monitored entity in this instance shares the same value. See "A Small Note on What Counts as Offline" above. |
 | `restart_guard_sensor` | No | blank | any entity | When set, all recovery branches skip while this entity reads `on`, `true`, or `True`. Used to suppress the blueprint during a known reboot window. |
 | `debug_enabled` | No | `false` | `true`, `false` | When enabled, the automation writes a log line for each branch it enters. Turn on during setup, turn off in normal operation. |
 
@@ -209,7 +248,7 @@ This is 1.0.0-beta. The blueprint design has been simulated against 21 scenarios
 
 If you run into any of the above before the author does, or you find a case the simulator missed, the forum thread is the right place to flag it.
 
-
+## License
 
 Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>)
 

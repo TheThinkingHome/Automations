@@ -18,7 +18,12 @@
 #                Refactored the failed-entities templates in all four
 #                recovery-with-failure-notification branches from namespace
 #                loops to expand()/selectattr filter chains. New input:
-#                post_restart_settle_seconds (default 180).
+#                post_restart_settle_seconds (default 180). Stale trigger no
+#                longer carries an event_data entity_id filter (was a load-
+#                time validation risk when heartbeat_timer was blank in
+#                minimal mode); the filter moved into the stale branch's
+#                condition list, where it gates on the user's configured
+#                heartbeat timer at runtime.
 #   1.0.0-beta - Initial public preview. Three independent failure detectors firing
 #                into a single recovery cycle: an unavailable detector with a
 #                tolerance window, a freshness detector backed by a timer helper,
@@ -366,6 +371,7 @@ variables:
   failure_notification_enabled_var: !input failure_notification_enabled
   recovery_settle_seconds_var: !input recovery_settle_seconds
   post_restart_settle_seconds_var: !input post_restart_settle_seconds
+  heartbeat_timer_var: !input heartbeat_timer
 
 triggers:
   # ─────────────────────────────────────────────────────────────────────
@@ -418,11 +424,15 @@ triggers:
 
   # ─────────────────────────────────────────────────────────────────────
   # Stale detection - timer finished event (responsive and lighter modes)
+  # No event_data filter on the trigger: the user's heartbeat_timer input
+  # may be blank when detection_mode is minimal, and a blank entity_id in
+  # event_data can fail trigger validation at automation load time. The
+  # stale branch in the action filters to the configured timer via a
+  # condition. timer.finished is a rare event, so the filter cost in the
+  # action is negligible.
   # ─────────────────────────────────────────────────────────────────────
   - trigger: event
     event_type: timer.finished
-    event_data:
-      entity_id: !input heartbeat_timer
     enabled: "{{ _detection_mode != 'minimal' }}"
     id: stale
 
@@ -528,6 +538,9 @@ actions:
         conditions:
           - condition: trigger
             id: stale
+          - alias: "Filter to the configured heartbeat timer"
+            condition: template
+            value_template: "{{ trigger.event.data.entity_id == heartbeat_timer_var }}"
           - condition: state
             entity_id: !input recovery_switch
             state: "on"

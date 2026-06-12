@@ -1,4 +1,4 @@
-# Sensor Watchdog with Reboot
+# Sensor Watchdog (Beta)
 
 A Home Assistant automation blueprint that watches a set of sensors for the three ways they fail in practice (offline, frozen, drifting toward wedged) and recovers them by cycling the smart plug they are plugged into. A timer helper tracks heartbeats so the freeze case gets caught instead of just the offline case, and an active time window keeps a quiet empty room from being mistaken for a frozen device.
 
@@ -7,6 +7,8 @@ An Aqara FP2 presence sensor talks over WiFi and roughly twice a week it locks u
 This blueprint answers that question three ways at once. It cycles the plug when the entity goes `unavailable` for longer than a tolerance window. It cycles the plug when the entity stops reporting fresh values, which catches the freeze case the unavailable detector misses. And it can fire a daily preventive cycle on a schedule, for devices known to drift slowly into a wedged state regardless of what their entity says. The detection is event-driven end to end: no time pattern polling, no scanning loops. A heartbeat timer is reset by reports from the monitored entities, and the recovery cycle fires when the timer expires.
 
 Full write-up and the longer story behind the design: <https://xeazy.com/sensor-watchdog-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
+
+**Current version: 1.0.0-beta.** This blueprint is shipped as a public preview. The author is dogfooding it on three Aqara FP2 sensors at home and will not graduate it to 1.0.0 stable until that deployment has run clean for a sustained window. Use it on your own setup if you are comfortable troubleshooting; feedback on the forum is welcome.
 
 ## What You Get
 
@@ -164,7 +166,30 @@ For more worked examples, including the router plug and WiFi camera scenarios, s
 | `restart_guard_sensor` | No | blank | any entity | When set, all recovery branches skip while this entity reads `on`, `true`, or `True`. Used to suppress the blueprint during a known reboot window. |
 | `debug_enabled` | No | `false` | `true`, `false` | When enabled, the automation writes a log line for each branch it enters. Turn on during setup, turn off in normal operation. |
 
-## License
+## Beta Status
+
+This is 1.0.0-beta. The blueprint design has been simulated against 21 scenarios covering the obvious failure modes and a few non-obvious ones (the recovery cycle's own turn-off accidentally firing self-recovery, two monitored entities going unavailable in the same instant queueing duplicate cycles, the staleness branch firing during a reboot window). The author is running it against three Aqara FP2 sensors at home and will graduate it to 1.0.0 stable when that deployment has run clean for a sustained window with no false positives and no missed wedges.
+
+**Verified in simulation:**
+
+- All three detection modes route correctly through the choose: block.
+- The active window gates only the freshness branch; the unavailable detector and the scheduled cycle ignore it.
+- The restart guard blocks all three recovery branches.
+- The self-recovery `for:` delay is long enough that the recovery cycle's own turn-off does not fire it.
+- Simultaneous triggers (two entities unavailable in the same instant; stale and unavailable firing together) produce exactly one recovery cycle.
+- The cycle is one-attempt-per-freeze; the timer is not auto-restarted after the staleness branch fires.
+
+**Verified in production:** pending. The Panorama deployment starts on the living room FP2 in lighter mode with the active window enabled.
+
+**Not yet verified:**
+
+- The behavior in responsive mode on a busy installation. Responsive mode fires the freshness trigger for every `state_reported` event in Home Assistant, filtered down to the monitored entities in the action's first condition. The cost is documented but has not been measured on a real install.
+- Behavior at Home Assistant startup when a monitored entity is already `unavailable` before HA finishes loading. State triggers fire on transitions, not initial states, so a wedge that predates the HA restart is detected only when the entity changes again or when the scheduled cycle fires.
+- Multi-day scheduled cycles. v1.0.0 is daily-only; weekly or specific-days scheduling is on the v1.1.0 list.
+
+If you run into any of the above before the author does, or you find a case the simulator missed, the forum thread is the right place to flag it.
+
+
 
 Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>)
 
@@ -174,4 +199,4 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0 | Initial release. Three independent failure detectors firing into a single recovery cycle: an unavailable detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. Three-mode selector (responsive, lighter, minimal) for the freshness detector's event load. Optional active time window for the freshness branch, optional restart guard input, and a self-recovery branch that uses a `for:` delay so the recovery cycle's own turn-off does not fight itself. Twenty-one simulator scenarios pass including simultaneous-trigger debouncing and the cycle-own-off case. |
+| 1.0.0-beta | Initial public preview. Three independent failure detectors firing into a single recovery cycle: an unavailable detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. Three-mode selector (responsive, lighter, minimal) for the freshness detector's event load. Optional active time window for the freshness branch, optional restart guard input, and a self-recovery branch that uses a `for:` delay so the recovery cycle's own turn-off does not fight itself. Twenty-one simulator scenarios pass including simultaneous-trigger debouncing and the cycle-own-off case. Author-dogfooded only at release; will graduate to 1.0.0 stable after the home deployment runs clean. |

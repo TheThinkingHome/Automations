@@ -72,7 +72,7 @@ One timer helper per blueprint instance. If you watch three FP2s, you have three
 ## Step 3: Create the Automation from the Blueprint
 
 1. Go to Settings, then Automations & Scenes.
-2. Open the Blueprints tab, find Sensor Watchdog with Reboot, and click Create Automation.
+2. Open the Blueprints tab, find Sensor Watchdog, and click Create Automation.
 3. Fill in the inputs:
     - Monitored Entities: the entities you want to watch. For an FP2 you can pick more than one (the illuminance sensor and the presence sensor, for example); reports from any of them count as a heartbeat.
     - Recovery Switch: the smart plug that powers the upstream device.

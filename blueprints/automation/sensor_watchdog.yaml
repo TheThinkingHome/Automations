@@ -14,12 +14,15 @@
 #                and an optional daily scheduled cycle. Three-mode selector
 #                (responsive, lighter, minimal) for the freshness detector's event
 #                load. Optional active time window for the freshness branch,
-#                optional restart guard input, and a self-recovery branch that uses
-#                a 'for:' delay so the recovery cycle's own turn-off does not fight
-#                itself. Twenty-one simulator scenarios pass including simultaneous-
-#                trigger debouncing and the cycle-own-off case. Author-dogfooded at
-#                release; will graduate to 1.0.0 stable after the home deployment
-#                runs clean.
+#                optional restart guard input, optional treat_off_as_offline input
+#                to extend the offline detector to 'off' transitions (for ping-
+#                style sensors), and a self-recovery branch that uses a 'for:'
+#                delay so the recovery cycle's own turn-off does not fight
+#                itself. Thirty-three simulator scenarios pass including
+#                simultaneous-trigger debouncing, the cycle-own-off case, the
+#                FP2 10-zone case, and the WiFi router ping scenario. Author-
+#                dogfooded at release; will graduate to 1.0.0 stable after the
+#                home deployment runs clean.
 blueprint:
   name: Sensor Watchdog
   description: |
@@ -100,11 +103,14 @@ blueprint:
               unit_of_measurement: seconds
               mode: box
         unavailable_timeout_seconds:
-          name: Unavailable Timeout
+          name: Offline Timeout
           description: >-
-            How long a monitored entity must be unavailable or unknown
-            before recovery fires. Set to a value longer than typical
-            transient outages.
+            How long a monitored entity must be in an offline state before
+            recovery fires. By default 'offline' means unavailable or
+            unknown; enable 'Treat Off as Offline' in advanced settings
+            to also include the 'off' state, which is useful for ping
+            sensors. Set this to a value longer than typical transient
+            outages.
           default: 30
           selector:
             number:
@@ -207,6 +213,21 @@ blueprint:
           default: "04:30:00"
           selector:
             time:
+        treat_off_as_offline:
+          name: Treat 'off' as Offline
+          description: >-
+            When enabled, a monitored entity transitioning to the 'off'
+            state is treated the same as one transitioning to
+            'unavailable' or 'unknown', and triggers recovery after the
+            offline timeout. Useful for binary_sensor entities created
+            by HA's ping integration, which report 'off' (not
+            'unavailable') when the target is unreachable. Most
+            monitored entities should leave this off; presence sensors,
+            switches, and other binary entities go 'off' as normal
+            operation and would trigger false recoveries.
+          default: false
+          selector:
+            boolean:
         restart_guard_sensor:
           name: Restart Guard Sensor
           description: >-
@@ -241,10 +262,12 @@ trigger_variables:
   _debug_enabled: !input debug_enabled
   _recovery_switch: !input recovery_switch
   _recovery_off_seconds: !input recovery_off_seconds
+  _treat_off_as_offline: !input treat_off_as_offline
 
 triggers:
   # ─────────────────────────────────────────────────────────────────────
   # Unavailable detection - always on
+  # Fires when a monitored entity transitions to unavailable or unknown.
   # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input monitored_entities
@@ -253,6 +276,20 @@ triggers:
       - unknown
     for:
       seconds: !input unavailable_timeout_seconds
+    id: unavailable
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Off-state detection - gated by 'Treat off as Offline'
+  # Same id and same downstream branch as unavailable; the only difference
+  # is the state being watched. Useful for ping sensors that report 'off'
+  # (not 'unavailable') when the target is unreachable.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input monitored_entities
+    to: "off"
+    for:
+      seconds: !input unavailable_timeout_seconds
+    enabled: !input treat_off_as_offline
     id: unavailable
 
   # ─────────────────────────────────────────────────────────────────────

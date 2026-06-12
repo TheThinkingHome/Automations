@@ -219,12 +219,16 @@ blueprint:
             When enabled, a monitored entity transitioning to the 'off'
             state is treated the same as one transitioning to
             'unavailable' or 'unknown', and triggers recovery after the
-            offline timeout. Useful for binary_sensor entities created
-            by HA's ping integration, which report 'off' (not
-            'unavailable') when the target is unreachable. Most
-            monitored entities should leave this off; presence sensors,
-            switches, and other binary entities go 'off' as normal
-            operation and would trigger false recoveries.
+            offline timeout. Enable only for entities whose 'off' state
+            means failure, the clearest example being binary_sensors
+            from HA's ping integration (they report 'off' when the
+            target is unreachable). Leave disabled for entities whose
+            'off' state is normal operation: presence sensors, motion
+            sensors, door contacts, switches, etc. The setting is per-
+            instance and applies to every monitored entity in this
+            instance, so do not mix ping-style entities with normal
+            binary_sensors in one instance. Use a separate watchdog
+            instance for each device class.
           default: false
           selector:
             boolean:

@@ -1,10 +1,10 @@
 # Sensor Watchdog (Beta)
 
-A Home Assistant automation blueprint that watches a set of sensors for the three ways they fail in practice (offline, frozen, drifting toward wedged) and recovers them by cycling the smart plug they are plugged into. A timer helper tracks heartbeats so the freeze case gets caught instead of just the offline case, and an active time window keeps a quiet empty room from being mistaken for a frozen device.
+A Home Assistant automation blueprint that watches one or more entities sharing a single smart plug and recovers the device behind that plug when those entities go offline or stop reporting fresh values. The blueprint watches the entities collectively: multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone. A timer helper resets on any heartbeat from any monitored entity, so a device that freezes silently is caught, not just one that drops fully offline. An active time window prevents quiet empty rooms from being mistaken for frozen devices, and an optional daily scheduled cycle handles devices that benefit from a periodic preventive reboot.
 
 An Aqara FP2 presence sensor talks over WiFi and roughly twice a week it locks up and stops reporting. Sometimes its entity drops to `unavailable`; sometimes the value just freezes wherever it happened to be, and Home Assistant has no way to know the device is dead until the next state change that never comes. A reboot of its smart plug fixes it every time. A Zigbee router plug at the back of the property occasionally drops its routing table and stops forwarding for the devices behind it; cycling its power restores the mesh within a minute. A WiFi camera with a known firmware bug needs a kick every few days. In each case the fix is the same trivial thing (turn the upstream plug off, wait ten seconds, turn it back on) and the only question is when to trigger it.
 
-This blueprint answers that question three ways at once. It cycles the plug when the entity goes `unavailable` for longer than a tolerance window. It cycles the plug when the entity stops reporting fresh values, which catches the freeze case the unavailable detector misses. And it can fire a daily preventive cycle on a schedule, for devices known to drift slowly into a wedged state regardless of what their entity says. The detection is event-driven end to end: no time pattern polling, no scanning loops. A heartbeat timer is reset by reports from the monitored entities, and the recovery cycle fires when the timer expires.
+This blueprint answers that question three ways at once. It cycles the plug when any monitored entity goes `unavailable` for longer than a tolerance window. It cycles the plug when the entities collectively stop reporting fresh values for longer than a freshness threshold, which catches the freeze case the unavailable detector misses. And it can fire a daily preventive cycle on a schedule, for devices known from experience to need a periodic kick regardless of what their entities say. The detection is event-driven end to end: no time pattern polling, no scanning loops. A heartbeat timer is reset by reports from any of the monitored entities, and the recovery cycle fires when the timer expires.
 
 Full write-up and the longer story behind the design: <https://xeazy.com/sensor-watchdog-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
 
@@ -23,7 +23,7 @@ A monitored entity counts as "online" whenever it has any state value at all tha
 
 ## Where This Fits
 
-The closest hand-rolled alternative is a one-off `Unavailable - <device>` automation written separately for each flaky device. That works for the offline case and is straightforward to write, but it misses freezes (the entity is technically still reporting, just stuck) and it duplicates the same hundred lines of YAML once per device. Three flaky FP2s mean three near-identical automations to maintain. Move the same logic into a blueprint and the YAML lives once, with one instance per device.
+The closest hand-rolled alternative is a one-off `Unavailable - <device>` automation written separately for each flaky device. That works for the offline case and is straightforward to write, but it misses freezes (the entity is technically still reporting, just frozen at the last value) and it duplicates the same hundred lines of YAML once per device. Three flaky FP2s mean three near-identical automations to maintain. Move the same logic into a blueprint and the YAML lives once, with one instance per device.
 
 Polling-based watchdogs (a `time_pattern` that fires every five minutes and checks freshness in a template condition) catch the freeze case but at the cost of running an automation every five minutes forever, on every Home Assistant install, regardless of whether anything is wrong. The event-driven design here only does work when an actual report comes in or an actual timer expires.
 
@@ -83,6 +83,14 @@ One timer helper per blueprint instance. If you watch three FP2s, you have three
 
 The automation is now armed. Watch it in Settings, Automations & Scenes, the Traces view, the first time a monitored entity reports. You should see a trace that resets the heartbeat timer and exits cleanly.
 
+## A Small Note on Pairing Entities
+
+The blueprint watches one or more entities together against a single smart plug. One entity per instance works, but pairing two or more entities from the same physical device often produces better detection than either alone, because their activity patterns complement each other.
+
+An Aqara FP2 exposes both a presence entity and an illuminance entity. The illuminance value changes constantly during the day as light levels shift; presence changes mostly in the evening when people are moving through the room under steady artificial light. The two entities take turns generating heartbeats: illuminance carries the daytime hours, presence carries the evening, and there is rarely a freshness window where neither is reporting. Watching only the presence entity would risk false freeze flags during long quiet stretches in the day. Watching only the illuminance entity would risk false flags in the evening when light levels are steady. Together they cover both halves of the day.
+
+The pairing rule is straightforward: the entities all have to live on the same smart plug, since the recovery action is one plug cycle for the whole group. If you have two flaky devices on two different plugs, that is two instances of the blueprint, not one. If you have one device with three useful entities, that is one instance watching all three.
+
 ## A Small Note on the Three Detection Modes
 
 The cost of catching a frozen device is event traffic. Home Assistant fires a `state_reported` event every single time any device sends a report, whether or not the value changed. In responsive mode, this blueprint's freshness detector wakes up for every one of those events system-wide and template-filters them down to the monitored entities. On a busy Home Assistant with hundreds of devices reporting every few seconds, that is a lot of trigger evaluations to ignore.
@@ -141,7 +149,7 @@ Living Room FP2:
 - Scheduled Reboot Time: 04:30:00
 - Restart Guard Sensor: `sensor.restarting_status`
 
-The living room is active enough during the day that 30 minutes without a value change reliably means the FP2 has wedged, and quiet enough at night that the active window prevents false positives. The scheduled cycle at 04:30 catches drift the freshness detector misses, and the restart guard keeps the blueprint quiet during the 03:00-04:00 reboot window. The same configuration with the entities and timer swapped applies to the master and guest FP2s.
+The living room is active enough during the day that 30 minutes without a value change reliably means the FP2 has wedged, and quiet enough at night that the active window prevents false positives. The scheduled cycle at 04:30 catches any silent wedge the freshness detector misses, and the restart guard keeps the blueprint quiet during the 03:00-04:00 reboot window. The same configuration with the entities and timer swapped applies to the master and guest FP2s.
 
 Downstream automations that previously had to defend themselves against an `unavailable` FP2 (with `availability:` templates, `default_value` filters, or wrapping template sensors) can be left in place; the FP2 itself recovers within minutes of any wedge, and the unavailable window becomes short enough that downstream consumers rarely notice.
 
@@ -151,7 +159,7 @@ For more worked examples, including the router plug and WiFi camera scenarios, s
 
 | Input | Required | Default | Accepted values | What it does |
 | --- | --- | --- | --- | --- |
-| `monitored_entities` | Yes | none | one or more entities | The entities watched by the blueprint. Reports from any of them reset the heartbeat timer; an unavailable transition on any of them triggers the unavailable branch. Typically multiple entities from the same physical device. |
+| `monitored_entities` | Yes | none | one or more entities | The entities watched by the blueprint. All must live on the same recovery_switch (one plug cycle is the recovery action for the whole group). Reports from any of them reset the heartbeat timer; an unavailable transition on any of them triggers the unavailable branch. Pairing multiple entities from the same physical device often improves detection because their activity patterns complement each other; see "A Small Note on Pairing Entities" above. |
 | `recovery_switch` | Yes | none | a `switch` entity | The smart plug or other switch that powers the upstream device. Cycled (off, wait, on) by every recovery branch. |
 | `recovery_off_seconds` | No | 10 | 1 to 60 | How long to hold the recovery switch off between the off action and the on action. Long enough for the device to fully power down. |
 | `unavailable_timeout_seconds` | No | 30 | 5 to 600 | How long an entity must stay `unavailable` or `unknown` before the unavailable branch fires. Long enough to ride out transient outages without missing real failures. |

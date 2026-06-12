@@ -1,1572 +1,903 @@
-"""
-Sensor Watchdog Blueprint Simulator
-====================================
-
-Discrete-event model of the HA automation logic in sensor_watchdog.yaml.
-
-Models:
-- A simulated wall clock (advance() moves time forward)
-- Entity states (value, last_reported timestamp)
-- The heartbeat timer (idle/active/finished, remaining duration)
-- The recovery switch state (on/off)
-- HA's trigger evaluation (state, event, state_reported, timer.finished, time)
-- The automation's action choose: block evaluation
-- The recovery cycle (delayed sequence)
-
-The simulator does NOT model:
-- HA's full state machine
-- Network/integration latency
-- True concurrency (events are processed serially)
-
-It is enough to validate the logical correctness of the blueprint's
-trigger gating, branch routing, condition evaluation, and action effects.
-"""
-
-from dataclasses import dataclass, field
-from typing import Optional, Callable
-from enum import Enum
-
-
-class TimerState(Enum):
-    IDLE = "idle"
-    ACTIVE = "active"
-
-
-@dataclass
-class EntityState:
-    value: str = "off"
-    last_reported: float = 0.0
-    last_changed: float = 0.0
-
-    def report(self, t: float, new_value: Optional[str] = None):
-        """Simulate a state_reported event. Updates last_reported always.
-        If new_value differs from current, also updates last_changed."""
-        self.last_reported = t
-        if new_value is not None and new_value != self.value:
-            self.value = new_value
-            self.last_changed = t
-
-
-@dataclass
-class WatchdogConfig:
-    # Required
-    monitored_entities: list[str]
-    recovery_switch: str
-    # Timing
-    recovery_off_seconds: int = 10
-    unavailable_timeout_seconds: int = 30
-    # Advanced
-    detection_mode: str = "responsive"  # responsive | lighter | minimal
-    stale_threshold_minutes: int = 5
-    heartbeat_timer: Optional[str] = "timer.test_heartbeat"
-    active_window_enabled: bool = False
-    active_after: str = "06:00:00"
-    active_before: str = "23:00:00"
-    scheduled_reboot_enabled: bool = False
-    scheduled_reboot_time: str = "04:30:00"
-    restart_guard_sensor: Optional[str] = None
-    debug_enabled: bool = False
-    treat_off_as_offline: bool = False
-    failure_notification_enabled: bool = False
-    recovery_settle_seconds: int = 60
-    post_restart_settle_seconds: int = 180
-    # The on_failure_action is modelled as a flag that the simulator can
-    # check; in real HA this is a user-defined action sequence.
-    on_failure_action_configured: bool = False
-
-
-@dataclass
-class Action:
-    """A record of an action the automation took."""
-    name: str
-    payload: dict = field(default_factory=dict)
-    at_time: float = 0.0
-
-    def __repr__(self):
-        return f"[{self.at_time:.1f}s] {self.name} {self.payload}"
-
-
-class WatchdogSim:
-    """Simulator of the sensor_watchdog blueprint."""
-
-    def __init__(self, config: WatchdogConfig):
-        self.config = config
-        self.now: float = 0.0  # seconds since simulation start
-        self.entities: dict[str, EntityState] = {}
-        # Heartbeat timer state
-        self.timer_state = TimerState.IDLE
-        self.timer_finishes_at: Optional[float] = None
-        # Recovery switch
-        self.switch_state = "on"
-        # Pending recovery cycle (when in the off-delay-on sequence)
-        self.recovery_in_progress = False
-        self.recovery_cycle_steps: list[tuple[float, Callable]] = []
-        # State-trigger 'for:' bookkeeping. Map entity -> time when the
-        # unavailable/unknown 'for:' delay would complete.
-        self.unavailable_since: dict[str, float] = {}
-        # When the switch_off 'for:' delay would fire (None if not pending)
-        self.switch_off_pending_at: Optional[float] = None
-        # Recent unavailable already triggered (debouncing)
-        self.unavailable_triggered_at: dict[str, float] = {}
-        # Action log
-        self.actions: list[Action] = []
-        # Restart guard external state
-        self.restart_guard_active = False
-        # Hour-of-day for active window (simulated as a property of now)
-        self.simulated_hour = 12  # default to noon (inside any normal window)
-        # State-of-system flag
-        self.restart_guard_was_on = False
-        # Initialize entities
-        for e in config.monitored_entities:
-            self.entities[e] = EntityState(value="off", last_reported=0.0, last_changed=0.0)
-        self.entities[config.recovery_switch] = EntityState(value="on")
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _log_action(self, name: str, **payload):
-        self.actions.append(Action(name=name, payload=payload, at_time=self.now))
-
-    def _restart_guard_blocks(self) -> bool:
-        if self.config.restart_guard_sensor is None:
-            return False
-        return self.restart_guard_active
-
-    def _in_active_window(self) -> bool:
-        if not self.config.active_window_enabled:
-            return True
-        # Compare simulated hour-of-day to window bounds.
-        after_h = int(self.config.active_after.split(":")[0])
-        before_h = int(self.config.active_before.split(":")[0])
-        return after_h <= self.simulated_hour < before_h
-
-    # ------------------------------------------------------------------
-    # Time advancement
-    # ------------------------------------------------------------------
-
-    def advance(self, seconds: float):
-        """Advance simulated time, processing scheduled callbacks."""
-        target = self.now + seconds
-        # Process recovery cycle steps that fire within this advancement
-        while True:
-            next_event_time = None
-            next_event_kind = None
-
-            # Timer finished?
-            if self.timer_state == TimerState.ACTIVE and self.timer_finishes_at is not None:
-                if self.timer_finishes_at <= target:
-                    if next_event_time is None or self.timer_finishes_at < next_event_time:
-                        next_event_time = self.timer_finishes_at
-                        next_event_kind = "timer_finished"
-
-            # Recovery cycle step?
-            if self.recovery_cycle_steps:
-                step_time, _ = self.recovery_cycle_steps[0]
-                if step_time <= target:
-                    if next_event_time is None or step_time < next_event_time:
-                        next_event_time = step_time
-                        next_event_kind = "recovery_step"
-
-            # 'for:' delay expiry on unavailable entities?
-            for entity, fire_at in list(self.unavailable_since.items()):
-                if fire_at <= target:
-                    if next_event_time is None or fire_at < next_event_time:
-                        next_event_time = fire_at
-                        next_event_kind = ("unavailable_for_expired", entity)
-
-            # Switch_off 'for:' delay expired?
-            if self.switch_off_pending_at is not None:
-                if self.switch_off_pending_at <= target:
-                    if next_event_time is None or self.switch_off_pending_at < next_event_time:
-                        next_event_time = self.switch_off_pending_at
-                        next_event_kind = "switch_off_fired"
-
-            if next_event_time is None:
-                break
-
-            # Fast-forward to event time
-            self.now = next_event_time
-
-            if next_event_kind == "timer_finished":
-                self._on_timer_finished()
-            elif next_event_kind == "recovery_step":
-                step_time, callback = self.recovery_cycle_steps.pop(0)
-                callback()
-            elif next_event_kind == "switch_off_fired":
-                self.switch_off_pending_at = None
-                # Verify switch is still off
-                if self.switch_state == "off":
-                    self._on_switch_off_branch()
-            elif isinstance(next_event_kind, tuple) and next_event_kind[0] == "unavailable_for_expired":
-                entity = next_event_kind[1]
-                # Verify the entity is still in an offline state
-                state = self.entities[entity].value
-                is_offline = state in ["unavailable", "unknown"]
-                if not is_offline and self.config.treat_off_as_offline and state == "off":
-                    is_offline = True
-                if is_offline:
-                    self._on_unavailable_branch(entity)
-                # Clear bookkeeping
-                self.unavailable_since.pop(entity, None)
-
-        self.now = target
-
-    # ------------------------------------------------------------------
-    # Event sources (call these from scenarios)
-    # ------------------------------------------------------------------
-
-    def report(self, entity_id: str, new_value: Optional[str] = None):
-        """Simulate a device reporting state. Fires state_reported event.
-        If new_value is different from current, also fires state_changed."""
-        if entity_id not in self.entities:
-            self.entities[entity_id] = EntityState()
-        old_value = self.entities[entity_id].value
-        self.entities[entity_id].report(self.now, new_value)
-        # Fire blueprint triggers
-        self._on_state_reported(entity_id)
-        if new_value is not None and new_value != old_value:
-            self._on_state_changed(entity_id, old_value, new_value)
-
-    def fire_scheduled_reboot(self):
-        """Simulate the scheduled time trigger firing."""
-        if not self.config.scheduled_reboot_enabled:
-            return  # Trigger is disabled
-        self._on_scheduled_branch()
-
-    def switch_off(self):
-        """Simulate the recovery switch unexpectedly turning off (manual or external).
-        Triggers the 'for:' delay on the switch_off trigger."""
-        if self.switch_state != "off":
-            self.switch_state = "off"
-            self.entities[self.config.recovery_switch].report(self.now, "off")
-            # Start the 'for:' delay; if switch goes back to on within
-            # recovery_off_seconds + 30, the delay cancels.
-            self.switch_off_pending_at = self.now + self.config.recovery_off_seconds + 30
-
-    def ha_start(self):
-        """Simulate Home Assistant starting up. Schedules the post-restart
-        evaluation to fire after post_restart_settle_seconds, at which time
-        the branch checks monitored entity states and cycles if needed."""
-        settle_at = self.now + self.config.post_restart_settle_seconds
-        self.recovery_cycle_steps.append((settle_at, self._evaluate_post_restart))
-        if self.config.debug_enabled:
-            self._log_action("debug.ha_start_scheduled", settle_at=settle_at)
-
-    def _evaluate_post_restart(self):
-        """Run after post_restart_settle_seconds. Check monitored entities and
-        cycle the recovery switch if any are in a failure state."""
-        bad_states = ["unavailable", "unknown"]
-        if self.config.treat_off_as_offline:
-            bad_states = bad_states + ["off"]
-        failed = [
-            e for e in self.config.monitored_entities
-            if self.entities[e].value in bad_states
-        ]
-        if self.config.debug_enabled:
-            self._log_action("debug.post_restart_evaluated", failed=failed)
-        if not failed:
-            return
-        # Apply same gates as the other recovery branches
-        if self.switch_state != "on":
-            return
-        if self.config.restart_guard_sensor:
-            guard_state = self.entities.get(self.config.restart_guard_sensor)
-            if guard_state and guard_state.value in ("on", "true", "True"):
-                return
-        # Cancel any pending freshness timer
-        if self.config.detection_mode != "minimal":
-            self._timer_cancel()
-        self._log_action("post_restart.cycle_starts", failed=failed)
-        self._start_recovery_cycle("post_restart")
-
-    # ------------------------------------------------------------------
-    # Blueprint trigger handlers
-    # ------------------------------------------------------------------
-
-    def _on_state_reported(self, entity_id: str):
-        """Branch 1: Heartbeat reset (responsive mode)."""
-        if self.config.detection_mode != "responsive":
-            return
-        if entity_id not in self.config.monitored_entities:
-            return
-        # Reset heartbeat timer
-        self._timer_start(self.config.stale_threshold_minutes * 60)
-        if self.config.debug_enabled:
-            self._log_action("debug.heartbeat_responsive", entity=entity_id)
-
-    def _on_state_changed(self, entity_id: str, old_value: str, new_value: str):
-        """Could be heartbeat_lighter trigger, or could start the 'for:' delay
-        on the unavailable trigger if transitioning to unavailable/unknown."""
-        # Heartbeat (lighter mode)
-        if self.config.detection_mode == "lighter":
-            if entity_id in self.config.monitored_entities:
-                self._timer_start(self.config.stale_threshold_minutes * 60)
-                if self.config.debug_enabled:
-                    self._log_action("debug.heartbeat_lighter", entity=entity_id)
-
-        # Unavailable trigger (always-on for unavailable/unknown; also fires
-        # on 'off' when treat_off_as_offline is enabled): starts 'for:' delay
-        if entity_id in self.config.monitored_entities:
-            is_offline = new_value in ["unavailable", "unknown"]
-            if not is_offline and self.config.treat_off_as_offline and new_value == "off":
-                is_offline = True
-            if is_offline:
-                fire_at = self.now + self.config.unavailable_timeout_seconds
-                self.unavailable_since[entity_id] = fire_at
-            else:
-                # No longer offline, cancel pending 'for:' delay
-                self.unavailable_since.pop(entity_id, None)
-
-    def _on_timer_finished(self):
-        """Branch 3: Stale recovery."""
-        self.timer_state = TimerState.IDLE
-        self.timer_finishes_at = None
-        # The trigger is enabled if mode != minimal
-        if self.config.detection_mode == "minimal":
-            return
-        # Apply restart guard condition
-        if self._restart_guard_blocks():
-            if self.config.debug_enabled:
-                self._log_action("debug.stale_blocked_restart_guard")
-            return
-        # Apply active window condition
-        if not self._in_active_window():
-            if self.config.debug_enabled:
-                self._log_action("debug.stale_blocked_active_window")
-            return
-        if self.config.debug_enabled:
-            self._log_action("debug.stale_fired")
-        self._start_recovery_cycle(reason="stale")
-
-    def _on_unavailable_branch(self, entity_id: str):
-        """Branch 4: Unavailable recovery."""
-        # Apply recovery_switch state guard (prevents duplicate cycles)
-        if self.switch_state != "on":
-            return
-        # Apply restart guard condition
-        if self._restart_guard_blocks():
-            if self.config.debug_enabled:
-                self._log_action("debug.unavailable_blocked_restart_guard", entity=entity_id)
-            return
-        if self.config.debug_enabled:
-            self._log_action("debug.unavailable_fired", entity=entity_id)
-        # Cancel the heartbeat timer so a stale event does not fire for the
-        # same wedge. Only relevant in responsive/lighter mode (minimal mode
-        # has no timer).
-        if self.config.detection_mode != "minimal":
-            self._timer_cancel()
-        self._start_recovery_cycle(reason="unavailable", entity=entity_id)
-
-    def _on_scheduled_branch(self):
-        """Branch 5: Scheduled recovery."""
-        # Apply recovery_switch state guard
-        if self.switch_state != "on":
-            return
-        # Apply restart guard
-        if self._restart_guard_blocks():
-            if self.config.debug_enabled:
-                self._log_action("debug.scheduled_blocked_restart_guard")
-            return
-        if self.config.debug_enabled:
-            self._log_action("debug.scheduled_fired")
-        # Cancel timer for the same reason as the unavailable branch
-        if self.config.detection_mode != "minimal":
-            self._timer_cancel()
-        self._start_recovery_cycle(reason="scheduled")
-
-    def _on_switch_off_branch(self):
-        """Branch 6: Self-recovery."""
-        if self.config.debug_enabled:
-            self._log_action("debug.switch_off_fired")
-        # Turn switch back on; bypass any guards
-        self.switch_state = "on"
-        self.entities[self.config.recovery_switch].value = "on"
-        self._log_action("switch.turn_on", entity=self.config.recovery_switch, reason="self_recovery")
-
-    # ------------------------------------------------------------------
-    # Recovery cycle (off, delay, on)
-    # ------------------------------------------------------------------
-
-    def _start_recovery_cycle(self, reason: str, entity: Optional[str] = None):
-        # Schedule: turn off NOW, delay, turn on
-        # The off action fires a state change on the switch, which starts
-        # the 'for:' delay on the switch_off trigger. If the cycle's own
-        # turn_on happens before the for: delay completes, the trigger is
-        # cancelled and self-recovery does NOT fire. This is the design.
-        def turn_off():
-            if self.switch_state == "on":
-                self.switch_state = "off"
-                self.entities[self.config.recovery_switch].value = "off"
-                self.entities[self.config.recovery_switch].last_changed = self.now
-                self._log_action("switch.turn_off", entity=self.config.recovery_switch, reason=reason, source_entity=entity)
-                # The state change starts the 'for:' delay on switch_off trigger
-                self.switch_off_pending_at = self.now + self.config.recovery_off_seconds + 30
-
-        def turn_on():
-            if self.switch_state == "off":
-                self.switch_state = "on"
-                self.entities[self.config.recovery_switch].value = "on"
-                self.entities[self.config.recovery_switch].last_changed = self.now
-                self._log_action("switch.turn_on", entity=self.config.recovery_switch, reason=reason, source_entity=entity)
-                # State changed back to on, cancel the 'for:' delay
-                self.switch_off_pending_at = None
-                # If failure notification is enabled, schedule the settle+check
-                if self.config.failure_notification_enabled:
-                    settle_at = self.now + self.config.recovery_settle_seconds
-                    self.recovery_cycle_steps.append((settle_at, lambda: self._check_failure_and_notify(reason)))
-
-        # Run turn_off immediately (synchronously)
-        turn_off()
-        # Schedule turn_on after recovery_off_seconds
-        self.recovery_cycle_steps.append((self.now + self.config.recovery_off_seconds, turn_on))
-
-    def _check_failure_and_notify(self, reason: str):
-        """After the settle delay, check if any monitored entity is still in
-        a failure state and run the on_failure_action if so."""
-        bad_states = ["unavailable", "unknown"]
-        if self.config.treat_off_as_offline:
-            bad_states = bad_states + ["off"]
-        failed = [
-            e for e in self.config.monitored_entities
-            if self.entities[e].value in bad_states
-        ]
-        if failed:
-            if self.config.debug_enabled:
-                self._log_action("debug.failure_detected", reason=reason, failed=failed)
-            self._log_action("on_failure_action.fired", reason=reason, failed=failed)
-        else:
-            if self.config.debug_enabled:
-                self._log_action("debug.recovery_succeeded", reason=reason)
-
-    # ------------------------------------------------------------------
-    # Timer helpers
-    # ------------------------------------------------------------------
-
-    def _timer_start(self, duration_seconds: int):
-        self.timer_state = TimerState.ACTIVE
-        self.timer_finishes_at = self.now + duration_seconds
-        self._log_action("timer.start", duration=duration_seconds)
-
-    def _timer_cancel(self):
-        """Cancel the heartbeat timer. Safe to call when timer is idle (no-op)."""
-        if self.timer_state == TimerState.ACTIVE:
-            self.timer_state = TimerState.IDLE
-            self.timer_finishes_at = None
-            self._log_action("timer.cancel")
-
-
-# ====================================================================
-# Test scenarios
-# ====================================================================
-
-def scenario(name: str):
-    """Decorator to register and label scenarios."""
-    def wrap(fn):
-        fn._scenario_name = name
-        return fn
-    return wrap
-
-
-SCENARIOS = []
-
-
-def register(fn):
-    SCENARIOS.append(fn)
-    return fn
-
-
-def assert_eq(actual, expected, msg=""):
-    if actual != expected:
-        raise AssertionError(f"{msg}: expected {expected!r}, got {actual!r}")
-
-
-def assert_in(item, container, msg=""):
-    if item not in container:
-        raise AssertionError(f"{msg}: {item!r} not in {container!r}")
-
-
-def assert_not_in(item, container, msg=""):
-    if item in container:
-        raise AssertionError(f"{msg}: {item!r} was in {container!r} but should not be")
-
-
-def action_names(sim: WatchdogSim) -> list[str]:
-    return [a.name for a in sim.actions]
-
-
-def filter_actions(sim: WatchdogSim, name: str) -> list[Action]:
-    return [a for a in sim.actions if a.name == name]
-
-
-# ----------------------------------------------------------------------
-# Helper: build a sim with sensible defaults
-# ----------------------------------------------------------------------
-
-def build_sim(**overrides) -> WatchdogSim:
-    cfg = WatchdogConfig(
-        monitored_entities=["sensor.lux_fp2", "binary_sensor.presence_fp2"],
-        recovery_switch="switch.fp2_plug",
-        **overrides,
-    )
-    return WatchdogSim(cfg)
-
-
-def build_sim_custom(monitored_entities: list[str], recovery_switch: str, **overrides) -> WatchdogSim:
-    """Build a sim with custom entity configuration."""
-    cfg = WatchdogConfig(
-        monitored_entities=monitored_entities,
-        recovery_switch=recovery_switch,
-        **overrides,
-    )
-    return WatchdogSim(cfg)
-
-
-# ----------------------------------------------------------------------
-# Scenarios
-# ----------------------------------------------------------------------
-
-@register
-def s01_healthy_responsive():
-    """Healthy operation in responsive mode: heartbeats reset timer, no recovery fires."""
-    sim = build_sim(detection_mode="responsive", stale_threshold_minutes=5)
-    # Initial heartbeat to start the timer
-    sim.report("sensor.lux_fp2", "100")
-    # Heartbeats every 30 seconds for an hour
-    for i in range(120):
-        sim.advance(30)
-        sim.report("sensor.lux_fp2", "100")  # same value
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "no recovery should have fired")
-    return "PASS"
-
-
-@register
-def s02_unavailable_detection():
-    """Sensor goes unavailable for 30s. Unavailable branch fires."""
-    sim = build_sim(detection_mode="responsive", unavailable_timeout_seconds=30)
-    sim.report("sensor.lux_fp2", "100")  # healthy first
-    sim.advance(60)
-    # Now go unavailable
-    sim.report("sensor.lux_fp2", "unavailable")
-    sim.advance(35)  # wait past the 30s for: delay
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "recovery should fire once")
-    return "PASS"
-
-
-@register
-def s03_stale_detection_responsive():
-    """Responsive mode: device stops reporting. Timer expires. Stale branch fires."""
-    sim = build_sim(detection_mode="responsive", stale_threshold_minutes=5)
-    sim.report("sensor.lux_fp2", "100")  # start timer
-    sim.advance(60)  # 1 minute passes, no reports
-    sim.advance(60 * 5)  # 5 more minutes; total 6 minutes since last report
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "stale should fire")
-    return "PASS"
-
-
-@register
-def s04_stale_detection_lighter():
-    """Lighter mode: device reports continuously but value never changes for stale_threshold. Timer expires."""
-    sim = build_sim(detection_mode="lighter", stale_threshold_minutes=5)
-    sim.report("sensor.lux_fp2", "100")  # initial change starts timer
-    # Now report same value many times — no state changes
-    for i in range(20):
-        sim.advance(30)
-        sim.report("sensor.lux_fp2", "100")  # same value, no state change
-    # 10 minutes elapsed without value change
-    # Timer should have expired at 5 minutes
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "stale should fire in lighter mode")
-    return "PASS"
-
-
-@register
-def s05_minimal_no_stale():
-    """Minimal mode: no stale detection. Only unavailable and scheduled fire."""
-    sim = build_sim(detection_mode="minimal", stale_threshold_minutes=5)
-    sim.report("sensor.lux_fp2", "100")
-    # Stop reporting for 60 minutes
-    sim.advance(60 * 60)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "stale should not fire in minimal mode")
-    # But unavailable should still fire if entity goes unavailable
-    sim.report("sensor.lux_fp2", "unavailable")
-    sim.advance(35)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "unavailable should still fire in minimal mode")
-    return "PASS"
-
-
-@register
-def s06_active_window_blocks_stale():
-    """Active window enabled, currently outside window. Stale should not fire."""
-    sim = build_sim(
-        detection_mode="responsive",
-        stale_threshold_minutes=5,
-        active_window_enabled=True,
-        active_after="06:00:00",
-        active_before="23:00:00",
-    )
-    sim.simulated_hour = 3  # 3 AM - outside window
-    sim.report("sensor.lux_fp2", "100")
-    sim.advance(60 * 10)  # 10 minutes pass without reports
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "stale should be blocked by active window")
-    return "PASS"
-
-
-@register
-def s07_active_window_allows_stale():
-    """Active window enabled, currently INSIDE window. Stale fires normally."""
-    sim = build_sim(
-        detection_mode="responsive",
-        stale_threshold_minutes=5,
-        active_window_enabled=True,
-        active_after="06:00:00",
-        active_before="23:00:00",
-    )
-    sim.simulated_hour = 14  # 2 PM - inside window
-    sim.report("sensor.lux_fp2", "100")
-    sim.advance(60 * 10)  # 10 minutes pass without reports
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "stale should fire inside active window")
-    return "PASS"
-
-
-@register
-def s08_scheduled_reboot():
-    """Scheduled reboot fires. Recovery cycle runs."""
-    sim = build_sim(scheduled_reboot_enabled=True, scheduled_reboot_time="04:30:00")
-    sim.fire_scheduled_reboot()
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "scheduled reboot should fire recovery")
-    sim.advance(15)  # let cycle complete
-    assert_eq(len(filter_actions(sim, "switch.turn_on")), 1, "switch should come back on")
-    return "PASS"
-
-
-@register
-def s09_scheduled_reboot_disabled():
-    """Scheduled reboot trigger disabled. Firing event does nothing."""
-    sim = build_sim(scheduled_reboot_enabled=False)
-    sim.fire_scheduled_reboot()
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "scheduled trigger disabled, no recovery")
-    return "PASS"
-
-
-@register
-def s10_restart_guard_blocks_unavailable():
-    """Restart guard active. Unavailable branch should skip recovery."""
-    sim = build_sim(
-        detection_mode="responsive",
-        unavailable_timeout_seconds=30,
-        restart_guard_sensor="sensor.restarting_status",
-    )
-    sim.restart_guard_active = True
-    sim.report("sensor.lux_fp2", "unavailable")
-    sim.advance(35)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "unavailable should be blocked by restart guard")
-    return "PASS"
-
-
-@register
-def s11_self_recovery():
-    """Recovery switch goes off externally. Self-recovery fires after for: delay."""
-    sim = build_sim(recovery_off_seconds=10)
-    sim.switch_off()
-    # Immediately after switch_off, no recovery action yet (for: delay running)
-    immediate_ons = filter_actions(sim, "switch.turn_on")
-    assert_eq(len(immediate_ons), 0, "self-recovery should NOT fire immediately")
-    # After recovery_off_seconds + 30 = 40 seconds, the for: delay fires
-    sim.advance(45)
-    on_actions = filter_actions(sim, "switch.turn_on")
-    assert_eq(len(on_actions), 1, "self-recovery should fire after for: delay")
-    assert_eq(on_actions[0].payload.get("reason"), "self_recovery", "reason should be self_recovery")
-    return "PASS"
-
-
-@register
-def s15_cycle_own_turn_off_no_self_recovery():
-    """The recovery cycle's own turn_off must NOT trigger self-recovery.
-    The for: delay on switch_off (recovery_off_seconds + 30) protects against this."""
-    sim = build_sim(detection_mode="responsive", recovery_off_seconds=10)
-    sim.report("sensor.lux_fp2", "unavailable")
-    sim.advance(35)  # unavailable + recovery cycle starts; switch off
-    # At this moment, switch is off due to cycle. The for: delay on switch_off
-    # is ticking but recovery_off_seconds (10) is shorter than for: delay (40).
-    sim.advance(15)  # complete the recovery cycle (turn on at +10)
-    offs = filter_actions(sim, "switch.turn_off")
-    ons = filter_actions(sim, "switch.turn_on")
-    assert_eq(len(offs), 1, "exactly one turn_off from the cycle")
-    assert_eq(len(ons), 1, "exactly one turn_on from the cycle (not self-recovery)")
-    # Verify the turn_on was from the recovery cycle, not self-recovery
-    assert_eq(ons[0].payload.get("reason") in ["unavailable", "stale", "scheduled"], True,
-              "turn_on reason should be from recovery cycle")
-    return "PASS"
-
-
-@register
-def s16_simultaneous_unavailable_no_duplicate_cycles():
-    """Two monitored entities both go unavailable. Only ONE recovery cycle should run.
-    Protected by the 'state of switch is on' condition on the recovery branches."""
-    sim = build_sim(detection_mode="responsive", recovery_off_seconds=10)
-    # Both entities go unavailable at the same moment
-    sim.report("sensor.lux_fp2", "unavailable")
-    sim.report("binary_sensor.presence_fp2", "unavailable")
-    sim.advance(35)
-    # The first unavailable trigger fires and starts the cycle (switch goes off).
-    # The second unavailable trigger fires too, but the branch's
-    # 'state: on' condition fails (switch is now off), skipping the second cycle.
-    offs = filter_actions(sim, "switch.turn_off")
-    assert_eq(len(offs), 1, f"expected 1 turn_off, got {len(offs)} (simultaneous-trigger debounce failed)")
-    return "PASS"
-
-
-@register
-def s17_external_switch_off_during_cycle():
-    """External switch-off during the recovery cycle's on-period.
-    After cycle completes, switch is on. If user then turns it off, self-recovery should fire."""
-    sim = build_sim(detection_mode="responsive", recovery_off_seconds=10)
-    sim.report("sensor.lux_fp2", "unavailable")
-    sim.advance(45)  # complete recovery cycle (off at 30, on at 40)
-    # Switch is now on. User manually turns it off.
-    sim.switch_off()
-    sim.advance(45)  # let for: delay expire
-    # Self-recovery should fire ONCE for the external off event
-    ons = filter_actions(sim, "switch.turn_on")
-    self_recovery_ons = [a for a in ons if a.payload.get("reason") == "self_recovery"]
-    assert_eq(len(self_recovery_ons), 1, "external off should trigger self-recovery")
-    return "PASS"
-
-
-@register
-def s18_simultaneous_stale_and_unavailable():
-    """Edge case: stale timer expires AND a sensor goes unavailable at the same time.
-    Only one recovery cycle should run."""
-    sim = build_sim(detection_mode="responsive", stale_threshold_minutes=5, recovery_off_seconds=10)
-    sim.report("sensor.lux_fp2", "100")  # start timer
-    sim.advance(60 * 4)  # 4 minutes
-    # At 4 minutes, sensor goes unavailable (will fire unavailable in 30s)
-    sim.report("sensor.lux_fp2", "unavailable")
-    # Wait until timer expires (at 5 min from t=0) AND unavailable fires
-    # Both should hit around the same time.
-    sim.advance(60 * 2)  # advance well past both
-    offs = filter_actions(sim, "switch.turn_off")
-    assert_eq(len(offs), 1, f"expected 1 turn_off, got {len(offs)}")
-    return "PASS"
-
-
-@register
-def s19_active_window_does_not_block_unavailable():
-    """Active window restricts staleness only. Unavailable should fire even outside window."""
-    sim = build_sim(
-        active_window_enabled=True,
-        active_after="06:00:00",
-        active_before="23:00:00",
-        unavailable_timeout_seconds=30,
-    )
-    sim.simulated_hour = 3  # 3 AM, outside window
-    sim.report("sensor.lux_fp2", "unavailable")
-    sim.advance(35)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1,
-              "unavailable should fire even outside active window")
-    return "PASS"
-
-
-@register
-def s20_scheduled_during_restart_window():
-    """Scheduled reboot fires while restart guard is on. Should skip."""
-    sim = build_sim(
-        scheduled_reboot_enabled=True,
-        restart_guard_sensor="sensor.restarting_status",
-    )
-    sim.restart_guard_active = True
-    sim.fire_scheduled_reboot()
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0,
-              "scheduled reboot should be blocked by restart guard")
-    return "PASS"
-
-
-@register
-def s21_back_to_back_stale_and_recovery():
-    """After a recovery cycle completes, if the device is still stale,
-    the next timer expiration should trigger another recovery."""
-    sim = build_sim(detection_mode="responsive", stale_threshold_minutes=5, recovery_off_seconds=10)
-    sim.report("sensor.lux_fp2", "100")  # start timer
-    sim.advance(60 * 6)  # timer expires; cycle runs (switch off 30s, on at 40s)
-    # Now wait another stale threshold without any reports
-    sim.advance(60 * 6)  # another 6 minutes
-    # Timer hasn't been started again because no reports came in.
-    # Without a fresh timer.start, no second stale event fires.
-    offs = filter_actions(sim, "switch.turn_off")
-    # Bug or feature? Let's see what happens.
-    print(f"  s21: total turn_off events = {len(offs)} (timer.start events = {len(filter_actions(sim, 'timer.start'))})")
-    # Expected: 1 cycle from initial stale. No second cycle because timer
-    # is not restarted after stale fires.
-    assert_eq(len(offs), 1, "first stale fires recovery; no second timer expiry without reports")
-    return "PASS (known limitation: timer not auto-restarted after stale fires)"
-
-
-@register
-def s12_report_during_recovery_resets_timer():
-    """A monitored entity reports during the recovery cycle. Timer should still reset."""
-    sim = build_sim(detection_mode="responsive", stale_threshold_minutes=5, recovery_off_seconds=10)
-    sim.report("sensor.lux_fp2", "100")  # start timer
-    # Stop reporting, let stale fire
-    sim.advance(60 * 6)
-    # Recovery cycle in progress at this point
-    initial_off = len(filter_actions(sim, "switch.turn_off"))
-    # During recovery, another report comes in
-    sim.report("sensor.lux_fp2", "50")
-    # Timer.start should have been called again
-    timer_starts = filter_actions(sim, "timer.start")
-    assert_eq(len(timer_starts) >= 2, True, "timer.start should have been called multiple times")
-    return "PASS"
-
-
-@register
-def s13_multi_entity_one_fails_unavailable():
-    """Two entities, one goes unavailable. Unavailable fires once."""
-    sim = build_sim()
-    sim.report("sensor.lux_fp2", "100")
-    sim.report("binary_sensor.presence_fp2", "on")
-    sim.advance(60)
-    sim.report("sensor.lux_fp2", "unavailable")  # one goes down
-    sim.advance(35)
-    # Should fire ONE recovery (one entity unavailable)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "single unavailable fires once")
-    return "PASS"
-
-
-@register
-def s14_multi_entity_one_quiet_other_active():
-    """In responsive mode, one entity stops reporting but the other keeps reporting. Timer never expires."""
-    sim = build_sim(detection_mode="responsive", stale_threshold_minutes=5)
-    sim.report("sensor.lux_fp2", "100")
-    # binary_sensor keeps reporting heartbeats
-    for i in range(20):
-        sim.advance(60)  # 1 minute each
-        sim.report("binary_sensor.presence_fp2", "off")  # keeps reporting
-    # Total 20 minutes elapsed; sensor.lux_fp2 has not reported since t=0
-    # But timer was kept alive by binary_sensor reports
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "active entity keeps timer alive")
-    return "PASS"
-
-
-@register
-def s22_fp2_10zone_lux_healthy_daytime():
-    """11-entity FP2 (10 presence zones + 1 lux) in lighter mode during the day.
-    Lux changes constantly (light shifting through windows), zones fire intermittently
-    as people move. Timer should be reset frequently by either source."""
-    entities = [f"binary_sensor.fp2_living_room_zone_{i}" for i in range(1, 11)]
-    entities.append("sensor.fp2_living_room_illuminance")
-    sim = build_sim_custom(
-        monitored_entities=entities,
-        recovery_switch="switch.fp2_living_room_plug",
-        detection_mode="lighter",
-        stale_threshold_minutes=30,
-    )
-    # Initial state for all 11 entities
-    for e in entities:
-        if "illuminance" in e:
-            sim.report(e, "200")
-        else:
-            sim.report(e, "off")
-    # Simulate 4 hours of daytime. Lux changes every 2 minutes; one zone toggles every 5.
-    for minute in range(240):
-        sim.advance(60)
-        if minute % 2 == 0:
-            sim.report("sensor.fp2_living_room_illuminance", str(200 + (minute * 3) % 800))
-        if minute % 5 == 0:
-            zone = entities[minute % 10]
-            current = sim.entities[zone].value
-            sim.report(zone, "on" if current == "off" else "off")
-    timer_resets = len(filter_actions(sim, "timer.start"))
-    print(f"  s22: 4-hour daytime simulation produced {timer_resets} timer resets")
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "no recovery in healthy daytime")
-    return "PASS"
-
-
-@register
-def s23_fp2_10zone_lux_evening_steady_light():
-    """Evening: artificial light is steady (lux value never changes for hours), but
-    people are home and moving so presence zones fire frequently. The zone activity
-    alone should be enough to keep the timer alive without lux changes."""
-    entities = [f"binary_sensor.fp2_living_room_zone_{i}" for i in range(1, 11)]
-    entities.append("sensor.fp2_living_room_illuminance")
-    sim = build_sim_custom(
-        monitored_entities=entities,
-        recovery_switch="switch.fp2_living_room_plug",
-        detection_mode="lighter",
-        stale_threshold_minutes=30,
-    )
-    for e in entities:
-        sim.report(e, "300" if "illuminance" in e else "off")
-    # 3 hours of evening: lux is set once and stays steady, zones toggle every 3 min
-    for minute in range(180):
-        sim.advance(60)
-        if minute % 3 == 0:
-            zone = entities[minute % 10]
-            current = sim.entities[zone].value
-            sim.report(zone, "on" if current == "off" else "off")
-    timer_resets = len(filter_actions(sim, "timer.start"))
-    print(f"  s23: 3-hour steady-lux evening produced {timer_resets} timer resets from zones alone")
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "zone activity keeps timer alive without lux")
-    return "PASS"
-
-
-@register
-def s24_fp2_10zone_lux_total_freeze():
-    """FP2 device wedges: all 11 entities stop reporting at the same time.
-    Timer expires after stale_threshold; recovery fires."""
-    entities = [f"binary_sensor.fp2_living_room_zone_{i}" for i in range(1, 11)]
-    entities.append("sensor.fp2_living_room_illuminance")
-    sim = build_sim_custom(
-        monitored_entities=entities,
-        recovery_switch="switch.fp2_living_room_plug",
-        detection_mode="lighter",
-        stale_threshold_minutes=30,
-    )
-    # Initial activity to start the timer
-    sim.report("sensor.fp2_living_room_illuminance", "400")
-    sim.report(entities[0], "on")
-    # Total freeze for an hour: zero reports from any entity
-    sim.advance(60 * 60)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "recovery fires after total freeze")
-    return "PASS"
-
-
-@register
-def s25_fp2_10zone_one_zone_alive():
-    """In responsive mode, if just ONE zone keeps reporting heartbeats, the timer
-    stays alive even if the other 10 entities are silent. Verifies that heartbeat
-    coverage scales by the most active entity, not the least."""
-    entities = [f"binary_sensor.fp2_living_room_zone_{i}" for i in range(1, 11)]
-    entities.append("sensor.fp2_living_room_illuminance")
-    sim = build_sim_custom(
-        monitored_entities=entities,
-        recovery_switch="switch.fp2_living_room_plug",
-        detection_mode="responsive",
-        stale_threshold_minutes=10,
-    )
-    sim.report("binary_sensor.fp2_living_room_zone_5", "off")  # only zone_5 reports
-    # 60 minutes; zone_5 sends a heartbeat (same value) every 5 minutes
-    for i in range(12):
-        sim.advance(60 * 5)
-        sim.report("binary_sensor.fp2_living_room_zone_5", "off")  # heartbeat
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "one active entity keeps timer alive")
-    return "PASS"
-
-
-@register
-def s26_wifi_router_internet_outage_minimal_mode():
-    """WiFi router watchdog: monitor a single internet-status sensor in minimal
-    mode. When internet drops the sensor goes unavailable, the unavailable detector
-    fires, the Zigbee plug behind the router gets cycled. Minimal mode is the
-    right choice here because the sensor would otherwise sit at 'on' for days with
-    no value changes, which would falsely trigger lighter/responsive freshness."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.internet_up"],
-        recovery_switch="switch.wifi_router_plug",
-        detection_mode="minimal",
-        unavailable_timeout_seconds=60,
-    )
-    sim.report("binary_sensor.internet_up", "on")
-    sim.advance(60 * 30)  # 30 minutes of healthy internet
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "no recovery during healthy operation")
-    # Internet drops
-    sim.report("binary_sensor.internet_up", "unavailable")
-    sim.advance(65)  # past the 60s tolerance
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "router cycle fires on internet outage")
-    # Recovery cycle completes, internet comes back online
-    sim.advance(15)  # let the cycle complete
-    sim.report("binary_sensor.internet_up", "on")  # internet restored
-    assert_eq(len(filter_actions(sim, "switch.turn_on")), 1, "router cycle completes")
-    return "PASS"
-
-
-@register
-def s27_wifi_router_with_restart_guard():
-    """WiFi router watchdog during an HA reboot. The internet sensor goes
-    unavailable as a side effect of the reboot, NOT because the router is
-    broken. The restart guard should block the recovery cycle."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.internet_up"],
-        recovery_switch="switch.wifi_router_plug",
-        detection_mode="minimal",
-        restart_guard_sensor="sensor.restarting_status",
-        unavailable_timeout_seconds=60,
-    )
-    sim.report("binary_sensor.internet_up", "on")
-    sim.advance(60 * 5)
-    # HA enters its restart window
-    sim.restart_guard_active = True
-    sim.report("binary_sensor.internet_up", "unavailable")  # side effect of HA restart
-    sim.advance(70)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "restart guard blocks the cycle")
-    return "PASS"
-
-
-@register
-def s28_wifi_router_with_scheduled_preventive():
-    """WiFi router with a daily preventive cycle (4am). Useful for routers
-    known to develop slow memory leaks. Verifies the scheduled trigger fires
-    independently of the unavailable detector."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.internet_up"],
-        recovery_switch="switch.wifi_router_plug",
-        detection_mode="minimal",
-        scheduled_reboot_enabled=True,
-        scheduled_reboot_time="04:00:00",
-    )
-    sim.report("binary_sensor.internet_up", "on")
-    sim.advance(60 * 60 * 6)  # 6 hours of healthy operation
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "no recovery during healthy operation")
-    # Scheduled cycle fires
-    sim.fire_scheduled_reboot()
-    sim.advance(15)  # let cycle complete
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "scheduled cycle fires")
-    assert_eq(len(filter_actions(sim, "switch.turn_on")), 1, "scheduled cycle completes")
-    return "PASS"
-
-
-@register
-def s29_ping_sensor_with_treat_off_as_offline():
-    """A WiFi router monitored via HA's ping integration. The ping binary_sensor
-    goes 'off' (not 'unavailable') when the target is unreachable. With the
-    'Treat off as Offline' input enabled, the blueprint treats the 'off' state
-    as offline and triggers recovery."""
-    # Case A: default behavior, treat_off_as_offline=False, 'off' does NOT trigger recovery
-    sim_a = build_sim_custom(
-        monitored_entities=["binary_sensor.router_ping"],
-        recovery_switch="switch.router_plug",
-        detection_mode="minimal",
-        unavailable_timeout_seconds=60,
-        treat_off_as_offline=False,
-    )
-    sim_a.report("binary_sensor.router_ping", "on")
-    sim_a.advance(60 * 5)
-    sim_a.report("binary_sensor.router_ping", "off")
-    sim_a.advance(120)
-    assert_eq(len(filter_actions(sim_a, "switch.turn_off")), 0,
-              "default behaviour: 'off' does not trigger recovery")
-
-    # Case B: with treat_off_as_offline=True, 'off' DOES trigger recovery
-    sim_b = build_sim_custom(
-        monitored_entities=["binary_sensor.router_ping"],
-        recovery_switch="switch.router_plug",
-        detection_mode="minimal",
-        unavailable_timeout_seconds=60,
-        treat_off_as_offline=True,
-    )
-    sim_b.report("binary_sensor.router_ping", "on")
-    sim_b.advance(60 * 5)
-    sim_b.report("binary_sensor.router_ping", "off")
-    sim_b.advance(65)
-    assert_eq(len(filter_actions(sim_b, "switch.turn_off")), 1,
-              "with treat_off_as_offline: 'off' triggers recovery after timeout")
-
-    # Case C: ping comes back online within the tolerance window. No recovery.
-    sim_c = build_sim_custom(
-        monitored_entities=["binary_sensor.router_ping"],
-        recovery_switch="switch.router_plug",
-        detection_mode="minimal",
-        unavailable_timeout_seconds=60,
-        treat_off_as_offline=True,
-    )
-    sim_c.report("binary_sensor.router_ping", "on")
-    sim_c.advance(60 * 5)
-    sim_c.report("binary_sensor.router_ping", "off")
-    sim_c.advance(30)  # 30 seconds below the 60s tolerance
-    sim_c.report("binary_sensor.router_ping", "on")  # came back
-    sim_c.advance(60)
-    assert_eq(len(filter_actions(sim_c, "switch.turn_off")), 0,
-              "ping transient under tolerance does not trigger recovery")
-
-    return "PASS (default + ping mode + transient under tolerance all verified)"
-
-
-@register
-def s30_smart_camera_freeze_in_lighter_mode():
-    """A WiFi camera whose motion sensor freezes mid-stream. The entity still
-    has a value ('off') but stops reporting fresh updates. In lighter mode the
-    timer expires after the stale_threshold; recovery fires."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.camera_motion", "sensor.camera_signal_strength"],
-        recovery_switch="switch.camera_plug",
-        detection_mode="lighter",
-        stale_threshold_minutes=15,
-    )
-    # Healthy state with periodic activity
-    sim.report("binary_sensor.camera_motion", "on")
-    sim.advance(60)
-    sim.report("binary_sensor.camera_motion", "off")
-    sim.advance(60)
-    sim.report("sensor.camera_signal_strength", "-65")
-    # Camera freezes — no more reports for 20 minutes
-    sim.advance(60 * 20)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "camera freeze caught by lighter mode")
-    return "PASS"
-
-
-@register
-def s31_zigbee_router_plug_with_downstream_device():
-    """A Zigbee router plug at the back of the property occasionally drops its
-    routing table. The plug itself is the recovery_switch; we monitor a Zigbee
-    end device that lives behind it in the mesh. When the end device goes
-    unavailable (because the mesh path is broken), cycle the router plug to
-    restore the mesh."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.garage_door_zigbee", "sensor.garage_temp_zigbee"],
-        recovery_switch="switch.zigbee_router_plug",
-        detection_mode="minimal",
-        unavailable_timeout_seconds=120,
-        scheduled_reboot_enabled=True,
-        scheduled_reboot_time="03:45:00",
-    )
-    sim.report("binary_sensor.garage_door_zigbee", "off")
-    sim.report("sensor.garage_temp_zigbee", "22.3")
-    sim.advance(60 * 30)  # 30 min healthy
-    # Mesh route fails; downstream devices go unavailable
-    sim.report("binary_sensor.garage_door_zigbee", "unavailable")
-    sim.report("sensor.garage_temp_zigbee", "unavailable")
-    sim.advance(125)
-    # Should fire ONE cycle (debounced by 'state: on' guard on the switch)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "single cycle on mesh route failure")
-    return "PASS"
-
-
-@register
-def s32_stress_test_high_frequency_reports():
-    """Stress test: 11 entities, all reporting every second in responsive mode
-    for 5 minutes. Verifies the simulator and blueprint logic don't break under
-    high event load."""
-    entities = [f"binary_sensor.fp2_zone_{i}" for i in range(1, 11)]
-    entities.append("sensor.fp2_lux")
-    sim = build_sim_custom(
-        monitored_entities=entities,
-        recovery_switch="switch.fp2_plug",
-        detection_mode="responsive",
-        stale_threshold_minutes=2,
-    )
-    # 5 minutes of every-second heartbeats across all 11 entities
-    for second in range(300):
-        sim.advance(1)
-        # Each entity reports once every 11 seconds (one per second rotation)
-        e = entities[second % 11]
-        sim.report(e, "ping" + str(second))  # different value each time
-    total_starts = len(filter_actions(sim, "timer.start"))
-    print(f"  s32: 300 seconds of high-frequency reports produced {total_starts} timer.start calls")
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0, "no false recovery under load")
-    return "PASS"
-
-
-@register
-def s33_mixed_zigbee_and_wifi_unavailable_pattern():
-    """A WiFi camera and a Zigbee motion sensor in front of it, both on the
-    same upstream PoE injector. WiFi camera entity (the one most likely to wedge)
-    is monitored alongside a Zigbee battery sensor that occasionally goes
-    unavailable due to mesh quirks. The blueprint should NOT cycle for the
-    Zigbee battery transient; it should cycle for the WiFi camera."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.camera_motion", "sensor.zigbee_battery_pir"],
-        recovery_switch="switch.poe_injector",
-        detection_mode="lighter",
-        stale_threshold_minutes=20,
-        unavailable_timeout_seconds=180,  # generous tolerance for Zigbee transients
-    )
-    sim.report("binary_sensor.camera_motion", "off")
-    sim.report("sensor.zigbee_battery_pir", "85")
-    # Zigbee battery sensor has a transient unavailable
-    sim.advance(60)
-    sim.report("sensor.zigbee_battery_pir", "unavailable")
-    sim.advance(60)  # 60 seconds; below the 180s tolerance
-    sim.report("sensor.zigbee_battery_pir", "85")  # comes back
-    sim.advance(60)
-    # No recovery should have fired
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0,
-              "transient under tolerance does not fire recovery")
-    return "PASS"
-
-
-
-@register
-def s34_presence_sensor_off_state_is_not_a_failure():
-    """Critical case: a monitored binary_sensor (presence) cycles between 'on'
-    and 'off' as people enter and leave the room. With treat_off_as_offline at
-    its DEFAULT of false, the presence going 'off' is normal operation, not a
-    failure. No recovery should fire.
-
-    This is the protection mechanism that keeps the blueprint safe to use on
-    FP2 presence sensors, motion sensors, door contacts, and every other
-    binary_sensor whose 'off' state is meaningful in its own right."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.fp2_living_room_presence", "sensor.fp2_living_room_illuminance"],
-        recovery_switch="switch.fp2_living_room_plug",
-        detection_mode="lighter",
-        stale_threshold_minutes=30,
-        unavailable_timeout_seconds=60,
-        # treat_off_as_offline NOT set; defaults to False
-    )
-    sim.report("binary_sensor.fp2_living_room_presence", "off")
-    sim.report("sensor.fp2_living_room_illuminance", "200")
-    # Simulate 2 hours of normal room activity. Presence cycles every 10 minutes
-    # as people come and go. Lux changes every 5 minutes with daylight.
-    for minute in range(120):
-        sim.advance(60)
-        if minute % 10 == 0:
-            current = sim.entities["binary_sensor.fp2_living_room_presence"].value
-            sim.report("binary_sensor.fp2_living_room_presence", "on" if current == "off" else "off")
-        if minute % 5 == 0:
-            sim.report("sensor.fp2_living_room_illuminance", str(200 + minute * 4))
-    # Count how many off-transitions happened
-    off_transitions = sum(
-        1 for a in sim.actions if a.name == "timer.start"
-    )
-    print(f"  s34: 2 hours of normal presence cycling produced {off_transitions} timer resets and no recovery")
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0,
-              "presence going 'off' as normal operation must not trigger recovery (treat_off_as_offline default false)")
-    return "PASS (default-false setting protects normal binary_sensors from false recovery)"
-
-
-@register
-def s35_treat_off_as_offline_would_falsely_fire_on_presence():
-    """The contrapositive of s34: if treat_off_as_offline is mistakenly enabled
-    on an FP2 instance, the next time the room empties (presence goes 'off' for
-    longer than the timeout), recovery will fire. Confirms the warning in the
-    README's Small Note on What Counts as Offline."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.fp2_living_room_presence"],
-        recovery_switch="switch.fp2_living_room_plug",
-        detection_mode="minimal",
-        unavailable_timeout_seconds=60,
-        treat_off_as_offline=True,  # WRONG for a presence sensor
-    )
-    sim.report("binary_sensor.fp2_living_room_presence", "on")  # someone in the room
-    sim.advance(60)
-    sim.report("binary_sensor.fp2_living_room_presence", "off")  # room emptied
-    sim.advance(70)  # past the 60s tolerance
-    # With treat_off_as_offline mistakenly on, this DOES fire recovery (the bad case).
-    # This proves why the README warns against enabling this setting for normal binary_sensors.
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1,
-              "treat_off_as_offline + a normal presence sensor falsely fires recovery (this is why the default is false)")
-    return "PASS (confirms the misconfiguration danger the README warns about)"
-
-
-
-@register
-def s36_unavailable_transient_flap():
-    """Entity goes unavailable, comes back briefly (under tolerance), goes
-    unavailable again, comes back, then a real outage. Verifies that the
-    'for:' delay restarts fresh for each transient and that the real outage
-    after the flapping still fires recovery correctly."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="responsive",
-        unavailable_timeout_seconds=60,
-        stale_threshold_minutes=30,
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.advance(120)
-    # First transient: unavailable for 30 seconds (under 60s tolerance)
-    sim.report("sensor.fp2_lux", "unavailable")
-    sim.advance(30)
-    sim.report("sensor.fp2_lux", "200")  # recovered
-    sim.advance(30)
-    # Second transient: unavailable for 45 seconds (still under tolerance)
-    sim.report("sensor.fp2_lux", "unavailable")
-    sim.advance(45)
-    sim.report("sensor.fp2_lux", "200")  # recovered
-    sim.advance(30)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 0,
-              "transients under tolerance must not fire recovery")
-    # Now a real outage: unavailable for longer than the tolerance
-    sim.report("sensor.fp2_lux", "unavailable")
-    sim.advance(70)
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1,
-              "outage past tolerance fires recovery after the flapping")
-    return "PASS"
-
-
-@register
-def s37_entity_stays_unavailable_through_and_after_cycle():
-    """A monitored entity goes unavailable. The recovery cycle fires and
-    completes. The entity is STILL unavailable afterward (the cycle didn't
-    fix it). No second cycle should fire for the same wedge — the trigger
-    has already fired once for this unavailable transition, and the entity
-    has not transitioned back out and in again. This is the one-attempt-per-
-    wedge protection for the unavailable case."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="responsive",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=10,
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.advance(60)
-    sim.report("sensor.fp2_lux", "unavailable")
-    sim.advance(35)  # past tolerance; recovery fires
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1, "first cycle fires")
-    sim.advance(15)  # cycle completes
-    assert_eq(len(filter_actions(sim, "switch.turn_on")), 1, "cycle completes")
-    # Now sit here with the entity still unavailable for another five minutes
-    sim.advance(60 * 5)
-    # No second cycle should fire — same wedge, same uninterrupted unavailable state
-    assert_eq(len(filter_actions(sim, "switch.turn_off")), 1,
-              "no second cycle for the same continuous wedge")
-    return "PASS (one attempt per wedge confirmed for unavailable case)"
-
-
-@register
-def s38_entity_self_heals_during_recovery_cycle():
-    """Edge case: the monitored entity recovers on its own DURING the cycle's
-    off-period. By the time the cycle completes, the device is already healthy.
-    The cycle should still finish cleanly (turn the switch back on) without
-    interference."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="responsive",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=15,
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.advance(60)
-    sim.report("sensor.fp2_lux", "unavailable")
-    sim.advance(35)  # past tolerance; recovery fires (switch goes off)
-    # Now mid-cycle: 5 seconds into the 15-second off period
-    sim.advance(5)
-    # Device self-heals during the cycle's off period (powered or not, it reports)
-    sim.report("sensor.fp2_lux", "210")
-    # The recovery cycle should still complete cleanly
-    sim.advance(15)
-    assert_eq(len(filter_actions(sim, "switch.turn_on")), 1,
-              "cycle still completes the turn_on even if device self-healed")
-    # Switch should be on at the end
-    assert_eq(sim.switch_state, "on", "switch is on at cycle end")
-    return "PASS (recovery cycle robust to mid-cycle entity recovery)"
-
-
-
-@register
-def s39_failure_notification_disabled_default():
-    """Default behaviour: failure_notification_enabled is false. After a
-    recovery cycle, no settle delay or on_failure_action runs, even if the
-    entity is still failed."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="responsive",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=10,
-        # failure_notification_enabled defaults to False
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.advance(60)
-    sim.report("sensor.fp2_lux", "unavailable")
-    sim.advance(35 + 15)  # past tolerance + cycle complete
-    # Entity is still unavailable; with feature disabled, no on_failure_action
-    assert_eq(len(filter_actions(sim, "on_failure_action.fired")), 0,
-              "no failure action fires when feature is disabled")
-    return "PASS"
-
-
-@register
-def s40_failure_notification_fires_on_persistent_failure():
-    """Failure notification ENABLED. Recovery cycle runs but the entity stays
-    unavailable past the settle period. on_failure_action fires."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="responsive",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=10,
-        failure_notification_enabled=True,
-        recovery_settle_seconds=60,
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.advance(60)
-    sim.report("sensor.fp2_lux", "unavailable")
-    # Past tolerance, cycle runs, switch goes off, then back on, then settle delay
-    sim.advance(35)  # at this point cycle is starting; switch off
-    sim.advance(15)  # cycle's turn_on fires at +10; switch back on
-    sim.advance(70)  # past the 60s settle delay
-    # Entity is still unavailable -> on_failure_action fires
-    fires = filter_actions(sim, "on_failure_action.fired")
-    assert_eq(len(fires), 1, f"on_failure_action should fire once on persistent failure, got {len(fires)}")
-    return "PASS"
-
-
-@register
-def s41_failure_notification_does_not_fire_on_successful_recovery():
-    """Failure notification ENABLED. Recovery cycle runs and the entity comes
-    back online during the settle window. on_failure_action does NOT fire."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="responsive",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=10,
-        failure_notification_enabled=True,
-        recovery_settle_seconds=60,
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.advance(60)
-    sim.report("sensor.fp2_lux", "unavailable")
-    sim.advance(35 + 15)  # cycle fires + completes
-    # Device comes back during the settle window
-    sim.advance(30)  # 30s into settle
-    sim.report("sensor.fp2_lux", "210")
-    sim.advance(35)  # complete the settle (60s total)
-    # Entity is healthy at check time -> no on_failure_action
-    fires = filter_actions(sim, "on_failure_action.fired")
-    assert_eq(len(fires), 0, "on_failure_action should NOT fire when recovery succeeded")
-    return "PASS"
-
-
-@register
-def s42_failure_notification_with_treat_off_as_offline():
-    """Failure notification + treat_off_as_offline combined: a ping sensor
-    monitored for the WiFi router scenario. If the router stays unreachable
-    (ping 'off') past the settle window, on_failure_action fires."""
-    sim = build_sim_custom(
-        monitored_entities=["binary_sensor.router_ping"],
-        recovery_switch="switch.router_plug",
-        detection_mode="minimal",
-        unavailable_timeout_seconds=60,
-        recovery_off_seconds=15,
-        treat_off_as_offline=True,
-        failure_notification_enabled=True,
-        recovery_settle_seconds=90,
-    )
-    sim.report("binary_sensor.router_ping", "on")
-    sim.advance(60 * 5)
-    sim.report("binary_sensor.router_ping", "off")
-    sim.advance(65)  # past unavailable timeout (60s); cycle starts
-    sim.advance(20)  # cycle off-period (15s) + buffer
-    # Settle of 90s starts. Router is still off at end of settle.
-    sim.advance(95)
-    fires = filter_actions(sim, "on_failure_action.fired")
-    assert_eq(len(fires), 1, "failure notification fires on persistent ping failure")
-    return "PASS"
-
-
-@register
-def s43_failure_notification_with_self_recovery_no_check():
-    """Self-recovery branch should NOT have failure notification (it's just
-    turning the switch back on after an external off). Verify by triggering
-    an external switch_off + waiting past any potential settle delay."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        recovery_off_seconds=10,
-        failure_notification_enabled=True,
-        recovery_settle_seconds=60,
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.advance(60)
-    # External off (e.g., dashboard click); self-recovery for: delay starts
-    sim.switch_off()
-    sim.advance(45)  # past the for: delay (recovery_off_seconds + 30 = 40)
-    # Self-recovery fires; switch back on. No settle, no failure check.
-    sim.advance(120)  # any settle window would have elapsed
-    fires = filter_actions(sim, "on_failure_action.fired")
-    assert_eq(len(fires), 0, "self-recovery does not run failure notification path")
-    return "PASS"
-
-
-@register
-def s44_post_restart_cycles_already_dead_entity():
-    """Home Assistant starts. A monitored entity is already 'unavailable'
-    because the device was dead before HA loaded. The HA-start branch waits
-    the post-restart settle, evaluates, and fires the recovery cycle."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="lighter",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=10,
-        post_restart_settle_seconds=180,
-    )
-    # Set the entity to 'unavailable' before HA start; no transition observed
-    sim.entities["sensor.fp2_lux"].value = "unavailable"
-    sim.ha_start()
-    sim.advance(185)  # past the 180s settle
-    # The post-restart branch should have evaluated and fired the cycle
-    cycles = filter_actions(sim, "post_restart.cycle_starts")
-    assert_eq(len(cycles), 1, f"post-restart cycle should fire once on dead entity, got {len(cycles)}")
-    turn_offs = filter_actions(sim, "switch.turn_off")
-    assert_eq(len(turn_offs), 1, "switch should have been cycled once")
-    return "PASS"
-
-
-@register
-def s45_post_restart_no_cycle_when_entity_healthy():
-    """HA starts. Monitored entity is healthy. The HA-start branch evaluates,
-    finds nothing wrong, and does NOT cycle."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="lighter",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=10,
-        post_restart_settle_seconds=180,
-    )
-    sim.report("sensor.fp2_lux", "200")
-    sim.ha_start()
-    sim.advance(185)
-    cycles = filter_actions(sim, "post_restart.cycle_starts")
-    assert_eq(len(cycles), 0, "post-restart should NOT cycle when entity is healthy")
-    return "PASS"
-
-
-@register
-def s46_post_restart_blocked_by_restart_guard():
-    """HA starts during a restart-guard active window. The post-restart
-    evaluation runs but the guard blocks the cycle."""
-    sim = build_sim_custom(
-        monitored_entities=["sensor.fp2_lux"],
-        recovery_switch="switch.fp2_plug",
-        detection_mode="lighter",
-        restart_guard_sensor="sensor.restarting_status",
-        unavailable_timeout_seconds=30,
-        recovery_off_seconds=10,
-        post_restart_settle_seconds=60,
-    )
-    sim.entities["sensor.fp2_lux"].value = "unavailable"
-    # Add the restart guard entity directly
-    from copy import copy
-    guard = type(sim.entities["sensor.fp2_lux"])()
-    guard.value = "on"
-    sim.entities["sensor.restarting_status"] = guard
-    sim.ha_start()
-    sim.advance(65)
-    cycles = filter_actions(sim, "post_restart.cycle_starts")
-    assert_eq(len(cycles), 0, "post-restart should be blocked by restart guard")
-    return "PASS"
-
-
-
-def run_all():
-    print("=" * 70)
-    print("Sensor Watchdog Blueprint Simulator")
-    print("=" * 70)
-    passed, failed = 0, 0
-    for fn in SCENARIOS:
-        name = fn.__name__
-        try:
-            result = fn()
-            status = "PASS"
-            print(f"  {name}: {status} ({result})")
-            passed += 1
-        except AssertionError as e:
-            print(f"  {name}: FAIL - {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  {name}: ERROR - {type(e).__name__}: {e}")
-            failed += 1
-    print("=" * 70)
-    print(f"Total: {passed} passed, {failed} failed")
-    print("=" * 70)
-    return failed == 0
-
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(0 if run_all() else 1)
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Sensor Watchdog - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
+# Work in progress. Public preview, still in beta.
+# Full write-up, worked examples, and directions:
+# https://xeazy.com/sensor-watchdog-blueprint/
+#
+# Changelog:
+#   1.0.1-beta - Responsive trigger now filters at the event bus level via
+#                event_data: entity_id. The automation is no longer woken up
+#                by reports from non-monitored entities. Added a Home Assistant
+#                start branch that waits a configurable settle period, then
+#                evaluates monitored entities and fires recovery if any are
+#                already in a failure state (covers the case where a device
+#                was dead before HA started and no state transition occurred).
+#                Refactored the failed-entities templates in all four
+#                recovery-with-failure-notification branches from namespace
+#                loops to expand()/selectattr filter chains. New input:
+#                post_restart_settle_seconds (default 180).
+#   1.0.0-beta - Initial public preview. Three independent failure detectors firing
+#                into a single recovery cycle: an unavailable detector with a
+#                tolerance window, a freshness detector backed by a timer helper,
+#                and an optional daily scheduled cycle. Three-mode selector
+#                (responsive, lighter, minimal) for the freshness detector's event
+#                load. Optional active time window for the freshness branch,
+#                optional restart guard input, optional treat_off_as_offline input
+#                to extend the offline detector to 'off' transitions (for ping-
+#                style sensors), and a self-recovery branch that uses a 'for:'
+#                delay so the recovery cycle's own turn-off does not fight
+#                itself. Unavailable and scheduled recovery branches cancel the
+#                heartbeat timer at cycle time, so the freshness detector does
+#                not fire a second cycle for the same wedge (one-attempt-per-
+#                wedge invariant). Optional failure notification: opt-in feature
+#                that waits a configurable settle period after each cycle,
+#                checks whether monitored entities are still in a failure
+#                state, and runs a user-configured action sequence (notify,
+#                persistent_notification, etc.). Debug logging is written at
+#                info level with a [Sensor Watchdog v<version>] prefix, matching
+#                the Thinking Home blueprint style. Forty-three simulator
+#                scenarios pass including simultaneous-trigger debouncing,
+#                cycle-own-off, FP2 10-zone, WiFi router ping, unavailable-into-
+#                stale double-fire, and failure-notification-on-persistent-
+#                failure. Author-dogfooded at release; will graduate to 1.0.0
+#                stable after the home deployment runs clean.
+blueprint:
+  name: Sensor Watchdog
+  description: |
+    # Sensor Watchdog
+
+    *Power-cycles a device when its entities go offline or stop reporting fresh values.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/sensor-watchdog-blueprint/) - the design and worked examples.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for this blueprint.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Watches one or more entities that share a single smart plug and automatically power-cycles the device behind that plug when any monitored entity goes offline or stops reporting fresh values. Multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone.
+
+    Three detection modes let you choose how much event traffic the freshness detector creates: responsive (catches every report including heartbeats, heaviest load), lighter (catches state changes only, lighter load), or minimal (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. An optional restart guard input blocks recovery during HA or router reboot windows.
+
+    Requires Home Assistant 2026.6 or later. That is the version the blueprint is verified on. If using responsive or lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
+
+    Originally built to recover three Aqara FP2 presence sensors at The Panorama that wedge every few days. Generalized for any flaky device whose only reliable fix is a power cycle: Zigbee router plugs, WiFi cameras, finicky sensors of any kind.
+
+    **Work in progress.** This is a public preview, still in beta. Feedback is welcome on the [forum](https://xeazy.com/logbook/).
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+  author: James Lander (xeazy.com)
+  domain: automation
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/automation/sensor_watchdog.yaml
+  homeassistant:
+    min_version: 2026.6.0
+
+  input:
+    monitored_section:
+      name: 📡 Monitored Sensors
+      icon: mdi:radar
+      description: The sensors to monitor and the switch to cycle on recovery.
+      input:
+        monitored_entities:
+          name: Monitored Entities
+          description: >-
+            The entities watched by the blueprint. All must live on the
+            same recovery switch below, since one plug cycle is the
+            recovery action for the whole group. Pairing multiple entities
+            from the same physical device often improves detection
+            because their activity patterns complement each other. The
+            FP2 lux entity changes most during the day; the FP2 presence
+            entity changes most in the evening. Together they generate
+            heartbeats across the full day; alone, either one would have
+            quiet stretches that look like a freeze.
+          selector:
+            entity:
+              multiple: true
+        recovery_switch:
+          name: Recovery Switch
+          description: >-
+            The switch that powers the upstream device. Cycled (off, wait,
+            on) to recover the device. Typically a smart plug.
+          selector:
+            entity:
+              domain: switch
+
+    timing_section:
+      name: ⚙️ Timing
+      icon: mdi:timer-cog-outline
+      description: Basic timing tunables.
+      input:
+        recovery_off_seconds:
+          name: Recovery Off Duration
+          description: >-
+            How long to hold the recovery switch off between off and on.
+            Long enough that the device fully power-cycles.
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 60
+              unit_of_measurement: seconds
+              mode: box
+        unavailable_timeout_seconds:
+          name: Offline Timeout
+          description: >-
+            How long a monitored entity must be in an offline state before
+            recovery fires. By default 'offline' means unavailable or
+            unknown; enable 'Treat Off as Offline' in advanced settings
+            to also include the 'off' state, which is useful for ping
+            sensors. Set this to a value longer than typical transient
+            outages.
+          default: 30
+          selector:
+            number:
+              min: 5
+              max: 600
+              unit_of_measurement: seconds
+              mode: box
+
+    failure_notification_section:
+      name: 🔔 Failure Notification
+      icon: mdi:bell-alert-outline
+      description: >-
+        Optional: send a notification if the recovery cycle fails to
+        bring the device back online. Disabled by default.
+      collapsed: true
+      input:
+        failure_notification_enabled:
+          name: Enable Failure Notification
+          description: >-
+            When enabled, after every recovery cycle the blueprint waits
+            for the device to settle, then checks whether any monitored
+            entity is still in a failure state. If yes, it runs the
+            'On Failure Action' you configure below. When disabled, no
+            check is performed and the recovery cycle exits silently
+            after the switch turns back on.
+          default: false
+          selector:
+            boolean:
+        recovery_settle_seconds:
+          name: Recovery Settle Time
+          description: >-
+            How long to wait after the recovery switch turns back on
+            before checking whether the device recovered. Long enough
+            for the device to boot, reconnect to its mesh or WiFi, and
+            start reporting again. 60 seconds works for most Zigbee
+            sensors and smart plugs; 90 to 120 seconds may be needed
+            for WiFi routers, NAS units, or anything with a longer
+            boot. Ignored when failure notification is disabled.
+          default: 60
+          selector:
+            number:
+              min: 5
+              max: 600
+              unit_of_measurement: seconds
+              mode: box
+        on_failure_action:
+          name: On Failure Action
+          description: >-
+            The action sequence to run when the recovery cycle fails to
+            bring the device back online. Typically a notify call, a
+            persistent_notification.create, or a script call. The
+            following variables are available inside this action:
+            recovery_reason (one of 'unavailable', 'stale', 'scheduled')
+            and failed_entities (a list of monitored_entities still in a
+            failure state). The recovery_switch and other inputs are
+            also accessible by name.
+          default: []
+          selector:
+            action: {}
+
+    advanced_section:
+      name: 🛠 Advanced
+      icon: mdi:cog-outline
+      description: Detection modes, scheduled reboot, active window, and guards.
+      collapsed: true
+      input:
+        detection_mode:
+          name: Detection Mode
+          description: >-
+            Responsive catches every device report including heartbeats
+            (heaviest, lowest latency). Lighter catches value changes only
+            (light, slight latency on quiet devices). Minimal does no
+            freeze detection and relies on unavailable and scheduled
+            reboot (lightest, no timer helper needed).
+          default: responsive
+          selector:
+            select:
+              options:
+                - label: "Responsive (state_reported events, heaviest)"
+                  value: responsive
+                - label: "Lighter (state changes only)"
+                  value: lighter
+                - label: "Minimal (unavailable + scheduled reboot only)"
+                  value: minimal
+        stale_threshold_minutes:
+          name: Stale Threshold
+          description: >-
+            How long without a report (responsive) or without a value
+            change (lighter) before staleness is declared. Ignored in
+            minimal mode. Set this longer than the natural quiet stretches
+            of your device under normal conditions.
+          default: 5
+          selector:
+            number:
+              min: 1
+              max: 1440
+              unit_of_measurement: minutes
+              mode: box
+        heartbeat_timer:
+          name: Heartbeat Timer
+          description: >-
+            A timer helper used to track when monitored entities last
+            reported (or last changed, in lighter mode). Required in
+            responsive and lighter modes. Create via Settings, Devices &
+            Services, Helpers, Create Helper, Timer. Leave the timer
+            duration blank; this blueprint sets it dynamically. In
+            minimal mode this input is ignored.
+          default:
+          selector:
+            entity:
+              domain: timer
+        active_window_enabled:
+          name: Restrict Staleness to Active Window
+          description: >-
+            When enabled, the staleness branch only fires within the
+            active time window below. Useful for FP2-style sensors that
+            naturally fall silent overnight in empty rooms. Unavailable
+            detection and scheduled reboot are not affected by this
+            window.
+          default: false
+          selector:
+            boolean:
+        active_after:
+          name: Active Window Start
+          description: >-
+            Start of the active window (24-hour format). Window must not
+            cross midnight; active_after must be earlier than
+            active_before. Ignored when window is disabled.
+          default: "06:00:00"
+          selector:
+            time:
+        active_before:
+          name: Active Window End
+          description: End of the active window. Ignored when window is disabled.
+          default: "23:00:00"
+          selector:
+            time:
+        scheduled_reboot_enabled:
+          name: Enable Scheduled Reboot
+          description: >-
+            When enabled, the recovery cycle fires once per day at the
+            scheduled time as preventive maintenance. Independent of
+            detection mode; works in all modes.
+          default: false
+          selector:
+            boolean:
+        scheduled_reboot_time:
+          name: Scheduled Reboot Time
+          description: >-
+            Time of day to fire the daily preventive reboot. Ignored
+            when scheduled reboot is disabled.
+          default: "04:30:00"
+          selector:
+            time:
+        treat_off_as_offline:
+          name: Treat 'off' as Offline
+          description: >-
+            When enabled, a monitored entity transitioning to the 'off'
+            state is treated the same as one transitioning to
+            'unavailable' or 'unknown', and triggers recovery after the
+            offline timeout. Enable only for entities whose 'off' state
+            means failure, the clearest example being binary_sensors
+            from HA's ping integration (they report 'off' when the
+            target is unreachable). Leave disabled for entities whose
+            'off' state is normal operation: presence sensors, motion
+            sensors, door contacts, switches, etc. The setting is per-
+            instance and applies to every monitored entity in this
+            instance, so do not mix ping-style entities with normal
+            binary_sensors in one instance. Use a separate watchdog
+            instance for each device class.
+          default: false
+          selector:
+            boolean:
+        restart_guard_sensor:
+          name: Restart Guard Sensor
+          description: >-
+            Optional. If set, all recovery branches skip when this
+            sensor's state is 'on' or 'true'. Used to prevent
+            power-cycling during HA restart windows. Panorama users
+            point this at sensor.restarting_status.
+          default:
+          selector:
+            entity: {}
+        post_restart_settle_seconds:
+          name: Post-Restart Settle
+          description: >-
+            How long to wait after Home Assistant starts before
+            evaluating monitored entities for already-failed states.
+            Long enough for all integrations to finish loading.
+            Two to five minutes is appropriate for most setups. The
+            restart guard still applies during this window, so if your
+            guard is on during HA boot, the evaluation will skip
+            regardless of this value.
+          default: 180
+          selector:
+            number:
+              min: 30
+              max: 900
+              unit_of_measurement: seconds
+              mode: box
+        debug_enabled:
+          name: Debug Logging
+          description: >-
+            When enabled, the automation writes a log line for each
+            branch it enters. Turn on during setup to verify behaviour,
+            then turn off in normal operation.
+          default: false
+          selector:
+            boolean:
+
+mode: queued
+max: 10
+
+trigger_variables:
+  _detection_mode: !input detection_mode
+  _monitored_entities: !input monitored_entities
+  _stale_threshold_minutes: !input stale_threshold_minutes
+  _active_window_enabled: !input active_window_enabled
+  _active_after: !input active_after
+  _active_before: !input active_before
+  _restart_guard_sensor: !input restart_guard_sensor
+  _debug_enabled: !input debug_enabled
+  _recovery_switch: !input recovery_switch
+  _recovery_off_seconds: !input recovery_off_seconds
+  _treat_off_as_offline: !input treat_off_as_offline
+
+variables:
+  _version: "1.0.1-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.1-beta]"
+  monitored_entities_var: !input monitored_entities
+  treat_off_as_offline_var: !input treat_off_as_offline
+  failure_notification_enabled_var: !input failure_notification_enabled
+  recovery_settle_seconds_var: !input recovery_settle_seconds
+  post_restart_settle_seconds_var: !input post_restart_settle_seconds
+
+triggers:
+  # ─────────────────────────────────────────────────────────────────────
+  # Unavailable detection - always on
+  # Fires when a monitored entity transitions to unavailable or unknown.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input monitored_entities
+    to:
+      - unavailable
+      - unknown
+    for:
+      seconds: !input unavailable_timeout_seconds
+    id: unavailable
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Off-state detection - gated by 'Treat off as Offline'
+  # Same id and same downstream branch as unavailable; the only difference
+  # is the state being watched. Useful for ping sensors that report 'off'
+  # (not 'unavailable') when the target is unreachable.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input monitored_entities
+    to: "off"
+    for:
+      seconds: !input unavailable_timeout_seconds
+    enabled: !input treat_off_as_offline
+    id: unavailable
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Heartbeat reset - responsive mode (every state_reported event)
+  # event_data filters at the trigger level, so the automation is only
+  # woken up for monitored entities. Chatty neighbours on the event bus
+  # do not consume queue slots here.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: event
+    event_type: state_reported
+    event_data:
+      entity_id: !input monitored_entities
+    enabled: "{{ _detection_mode == 'responsive' }}"
+    id: heartbeat_responsive
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Heartbeat reset - lighter mode (state changes only)
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input monitored_entities
+    enabled: "{{ _detection_mode == 'lighter' }}"
+    id: heartbeat_lighter
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stale detection - timer finished event (responsive and lighter modes)
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input heartbeat_timer
+    enabled: "{{ _detection_mode != 'minimal' }}"
+    id: stale
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Scheduled reboot - fires once per day at the configured time
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: time
+    at: !input scheduled_reboot_time
+    enabled: !input scheduled_reboot_enabled
+    id: scheduled
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Self-recovery - recovery switch went off unexpectedly
+  # The 'for:' delay is computed as recovery_off_seconds + 30 so that the
+  # recovery cycle's own turn_off does not fire this trigger. The cycle
+  # turns the switch back on within recovery_off_seconds, which cancels
+  # the 'for:' delay before it completes.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: state
+    entity_id: !input recovery_switch
+    to: "off"
+    for:
+      seconds: "{{ _recovery_off_seconds + 30 }}"
+    id: switch_off
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Home Assistant start - covers the case where a monitored entity is
+  # already in a failure state when HA loads (e.g., the device was dead
+  # during the nightly host reboot window). State triggers require an
+  # active transition; if the entity initializes as 'unavailable', no
+  # transition occurs and the offline detector never fires. This branch
+  # waits a settle period for integrations to finish loading, then
+  # evaluates the monitored entities and cycles if any are bad.
+  # ─────────────────────────────────────────────────────────────────────
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+
+actions:
+  - choose:
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 1: Heartbeat reset (responsive mode)
+      # Filters for entity_id in monitored list, then resets timer.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Heartbeat reset (responsive)"
+        conditions:
+          - condition: trigger
+            id: heartbeat_responsive
+        sequence:
+          - alias: "Debug Log Heartbeat Responsive"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: >-
+                    {{ _caller_prefix }} Heartbeat (responsive) from
+                    {{ trigger.event.data.entity_id }}. Resetting timer.
+          - action: timer.start
+            target:
+              entity_id: !input heartbeat_timer
+            data:
+              duration: "{{ _stale_threshold_minutes * 60 }}"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 2: Heartbeat reset (lighter mode)
+      # State trigger already filtered to monitored entities. No
+      # additional entity check needed.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Heartbeat reset (lighter)"
+        conditions:
+          - condition: trigger
+            id: heartbeat_lighter
+        sequence:
+          - alias: "Debug Log Heartbeat Lighter"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: >-
+                    {{ _caller_prefix }} Heartbeat (lighter) from
+                    {{ trigger.entity_id }}. Resetting timer.
+          - action: timer.start
+            target:
+              entity_id: !input heartbeat_timer
+            data:
+              duration: "{{ _stale_threshold_minutes * 60 }}"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 3: Stale recovery
+      # Timer expired. Apply restart guard and active window, then run
+      # the recovery cycle.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Stale recovery"
+        conditions:
+          - condition: trigger
+            id: stale
+          - condition: state
+            entity_id: !input recovery_switch
+            state: "on"
+          - condition: template
+            value_template: >-
+              {% if _restart_guard_sensor in [none, ''] %}
+                true
+              {% else %}
+                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
+              {% endif %}
+          - condition: template
+            value_template: >-
+              {% if not _active_window_enabled %}
+                true
+              {% else %}
+                {% set t_now = now().strftime('%H:%M:%S') %}
+                {{ t_now >= _active_after and t_now < _active_before }}
+              {% endif %}
+        sequence:
+          - alias: "Debug Log Stale Recovery"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: "{{ _caller_prefix }} Stale detected. Cycling recovery switch."
+          - action: switch.turn_off
+            target:
+              entity_id: !input recovery_switch
+          - delay:
+              seconds: !input recovery_off_seconds
+          - action: switch.turn_on
+            target:
+              entity_id: !input recovery_switch
+          - alias: "Settle and check for failure (stale)"
+            if:
+              - condition: template
+                value_template: "{{ failure_notification_enabled_var }}"
+            then:
+              - delay:
+                  seconds: "{{ recovery_settle_seconds_var }}"
+              - variables:
+                  recovery_reason: "stale"
+                  failed_entities: >-
+                    {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                    {{ expand(monitored_entities_var) | selectattr('state', 'in', bad) | map(attribute='entity_id') | list }}
+              - alias: "Run On Failure Action if any entity still failed"
+                choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ failed_entities | length > 0 }}"
+                    sequence:
+                      - alias: "Debug Log Failure"
+                        if:
+                          - condition: template
+                            value_template: "{{ _debug_enabled }}"
+                        then:
+                          - action: system_log.write
+                            continue_on_error: true
+                            data:
+                              level: info
+                              message: >-
+                                {{ _caller_prefix }} Recovery failed after stale cycle.
+                                Still failed: {{ failed_entities | join(', ') }}.
+                      - choose:
+                          - conditions: []
+                            sequence: !input on_failure_action
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 4: Unavailable recovery
+      # Sensor went unavailable. Apply restart guard, then cycle.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Unavailable recovery"
+        conditions:
+          - condition: trigger
+            id: unavailable
+          - condition: state
+            entity_id: !input recovery_switch
+            state: "on"
+          - condition: template
+            value_template: >-
+              {% if _restart_guard_sensor in [none, ''] %}
+                true
+              {% else %}
+                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
+              {% endif %}
+        sequence:
+          - alias: "Debug Log Unavailable Recovery"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: >-
+                    {{ _caller_prefix }} Unavailable detected on
+                    {{ trigger.entity_id }}. Cycling recovery switch.
+          - if:
+              - condition: template
+                value_template: "{{ _detection_mode != 'minimal' }}"
+            then:
+              - action: timer.cancel
+                target:
+                  entity_id: !input heartbeat_timer
+          - action: switch.turn_off
+            target:
+              entity_id: !input recovery_switch
+          - delay:
+              seconds: !input recovery_off_seconds
+          - action: switch.turn_on
+            target:
+              entity_id: !input recovery_switch
+          - alias: "Settle and check for failure (unavailable)"
+            if:
+              - condition: template
+                value_template: "{{ failure_notification_enabled_var }}"
+            then:
+              - delay:
+                  seconds: "{{ recovery_settle_seconds_var }}"
+              - variables:
+                  recovery_reason: "unavailable"
+                  failed_entities: >-
+                    {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                    {{ expand(monitored_entities_var) | selectattr('state', 'in', bad) | map(attribute='entity_id') | list }}
+              - alias: "Run On Failure Action if any entity still failed"
+                choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ failed_entities | length > 0 }}"
+                    sequence:
+                      - alias: "Debug Log Failure"
+                        if:
+                          - condition: template
+                            value_template: "{{ _debug_enabled }}"
+                        then:
+                          - action: system_log.write
+                            continue_on_error: true
+                            data:
+                              level: info
+                              message: >-
+                                {{ _caller_prefix }} Recovery failed after unavailable cycle.
+                                Still failed: {{ failed_entities | join(', ') }}.
+                      - choose:
+                          - conditions: []
+                            sequence: !input on_failure_action
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 5: Scheduled recovery
+      # Time-based preventive reboot. Apply restart guard, then cycle.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Scheduled recovery"
+        conditions:
+          - condition: trigger
+            id: scheduled
+          - condition: state
+            entity_id: !input recovery_switch
+            state: "on"
+          - condition: template
+            value_template: >-
+              {% if _restart_guard_sensor in [none, ''] %}
+                true
+              {% else %}
+                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
+              {% endif %}
+        sequence:
+          - alias: "Debug Log Scheduled Recovery"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: "{{ _caller_prefix }} Scheduled reboot. Cycling recovery switch."
+          - if:
+              - condition: template
+                value_template: "{{ _detection_mode != 'minimal' }}"
+            then:
+              - action: timer.cancel
+                target:
+                  entity_id: !input heartbeat_timer
+          - action: switch.turn_off
+            target:
+              entity_id: !input recovery_switch
+          - delay:
+              seconds: !input recovery_off_seconds
+          - action: switch.turn_on
+            target:
+              entity_id: !input recovery_switch
+          - alias: "Settle and check for failure (scheduled)"
+            if:
+              - condition: template
+                value_template: "{{ failure_notification_enabled_var }}"
+            then:
+              - delay:
+                  seconds: "{{ recovery_settle_seconds_var }}"
+              - variables:
+                  recovery_reason: "scheduled"
+                  failed_entities: >-
+                    {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                    {{ expand(monitored_entities_var) | selectattr('state', 'in', bad) | map(attribute='entity_id') | list }}
+              - alias: "Run On Failure Action if any entity still failed"
+                choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ failed_entities | length > 0 }}"
+                    sequence:
+                      - alias: "Debug Log Failure"
+                        if:
+                          - condition: template
+                            value_template: "{{ _debug_enabled }}"
+                        then:
+                          - action: system_log.write
+                            continue_on_error: true
+                            data:
+                              level: info
+                              message: >-
+                                {{ _caller_prefix }} Recovery failed after scheduled cycle.
+                                Still failed: {{ failed_entities | join(', ') }}.
+                      - choose:
+                          - conditions: []
+                            sequence: !input on_failure_action
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 6: Post-restart evaluation
+      # Wait for HA to finish loading, then check if any monitored
+      # entity is already in a failure state. If so, fire the recovery
+      # cycle. Covers the case where a device was dead before HA started
+      # and no state transition was observed.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Post-restart evaluation"
+        conditions:
+          - condition: trigger
+            id: ha_start
+        sequence:
+          - alias: "Debug Log Post-Restart Begin"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: >-
+                    {{ _caller_prefix }} HA start detected. Waiting
+                    {{ post_restart_settle_seconds_var }}s for integrations to load.
+          - delay:
+              seconds: "{{ post_restart_settle_seconds_var }}"
+          - variables:
+              post_restart_failed_entities: >-
+                {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                {{ expand(monitored_entities_var) | selectattr('state', 'in', bad) | map(attribute='entity_id') | list }}
+          - alias: "Debug Log Post-Restart Eval"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: >-
+                    {{ _caller_prefix }} Post-restart evaluation complete.
+                    Failed entities: {{ post_restart_failed_entities }}.
+          - alias: "Fire recovery if any entity is already failed"
+            choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ post_restart_failed_entities | length > 0 }}"
+                  - condition: state
+                    entity_id: !input recovery_switch
+                    state: "on"
+                  - condition: template
+                    value_template: >-
+                      {% if _restart_guard_sensor in [none, ''] %}
+                        true
+                      {% else %}
+                        {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
+                      {% endif %}
+                sequence:
+                  - alias: "Debug Log Post-Restart Cycle"
+                    if:
+                      - condition: template
+                        value_template: "{{ _debug_enabled }}"
+                    then:
+                      - action: system_log.write
+                        continue_on_error: true
+                        data:
+                          level: info
+                          message: >-
+                            {{ _caller_prefix }} Cycling recovery switch after restart.
+                            Failed: {{ post_restart_failed_entities | join(', ') }}.
+                  - if:
+                      - condition: template
+                        value_template: "{{ _detection_mode != 'minimal' }}"
+                    then:
+                      - action: timer.cancel
+                        target:
+                          entity_id: !input heartbeat_timer
+                  - action: switch.turn_off
+                    target:
+                      entity_id: !input recovery_switch
+                  - delay:
+                      seconds: !input recovery_off_seconds
+                  - action: switch.turn_on
+                    target:
+                      entity_id: !input recovery_switch
+                  - alias: "Settle and check for failure (post-restart)"
+                    if:
+                      - condition: template
+                        value_template: "{{ failure_notification_enabled_var }}"
+                    then:
+                      - delay:
+                          seconds: "{{ recovery_settle_seconds_var }}"
+                      - variables:
+                          recovery_reason: "post_restart"
+                          failed_entities: >-
+                            {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                            {{ expand(monitored_entities_var) | selectattr('state', 'in', bad) | map(attribute='entity_id') | list }}
+                      - alias: "Run On Failure Action if any entity still failed"
+                        choose:
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ failed_entities | length > 0 }}"
+                            sequence:
+                              - alias: "Debug Log Failure"
+                                if:
+                                  - condition: template
+                                    value_template: "{{ _debug_enabled }}"
+                                then:
+                                  - action: system_log.write
+                                    continue_on_error: true
+                                    data:
+                                      level: info
+                                      message: >-
+                                        {{ _caller_prefix }} Recovery failed after post-restart cycle.
+                                        Still failed: {{ failed_entities | join(', ') }}.
+                              - choose:
+                                  - conditions: []
+                                    sequence: !input on_failure_action
+
+      # ─────────────────────────────────────────────────────────────────
+      # Branch 7: Self-recovery
+      # Recovery switch went off unexpectedly. Turn it back on.
+      # Always-on; no guards. The switch should never be off for long.
+      # ─────────────────────────────────────────────────────────────────
+      - alias: "Self-recovery"
+        conditions:
+          - condition: trigger
+            id: switch_off
+        sequence:
+          - alias: "Debug Log Self-Recovery"
+            if:
+              - condition: template
+                value_template: "{{ _debug_enabled }}"
+            then:
+              - action: system_log.write
+                continue_on_error: true
+                data:
+                  level: info
+                  message: >-
+                    {{ _caller_prefix }} Recovery switch went off unexpectedly.
+                    Turning back on.
+          - action: switch.turn_on
+            target:
+              entity_id: !input recovery_switch

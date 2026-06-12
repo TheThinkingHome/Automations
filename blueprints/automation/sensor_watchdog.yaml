@@ -42,7 +42,7 @@ blueprint:
 
     Three detection modes let you choose how much event traffic the freshness detector creates: responsive (catches every report including heartbeats, heaviest load), lighter (catches state changes only, lighter load), or minimal (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. An optional restart guard input blocks recovery during HA or router reboot windows.
 
-    Requires Home Assistant 2024.10 or later for templated enabled fields on triggers. If using responsive or lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
+    Requires Home Assistant 2026.6 or later. That is the version the blueprint is verified on. If using responsive or lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
 
     Originally built to recover three Aqara FP2 presence sensors at The Panorama that wedge every few days. Generalized for any flaky device whose only reliable fix is a power cycle: Zigbee router plugs, WiFi cameras, finicky sensors of any kind.
 
@@ -53,7 +53,7 @@ blueprint:
   domain: automation
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/automation/sensor_watchdog.yaml
   homeassistant:
-    min_version: 2024.10.0
+    min_version: 2026.6.0
 
   input:
     monitored_section:

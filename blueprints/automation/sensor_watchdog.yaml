@@ -18,11 +18,21 @@
 #                to extend the offline detector to 'off' transitions (for ping-
 #                style sensors), and a self-recovery branch that uses a 'for:'
 #                delay so the recovery cycle's own turn-off does not fight
-#                itself. Thirty-three simulator scenarios pass including
-#                simultaneous-trigger debouncing, the cycle-own-off case, the
-#                FP2 10-zone case, and the WiFi router ping scenario. Author-
-#                dogfooded at release; will graduate to 1.0.0 stable after the
-#                home deployment runs clean.
+#                itself. Unavailable and scheduled recovery branches cancel the
+#                heartbeat timer at cycle time, so the freshness detector does
+#                not fire a second cycle for the same wedge (one-attempt-per-
+#                wedge invariant). Optional failure notification: opt-in feature
+#                that waits a configurable settle period after each cycle,
+#                checks whether monitored entities are still in a failure
+#                state, and runs a user-configured action sequence (notify,
+#                persistent_notification, etc.). Debug logging is written at
+#                info level with a [Sensor Watchdog v<version>] prefix, matching
+#                the Thinking Home blueprint style. Forty-three simulator
+#                scenarios pass including simultaneous-trigger debouncing,
+#                cycle-own-off, FP2 10-zone, WiFi router ping, unavailable-into-
+#                stale double-fire, and failure-notification-on-persistent-
+#                failure. Author-dogfooded at release; will graduate to 1.0.0
+#                stable after the home deployment runs clean.
 blueprint:
   name: Sensor Watchdog
   description: |
@@ -118,6 +128,58 @@ blueprint:
               max: 600
               unit_of_measurement: seconds
               mode: box
+
+    failure_notification_section:
+      name: 🔔 Failure Notification
+      icon: mdi:bell-alert-outline
+      description: >-
+        Optional: send a notification if the recovery cycle fails to
+        bring the device back online. Disabled by default.
+      collapsed: true
+      input:
+        failure_notification_enabled:
+          name: Enable Failure Notification
+          description: >-
+            When enabled, after every recovery cycle the blueprint waits
+            for the device to settle, then checks whether any monitored
+            entity is still in a failure state. If yes, it runs the
+            'On Failure Action' you configure below. When disabled, no
+            check is performed and the recovery cycle exits silently
+            after the switch turns back on.
+          default: false
+          selector:
+            boolean:
+        recovery_settle_seconds:
+          name: Recovery Settle Time
+          description: >-
+            How long to wait after the recovery switch turns back on
+            before checking whether the device recovered. Long enough
+            for the device to boot, reconnect to its mesh or WiFi, and
+            start reporting again. 60 seconds works for most Zigbee
+            sensors and smart plugs; 90 to 120 seconds may be needed
+            for WiFi routers, NAS units, or anything with a longer
+            boot. Ignored when failure notification is disabled.
+          default: 60
+          selector:
+            number:
+              min: 5
+              max: 600
+              unit_of_measurement: seconds
+              mode: box
+        on_failure_action:
+          name: On Failure Action
+          description: >-
+            The action sequence to run when the recovery cycle fails to
+            bring the device back online. Typically a notify call, a
+            persistent_notification.create, or a script call. The
+            following variables are available inside this action:
+            recovery_reason (one of 'unavailable', 'stale', 'scheduled')
+            and failed_entities (a list of monitored_entities still in a
+            failure state). The recovery_switch and other inputs are
+            also accessible by name.
+          default: []
+          selector:
+            action: {}
 
     advanced_section:
       name: 🛠 Advanced
@@ -268,6 +330,14 @@ trigger_variables:
   _recovery_off_seconds: !input recovery_off_seconds
   _treat_off_as_offline: !input treat_off_as_offline
 
+variables:
+  _version: "1.0.0-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.0-beta]"
+  monitored_entities_var: !input monitored_entities
+  treat_off_as_offline_var: !input treat_off_as_offline
+  failure_notification_enabled_var: !input failure_notification_enabled
+  recovery_settle_seconds_var: !input recovery_settle_seconds
+
 triggers:
   # ─────────────────────────────────────────────────────────────────────
   # Unavailable detection - always on
@@ -362,18 +432,19 @@ actions:
             value_template: >-
               {{ trigger.event.data.entity_id in _monitored_entities }}
         sequence:
-          - if:
+          - alias: "Debug Log Heartbeat Responsive"
+            if:
               - condition: template
                 value_template: "{{ _debug_enabled }}"
             then:
-              - service: system_log.write
+              - action: system_log.write
+                continue_on_error: true
                 data:
-                  level: debug
+                  level: info
                   message: >-
-                    sensor_watchdog: heartbeat (responsive) from
-                    {{ trigger.event.data.entity_id }}; resetting timer
-                  logger: sensor_watchdog
-          - service: timer.start
+                    {{ _caller_prefix }} Heartbeat (responsive) from
+                    {{ trigger.event.data.entity_id }}. Resetting timer.
+          - action: timer.start
             target:
               entity_id: !input heartbeat_timer
             data:
@@ -389,18 +460,19 @@ actions:
           - condition: trigger
             id: heartbeat_lighter
         sequence:
-          - if:
+          - alias: "Debug Log Heartbeat Lighter"
+            if:
               - condition: template
                 value_template: "{{ _debug_enabled }}"
             then:
-              - service: system_log.write
+              - action: system_log.write
+                continue_on_error: true
                 data:
-                  level: debug
+                  level: info
                   message: >-
-                    sensor_watchdog: heartbeat (lighter) from
-                    {{ trigger.entity_id }}; resetting timer
-                  logger: sensor_watchdog
-          - service: timer.start
+                    {{ _caller_prefix }} Heartbeat (lighter) from
+                    {{ trigger.entity_id }}. Resetting timer.
+          - action: timer.start
             target:
               entity_id: !input heartbeat_timer
             data:
@@ -434,23 +506,61 @@ actions:
                 {{ t_now >= _active_after and t_now < _active_before }}
               {% endif %}
         sequence:
-          - if:
+          - alias: "Debug Log Stale Recovery"
+            if:
               - condition: template
                 value_template: "{{ _debug_enabled }}"
             then:
-              - service: system_log.write
+              - action: system_log.write
+                continue_on_error: true
                 data:
-                  level: debug
-                  message: "sensor_watchdog: stale detected; cycling recovery switch"
-                  logger: sensor_watchdog
-          - service: switch.turn_off
+                  level: info
+                  message: "{{ _caller_prefix }} Stale detected. Cycling recovery switch."
+          - action: switch.turn_off
             target:
               entity_id: !input recovery_switch
           - delay:
               seconds: !input recovery_off_seconds
-          - service: switch.turn_on
+          - action: switch.turn_on
             target:
               entity_id: !input recovery_switch
+          - alias: "Settle and check for failure (stale)"
+            if:
+              - condition: template
+                value_template: "{{ failure_notification_enabled_var }}"
+            then:
+              - delay:
+                  seconds: "{{ recovery_settle_seconds_var }}"
+              - variables:
+                  recovery_reason: "stale"
+                  failed_entities: >-
+                    {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                    {% set ns = namespace(list=[]) %}
+                    {% for e in monitored_entities_var %}
+                      {% if states(e) in bad %}{% set ns.list = ns.list + [e] %}{% endif %}
+                    {% endfor %}
+                    {{ ns.list }}
+              - alias: "Run On Failure Action if any entity still failed"
+                choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ failed_entities | length > 0 }}"
+                    sequence:
+                      - alias: "Debug Log Failure"
+                        if:
+                          - condition: template
+                            value_template: "{{ _debug_enabled }}"
+                        then:
+                          - action: system_log.write
+                            continue_on_error: true
+                            data:
+                              level: info
+                              message: >-
+                                {{ _caller_prefix }} Recovery failed after stale cycle.
+                                Still failed: {{ failed_entities | join(', ') }}.
+                      - choose:
+                          - conditions: []
+                            sequence: !input on_failure_action
 
       # ─────────────────────────────────────────────────────────────────
       # Branch 4: Unavailable recovery
@@ -471,25 +581,70 @@ actions:
                 {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
               {% endif %}
         sequence:
-          - if:
+          - alias: "Debug Log Unavailable Recovery"
+            if:
               - condition: template
                 value_template: "{{ _debug_enabled }}"
             then:
-              - service: system_log.write
+              - action: system_log.write
+                continue_on_error: true
                 data:
-                  level: debug
+                  level: info
                   message: >-
-                    sensor_watchdog: unavailable detected on
-                    {{ trigger.entity_id }}; cycling recovery switch
-                  logger: sensor_watchdog
-          - service: switch.turn_off
+                    {{ _caller_prefix }} Unavailable detected on
+                    {{ trigger.entity_id }}. Cycling recovery switch.
+          - if:
+              - condition: template
+                value_template: "{{ _detection_mode != 'minimal' }}"
+            then:
+              - action: timer.cancel
+                target:
+                  entity_id: !input heartbeat_timer
+          - action: switch.turn_off
             target:
               entity_id: !input recovery_switch
           - delay:
               seconds: !input recovery_off_seconds
-          - service: switch.turn_on
+          - action: switch.turn_on
             target:
               entity_id: !input recovery_switch
+          - alias: "Settle and check for failure (unavailable)"
+            if:
+              - condition: template
+                value_template: "{{ failure_notification_enabled_var }}"
+            then:
+              - delay:
+                  seconds: "{{ recovery_settle_seconds_var }}"
+              - variables:
+                  recovery_reason: "unavailable"
+                  failed_entities: >-
+                    {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                    {% set ns = namespace(list=[]) %}
+                    {% for e in monitored_entities_var %}
+                      {% if states(e) in bad %}{% set ns.list = ns.list + [e] %}{% endif %}
+                    {% endfor %}
+                    {{ ns.list }}
+              - alias: "Run On Failure Action if any entity still failed"
+                choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ failed_entities | length > 0 }}"
+                    sequence:
+                      - alias: "Debug Log Failure"
+                        if:
+                          - condition: template
+                            value_template: "{{ _debug_enabled }}"
+                        then:
+                          - action: system_log.write
+                            continue_on_error: true
+                            data:
+                              level: info
+                              message: >-
+                                {{ _caller_prefix }} Recovery failed after unavailable cycle.
+                                Still failed: {{ failed_entities | join(', ') }}.
+                      - choose:
+                          - conditions: []
+                            sequence: !input on_failure_action
 
       # ─────────────────────────────────────────────────────────────────
       # Branch 5: Scheduled recovery
@@ -510,23 +665,68 @@ actions:
                 {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
               {% endif %}
         sequence:
-          - if:
+          - alias: "Debug Log Scheduled Recovery"
+            if:
               - condition: template
                 value_template: "{{ _debug_enabled }}"
             then:
-              - service: system_log.write
+              - action: system_log.write
+                continue_on_error: true
                 data:
-                  level: debug
-                  message: "sensor_watchdog: scheduled reboot; cycling recovery switch"
-                  logger: sensor_watchdog
-          - service: switch.turn_off
+                  level: info
+                  message: "{{ _caller_prefix }} Scheduled reboot. Cycling recovery switch."
+          - if:
+              - condition: template
+                value_template: "{{ _detection_mode != 'minimal' }}"
+            then:
+              - action: timer.cancel
+                target:
+                  entity_id: !input heartbeat_timer
+          - action: switch.turn_off
             target:
               entity_id: !input recovery_switch
           - delay:
               seconds: !input recovery_off_seconds
-          - service: switch.turn_on
+          - action: switch.turn_on
             target:
               entity_id: !input recovery_switch
+          - alias: "Settle and check for failure (scheduled)"
+            if:
+              - condition: template
+                value_template: "{{ failure_notification_enabled_var }}"
+            then:
+              - delay:
+                  seconds: "{{ recovery_settle_seconds_var }}"
+              - variables:
+                  recovery_reason: "scheduled"
+                  failed_entities: >-
+                    {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
+                    {% set ns = namespace(list=[]) %}
+                    {% for e in monitored_entities_var %}
+                      {% if states(e) in bad %}{% set ns.list = ns.list + [e] %}{% endif %}
+                    {% endfor %}
+                    {{ ns.list }}
+              - alias: "Run On Failure Action if any entity still failed"
+                choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ failed_entities | length > 0 }}"
+                    sequence:
+                      - alias: "Debug Log Failure"
+                        if:
+                          - condition: template
+                            value_template: "{{ _debug_enabled }}"
+                        then:
+                          - action: system_log.write
+                            continue_on_error: true
+                            data:
+                              level: info
+                              message: >-
+                                {{ _caller_prefix }} Recovery failed after scheduled cycle.
+                                Still failed: {{ failed_entities | join(', ') }}.
+                      - choose:
+                          - conditions: []
+                            sequence: !input on_failure_action
 
       # ─────────────────────────────────────────────────────────────────
       # Branch 6: Self-recovery
@@ -538,17 +738,18 @@ actions:
           - condition: trigger
             id: switch_off
         sequence:
-          - if:
+          - alias: "Debug Log Self-Recovery"
+            if:
               - condition: template
                 value_template: "{{ _debug_enabled }}"
             then:
-              - service: system_log.write
+              - action: system_log.write
+                continue_on_error: true
                 data:
-                  level: debug
+                  level: info
                   message: >-
-                    sensor_watchdog: recovery switch went off
-                    unexpectedly; turning back on
-                  logger: sensor_watchdog
-          - service: switch.turn_on
+                    {{ _caller_prefix }} Recovery switch went off unexpectedly.
+                    Turning back on.
+          - action: switch.turn_on
             target:
               entity_id: !input recovery_switch

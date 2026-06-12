@@ -1,29 +1,54 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Sensor Watchdog - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
+# Work in progress. Public preview, still in beta.
+# Full write-up, worked examples, and directions:
+# https://xeazy.com/sensor-watchdog-blueprint/
+#
+# Changelog:
+#   1.0.0-beta - Initial public preview. Three independent failure detectors firing
+#                into a single recovery cycle: an unavailable detector with a
+#                tolerance window, a freshness detector backed by a timer helper,
+#                and an optional daily scheduled cycle. Three-mode selector
+#                (responsive, lighter, minimal) for the freshness detector's event
+#                load. Optional active time window for the freshness branch,
+#                optional restart guard input, and a self-recovery branch that uses
+#                a 'for:' delay so the recovery cycle's own turn-off does not fight
+#                itself. Twenty-one simulator scenarios pass including simultaneous-
+#                trigger debouncing and the cycle-own-off case. Author-dogfooded at
+#                release; will graduate to 1.0.0 stable after the home deployment
+#                runs clean.
 blueprint:
   name: Sensor Watchdog
-  description: >-
-    Monitor a set of sensors for failure modes (unavailable, frozen, stuck) and
-    automatically power-cycle the upstream device to recover. Designed for
-    flaky devices that need a periodic kick, such as Aqara FP2 presence
-    sensors that wedge, Zigbee router plugs that drop their routing table,
-    or WiFi cameras that lock up.
+  description: |
+    # Sensor Watchdog
 
-    Three detection modes (advanced settings) let users choose between
-    catching every heartbeat (responsive, heaviest event load) and only
-    catching hard failures (minimal, lightest). The middle mode catches
-    state changes only, skipping heartbeats.
+    *Power-cycles a device when its entities go offline or stop reporting fresh values.*
 
-    Optional active time window restricts staleness detection to waking
-    hours so empty quiet rooms do not trigger false reboots overnight.
-    Optional daily scheduled reboot acts as preventive maintenance.
-    Optional restart guard sensor blocks recovery during HA restart
-    windows.
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-    Requires Home Assistant 2024.10 or later for templated enabled fields
-    on triggers. If using responsive or lighter detection mode, you must
-    create a timer helper and pass its entity id via the Heartbeat Timer
-    input. Minimal mode does not require a timer.
+    - 📖 [Read the article](https://xeazy.com/sensor-watchdog-blueprint/) - the design and worked examples.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for this blueprint.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Watches one or more entities that share a single smart plug and automatically power-cycles the device behind that plug when any monitored entity goes offline or stops reporting fresh values. Multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone.
+
+    Three detection modes let you choose how much event traffic the freshness detector creates: responsive (catches every report including heartbeats, heaviest load), lighter (catches state changes only, lighter load), or minimal (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. An optional restart guard input blocks recovery during HA or router reboot windows.
+
+    Requires Home Assistant 2024.10 or later for templated enabled fields on triggers. If using responsive or lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
+
+    Originally built to recover three Aqara FP2 presence sensors at The Panorama that wedge every few days. Generalized for any flaky device whose only reliable fix is a power cycle: Zigbee router plugs, WiFi cameras, finicky sensors of any kind.
+
+    **Work in progress.** This is a public preview, still in beta. Feedback is welcome on the [forum](https://xeazy.com/logbook/).
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+  author: James Lander (xeazy.com)
   domain: automation
-  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sensor_watchdog.yaml
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/automation/sensor_watchdog.yaml
   homeassistant:
     min_version: 2024.10.0
 
@@ -36,9 +61,15 @@ blueprint:
         monitored_entities:
           name: Monitored Entities
           description: >-
-            The sensors to monitor for unavailable and staleness conditions.
-            Typically multiple entities from the same physical device
-            (e.g., the lux and presence outputs of one FP2).
+            The entities watched by the blueprint. All must live on the
+            same recovery switch below, since one plug cycle is the
+            recovery action for the whole group. Pairing multiple entities
+            from the same physical device often improves detection
+            because their activity patterns complement each other. The
+            FP2 lux entity changes most during the day; the FP2 presence
+            entity changes most in the evening. Together they generate
+            heartbeats across the full day; alone, either one would have
+            quiet stretches that look like a freeze.
           selector:
             entity:
               multiple: true
@@ -213,7 +244,7 @@ trigger_variables:
 
 triggers:
   # ─────────────────────────────────────────────────────────────────────
-  # Unavailable detection — always on
+  # Unavailable detection - always on
   # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input monitored_entities
@@ -225,7 +256,7 @@ triggers:
     id: unavailable
 
   # ─────────────────────────────────────────────────────────────────────
-  # Heartbeat reset — responsive mode (every state_reported event)
+  # Heartbeat reset - responsive mode (every state_reported event)
   # NOTE: This trigger fires for ALL state_reported events in HA. The
   # action's first branch template-filters for entities in the monitored
   # list. This is the documented cost of responsive mode.
@@ -236,7 +267,7 @@ triggers:
     id: heartbeat_responsive
 
   # ─────────────────────────────────────────────────────────────────────
-  # Heartbeat reset — lighter mode (state changes only)
+  # Heartbeat reset - lighter mode (state changes only)
   # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input monitored_entities
@@ -244,7 +275,7 @@ triggers:
     id: heartbeat_lighter
 
   # ─────────────────────────────────────────────────────────────────────
-  # Stale detection — timer finished event (responsive and lighter modes)
+  # Stale detection - timer finished event (responsive and lighter modes)
   # ─────────────────────────────────────────────────────────────────────
   - trigger: event
     event_type: timer.finished
@@ -254,7 +285,7 @@ triggers:
     id: stale
 
   # ─────────────────────────────────────────────────────────────────────
-  # Scheduled reboot — fires once per day at the configured time
+  # Scheduled reboot - fires once per day at the configured time
   # ─────────────────────────────────────────────────────────────────────
   - trigger: time
     at: !input scheduled_reboot_time
@@ -262,11 +293,11 @@ triggers:
     id: scheduled
 
   # ─────────────────────────────────────────────────────────────────────
-  # Self-recovery — recovery switch went off unexpectedly
-  # The 'for:' delay is computed as recovery_off_seconds + 30 to ensure
-  # the recovery cycle's own turn_off does not fire this trigger. The
-  # cycle turns the switch back on within recovery_off_seconds, which
-  # cancels the 'for:' delay before it completes.
+  # Self-recovery - recovery switch went off unexpectedly
+  # The 'for:' delay is computed as recovery_off_seconds + 30 so that the
+  # recovery cycle's own turn_off does not fire this trigger. The cycle
+  # turns the switch back on within recovery_off_seconds, which cancels
+  # the 'for:' delay before it completes.
   # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input recovery_switch

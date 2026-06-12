@@ -31,7 +31,7 @@ This blueprint sits where you have one or more devices that wedge often enough t
 
 ## Requirements
 
-Home Assistant 2024.10 or newer. The blueprint uses templated `enabled:` fields on triggers to gate the responsive, lighter, and scheduled triggers from a single mode selector; that capability landed in 2024.10. On older versions the blueprint refuses to import with a clear error.
+Home Assistant 2026.6 or newer. That is the version the blueprint is verified on.
 
 If you use the responsive or lighter detection modes, you will also need to create a Timer helper to act as the heartbeat clock. Minimal mode does not need one.
 

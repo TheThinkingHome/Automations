@@ -1,4 +1,4 @@
-# Sensor Watchdog (Beta)
+# Sensor Watchdog
 
 A Home Assistant automation blueprint that watches one or more entities sharing a single smart plug and recovers the device behind that plug when those entities go offline or stop reporting fresh values. The blueprint watches the entities collectively: multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone. A timer helper resets on any heartbeat from any monitored entity, so a device that freezes silently is caught, not just one that drops fully offline. An active time window prevents quiet empty rooms from being mistaken for frozen devices, and an optional daily scheduled cycle handles devices that benefit from a periodic preventive reboot.
 
@@ -12,7 +12,7 @@ Full write-up and the longer story behind the design: <https://xeazy.com/sensor-
 
 ## What You Get
 
-- Three independent failure detectors firing into the same recovery cycle: an `unavailable` detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle.
+- Three independent failure detectors firing into the same recovery cycle: an `unavailable` detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. An optional input also extends the unavailable detector to treat the `off` state as offline, so the blueprint can recover devices monitored via HA's ping integration (which reports `off`, not `unavailable`, when a target is unreachable).
 - A three-way mode selector that lets you choose how much event traffic the freshness detector creates: responsive (catches heartbeats, heaviest load), lighter (catches state changes only, much lighter), or minimal (skip the freshness detector entirely and rely on the unavailable detector plus the optional scheduled cycle).
 - An optional active time window for the freshness detector, so a presence sensor in an empty room overnight is not flagged as frozen just because nothing in the room is changing. The unavailable detector and the scheduled cycle ignore the window; a sensor that has dropped offline is broken at 3am the same as it is at 3pm.
 - An optional restart guard input. Point it at a sensor that goes truthy during your Home Assistant or router reboot window, and all three recovery branches will skip while it is active. Stops the blueprint from cycling plugs in response to the natural unavailability that a reboot creates.
@@ -113,6 +113,16 @@ The scheduled cycle is preventive maintenance you have deliberately scheduled at
 
 For v1.0.0 the active window cannot cross midnight. Set the start earlier than the end and you are fine. If you need a window that wraps midnight (for an environment that is "active" through the night), that is on the v1.1.0 list.
 
+## A Small Note on What Counts as Offline
+
+The unavailable detector watches for transitions to two specific states: `unavailable` and `unknown`. These are Home Assistant's standard markers for "I cannot reach this device" or "the integration has no value for this entity." A monitored entity moving into either state for longer than the offline timeout fires the recovery cycle.
+
+Some integrations do not use those states. The clearest example is the built-in `ping` integration: when the target host is unreachable, a `ping` binary_sensor reports `off`, not `unavailable`. By default the blueprint does not treat `off` as a failure, because the vast majority of binary_sensor entities (presence detectors, door contacts, etc.) go to `off` as part of normal operation. Treating every `off` transition as a failure would cycle the recovery switch every time someone left a room.
+
+For ping-style monitoring, enable the `treat_off_as_offline` input. It adds a second offline trigger watching for `off` transitions on the monitored entities, with the same offline timeout. The result: a ping monitor for a WiFi router can monitor `binary_sensor.router_ping`, set the recovery switch to the router's Zigbee plug, set `treat_off_as_offline` to true, and use minimal detection mode. When the router stops responding to pings the binary_sensor goes `off`, the timeout completes, the plug cycles, and the router comes back online.
+
+If you mix ping-style entities with normal binary_sensors in the same blueprint instance, do not enable `treat_off_as_offline`. The setting applies to all monitored entities in that instance; normal binary_sensors going `off` would trigger false recoveries. Use a separate blueprint instance for each device class.
+
 ## A Small Note on One Attempt Per Freeze
 
 When the freshness detector fires, the blueprint cycles the recovery switch and exits. It does not restart the heartbeat timer. That means a single freeze produces a single recovery attempt; if the device is still silent after the cycle completes, no further freshness-driven attempts will fire until the device starts reporting again and the timer resets normally.
@@ -162,7 +172,7 @@ For more worked examples, including the router plug and WiFi camera scenarios, s
 | `monitored_entities` | Yes | none | one or more entities | The entities watched by the blueprint. All must live on the same recovery_switch (one plug cycle is the recovery action for the whole group). Reports from any of them reset the heartbeat timer; an unavailable transition on any of them triggers the unavailable branch. Pairing multiple entities from the same physical device often improves detection because their activity patterns complement each other; see "A Small Note on Pairing Entities" above. |
 | `recovery_switch` | Yes | none | a `switch` entity | The smart plug or other switch that powers the upstream device. Cycled (off, wait, on) by every recovery branch. |
 | `recovery_off_seconds` | No | 10 | 1 to 60 | How long to hold the recovery switch off between the off action and the on action. Long enough for the device to fully power down. |
-| `unavailable_timeout_seconds` | No | 30 | 5 to 600 | How long an entity must stay `unavailable` or `unknown` before the unavailable branch fires. Long enough to ride out transient outages without missing real failures. |
+| `unavailable_timeout_seconds` | No | 30 | 5 to 600 | How long an entity must stay in an offline state before recovery fires. "Offline" means `unavailable` or `unknown` by default; with `treat_off_as_offline` enabled, also includes `off`. Long enough to ride out transient outages without missing real failures. |
 | `detection_mode` | No | `responsive` | `responsive`, `lighter`, `minimal` | Which mechanism feeds the freshness detector. Responsive catches every report including heartbeats (heaviest load). Lighter catches value changes only (lighter, recommended starting point). Minimal disables freshness detection entirely. |
 | `stale_threshold_minutes` | No | 5 | 1 to 1440 | How long without a report (responsive) or without a value change (lighter) before the device is declared stale. Ignored in minimal mode. |
 | `heartbeat_timer` | No (Yes for responsive and lighter) | none | a `timer` entity | The timer helper that tracks heartbeats. Create one timer per blueprint instance, with a blank duration. Required for responsive and lighter modes; ignored in minimal mode. |
@@ -171,6 +181,7 @@ For more worked examples, including the router plug and WiFi camera scenarios, s
 | `active_before` | No | `23:00:00` | a time (HH:MM:SS) | End of the active window. Must be later than `active_after`. v1.0.0 does not support windows that cross midnight. Ignored when the window is disabled. |
 | `scheduled_reboot_enabled` | No | `false` | `true`, `false` | When enabled, the recovery cycle fires once per day at the scheduled time. Works in all detection modes including minimal. |
 | `scheduled_reboot_time` | No | `04:30:00` | a time (HH:MM:SS) | The time of day to fire the scheduled cycle. Ignored when the scheduled cycle is disabled. |
+| `treat_off_as_offline` | No | `false` | `true`, `false` | When enabled, a monitored entity transitioning to `off` is treated the same as one transitioning to `unavailable` or `unknown`, and triggers recovery after the offline timeout. Useful for binary_sensor entities created by HA's ping integration, which report `off` (not `unavailable`) when the target is unreachable. Leave off for sensors that go `off` as part of normal operation (presence sensors, switches, etc.). |
 | `restart_guard_sensor` | No | blank | any entity | When set, all recovery branches skip while this entity reads `on`, `true`, or `True`. Used to suppress the blueprint during a known reboot window. |
 | `debug_enabled` | No | `false` | `true`, `false` | When enabled, the automation writes a log line for each branch it enters. Turn on during setup, turn off in normal operation. |
 
@@ -186,6 +197,7 @@ This is 1.0.0-beta. The blueprint design has been simulated against 21 scenarios
 - The self-recovery `for:` delay is long enough that the recovery cycle's own turn-off does not fire it.
 - Simultaneous triggers (two entities unavailable in the same instant; stale and unavailable firing together) produce exactly one recovery cycle.
 - The cycle is one-attempt-per-freeze; the timer is not auto-restarted after the staleness branch fires.
+- The `treat_off_as_offline` input correctly extends the offline detector to `off` transitions when enabled, and leaves the default (unavailable/unknown only) behaviour unchanged when disabled.
 
 **Verified in production:** pending. The Panorama deployment starts on the living room FP2 in lighter mode with the active window enabled.
 
@@ -207,4 +219,4 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0-beta | Initial public preview. Three independent failure detectors firing into a single recovery cycle: an unavailable detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. Three-mode selector (responsive, lighter, minimal) for the freshness detector's event load. Optional active time window for the freshness branch, optional restart guard input, and a self-recovery branch that uses a `for:` delay so the recovery cycle's own turn-off does not fight itself. Twenty-one simulator scenarios pass including simultaneous-trigger debouncing and the cycle-own-off case. Author-dogfooded only at release; will graduate to 1.0.0 stable after the home deployment runs clean. |
+| 1.0.0-beta | Initial public preview. Three independent failure detectors firing into a single recovery cycle: an unavailable detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. Three-mode selector (responsive, lighter, minimal) for the freshness detector's event load. Optional active time window for the freshness branch, optional restart guard input, optional `treat_off_as_offline` input to extend the offline detector to `off` transitions (for ping-style sensors), and a self-recovery branch that uses a `for:` delay so the recovery cycle's own turn-off does not fight itself. Thirty-three simulator scenarios pass including simultaneous-trigger debouncing, the cycle-own-off case, the FP2 10-zone case, and the WiFi router ping scenario. Author-dogfooded only at release; will graduate to 1.0.0 stable after the home deployment runs clean. |

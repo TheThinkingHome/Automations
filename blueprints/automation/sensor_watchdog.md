@@ -1,4 +1,4 @@
-# Sensor Watchdog
+# Sensor Watchdog (Beta)
 
 A Home Assistant automation blueprint that watches one or more entities sharing a single smart plug and recovers the device behind that plug when those entities go offline or stop reporting fresh values. The blueprint watches the entities collectively: multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone. A timer helper resets on any heartbeat from any monitored entity, so a device that freezes silently is caught, not just one that drops fully offline. An active time window prevents quiet empty rooms from being mistaken for frozen devices, and an optional daily scheduled cycle handles devices that benefit from a periodic preventive reboot.
 
@@ -17,7 +17,9 @@ Full write-up and the longer story behind the design: <https://xeazy.com/sensor-
 - An optional active time window for the freshness detector, so a presence sensor in an empty room overnight is not flagged as frozen just because nothing in the room is changing. The unavailable detector and the scheduled cycle ignore the window; a sensor that has dropped offline is broken at 3am the same as it is at 3pm.
 - An optional restart guard input. Point it at a sensor that goes truthy during your Home Assistant or router reboot window, and all three recovery branches will skip while it is active. Stops the blueprint from cycling plugs in response to the natural unavailability that a reboot creates.
 - A self-recovery branch that turns the recovery switch back on if it is found off for longer than the recovery cycle would normally hold it. Protects against a dashboard click or a voice command that accidentally takes the upstream plug offline.
-- Debug logging that you can turn on during setup and turn off in normal operation.
+- Debug logging that you can turn on during setup and turn off in normal operation. Log lines are written to the system log at info level, prefixed with `[Sensor Watchdog v<version>]` so they are easy to grep.
+
+- Optional failure notification: when enabled, the blueprint waits a configurable settle period after each recovery cycle, then checks whether the monitored entities are still in a failure state. If they are, a user-configured action sequence runs - a notify call, a persistent_notification.create, a script call, anything you can express as a Home Assistant action. Disabled by default; opt-in.
 
 A monitored entity counts as "online" whenever it has any state value at all that is not `unavailable` or `unknown`. The freshness detector measures from the entity's `last_reported` timestamp in responsive mode (which updates on every report including same-value heartbeats) or from `last_changed` in lighter mode (which only advances when the value actually changes).
 
@@ -125,13 +127,15 @@ For ping-style monitoring, enable the `treat_off_as_offline` input. It adds a se
 
 This split is also natural because the FP2 and the router have different recovery switches anyway. The pairing rule from earlier ("entities all on the same plug") already pushes you toward one instance per physical device, and the offline-state setting is one more reason to keep instances narrow.
 
-## A Small Note on One Attempt Per Freeze
+## A Small Note on One Attempt Per Wedge
 
-When the freshness detector fires, the blueprint cycles the recovery switch and exits. It does not restart the heartbeat timer. That means a single freeze produces a single recovery attempt; if the device is still silent after the cycle completes, no further freshness-driven attempts will fire until the device starts reporting again and the timer resets normally.
+When any recovery branch fires (unavailable, stale, or scheduled), the blueprint cycles the recovery switch and then cancels the heartbeat timer. That cancellation matters: without it, an entity that goes unavailable would fire the unavailable branch, the cycle would run, and then a few minutes later the freshness detector would fire a second cycle for the *same* wedge because the timer (started at the last heartbeat before the entity went silent) would still be ticking. Cancelling the timer at the moment of recovery prevents the two detectors from stepping on each other.
 
-The reason is that an infinite retry loop on a hard-failed device is worse than not retrying. A power supply that has died will not recover from a power cycle, but the blueprint cannot tell the difference between "device is wedged and a cycle will fix it" and "device is dead and a cycle will not." If it kept retrying, it would cycle the plug every freshness threshold forever, which serves no one.
+The result is "one attempt per wedge" regardless of which detector caught it. After the cycle completes, the heartbeat timer is idle. If the recovered device starts reporting again the next heartbeat starts a fresh timer with the full stale threshold. If the device is still wedged after the cycle and never reports, the timer stays idle, no further freshness-driven attempts will fire, and the user has to wait for the unavailable trigger to re-fire on a new transition or for the scheduled cycle to take another preventive swing.
 
-The unavailable detector and the optional scheduled cycle are the safety nets here. If the device eventually drops fully offline, the unavailable detector will catch it (and that detector does fire on every transition, not once per freeze). If you want a guaranteed daily try-anyway, the scheduled cycle is what you turn on for that.
+The reason for one-attempt-per-wedge rather than infinite retry is that a power supply that has died will not recover from a power cycle, but the blueprint cannot tell the difference between "device is wedged and a cycle will fix it" and "device is dead and a cycle will not." If it kept retrying, it would cycle the plug every stale threshold forever, which serves no one.
+
+If a wedge proves consistently stubborn for a particular device (one cycle doesn't reliably fix it), the right answer is the optional scheduled cycle as a second daily try, or a shorter scheduled interval, not auto-retry within a single wedge.
 
 ## A Small Note on the Self-Recovery for: Delay
 
@@ -140,6 +144,18 @@ The blueprint includes a small fact about its own behavior that is worth flaggin
 The blueprint avoids this with a `for:` delay on the self-recovery trigger: the switch must stay off for `recovery_off_seconds + 30` before the self-recovery branch fires. The recovery cycle's own turn-on happens within `recovery_off_seconds`, which cancels the `for:` delay before it ever expires, so the cycle's own turn-off does not fight itself. An external turn-off (a dashboard click, a voice command, a misfire from another automation) lasts longer than `recovery_off_seconds + 30`, so the self-recovery branch fires after that delay and puts things right.
 
 The practical effect: a manual or accidental turn-off of the recovery switch takes a few tens of seconds to be corrected, not instantaneously. For a router plug that has other devices behind it, that is a small but acceptable network gap. For a use case where the recovery switch is dedicated to a single device, the gap is invisible.
+
+## A Small Note on Failure Notification
+
+A recovery cycle is a best effort. The blueprint cycles the upstream plug, the device gets a fresh boot, and most of the time the entities come back online and life goes on. Sometimes the device is dead, the power supply is gone, the WiFi credentials have aged out, the SD card has corrupted, and a power cycle will not save it. Without something else doing the watching, those failures sit there quietly until you notice the room is still dark or the data is still wrong.
+
+The Failure Notification feature is the something else. When you enable it, every recovery cycle takes a settle period after the switch turns back on, gives the device a chance to boot and reconnect, then looks at the monitored entities and asks whether any are still in a failure state. If everything is healthy the cycle exits silently and you would never know it ran. If anything is still broken the configured On Failure Action runs.
+
+The settle period (default 60 seconds) is the only tunable that really matters. Set it to roughly the slowest boot time of the devices you watch: 30-60 seconds for most Zigbee plugs and sensors, 60-90 for WiFi routers, 90-120 for NAS units or anything else that takes a real moment to come up. Setting it too short means you get false failure notifications when the device is just still booting. Setting it too long is fine for correctness; you just learn about failures a bit later.
+
+The On Failure Action input takes a full Home Assistant action sequence: notify calls, persistent_notification.create, script calls, MQTT publish, anything. Two variables are available inside that sequence: `recovery_reason` (one of `unavailable`, `stale`, `scheduled`) and `failed_entities` (a list of monitored_entities still in a failure state). A typical setup notifies a phone or chat channel; a thorough one also creates a persistent notification in Home Assistant so the failure is visible on the dashboard until acknowledged. See the worked examples below.
+
+The Self-Recovery branch does not run failure detection: it is just turning the switch back on after an external off, not power-cycling a device that needs to come back, so there is no "success or failure" to evaluate.
 
 ## Worked Examples
 
@@ -202,6 +218,32 @@ In minimal mode the offline detector is the workhorse. The 90-second offline tim
 
 The Zigbee plug for the recovery switch is deliberate. If the recovery switch were a WiFi smart plug, it would also be offline during the outage and the cycle could not run. A Zigbee plug stays reachable through the Zigbee coordinator regardless of what the WiFi network is doing.
 
+For the router we also want to know if the cycle did NOT bring it back, since a dead router means the internet is down indefinitely. Configure the Failure Notification section:
+
+- Enable Failure Notification: **enabled**
+- Recovery Settle Time: 120 seconds (a router needs about that long to boot and re-establish its WAN link)
+- On Failure Action:
+
+```yaml
+- service: notify.mobile_app_james_phone
+  data:
+    title: "Router watchdog: cycle did not recover"
+    message: >-
+      The router was cycled at {{ now().strftime('%H:%M') }} because
+      {{ recovery_reason }}, but {{ failed_entities | join(', ') }}
+      is still failed after the settle period.
+- service: persistent_notification.create
+  data:
+    title: "Router watchdog failure"
+    message: >-
+      Cycle ran (reason: {{ recovery_reason }}). Entities still failed:
+      {{ failed_entities | join(', ') }}. Manual intervention may be
+      required.
+    notification_id: "sensor_watchdog_router_failure"
+```
+
+Two actions, in sequence: a push notification to the phone, plus a persistent notification in the Home Assistant dashboard so the failure does not get missed if the phone is on silent. The persistent notification has a fixed `notification_id`, so repeated failures update the same notification rather than stacking dozens of duplicates. The `recovery_reason` and `failed_entities` variables are injected automatically by the blueprint.
+
 For more worked examples, including Zigbee router plugs, smart cameras, and NAS scenarios, see the article: <https://xeazy.com/sensor-watchdog-blueprint/>
 
 ## Parameters
@@ -221,12 +263,15 @@ For more worked examples, including Zigbee router plugs, smart cameras, and NAS 
 | `scheduled_reboot_enabled` | No | `false` | `true`, `false` | When enabled, the recovery cycle fires once per day at the scheduled time. Works in all detection modes including minimal. |
 | `scheduled_reboot_time` | No | `04:30:00` | a time (HH:MM:SS) | The time of day to fire the scheduled cycle. Ignored when the scheduled cycle is disabled. |
 | `treat_off_as_offline` | No | `false` | `true`, `false` | When enabled, a monitored entity transitioning to `off` is treated the same as one transitioning to `unavailable` or `unknown` and triggers recovery after the offline timeout. Enable only for entities whose `off` state means failure (e.g., binary_sensors from HA's `ping` integration, which report `off` when the target is unreachable). Leave disabled for entities whose `off` state is normal operation (presence sensors, motion sensors, door contacts, switches). The setting is per-instance: every monitored entity in this instance shares the same value. See "A Small Note on What Counts as Offline" above. |
+| `failure_notification_enabled` | No | `false` | `true`, `false` | When enabled, every recovery cycle is followed by a settle delay and a check for whether any monitored entity is still in a failure state. If yes, the On Failure Action runs. Disabled by default; opt-in. See "A Small Note on Failure Notification" above. |
+| `recovery_settle_seconds` | No | 60 | 5 to 600 | How long to wait after the recovery switch turns back on before checking whether the device recovered. Roughly the boot time of the slowest device on the recovery switch. Ignored when failure notification is disabled. |
+| `on_failure_action` | No | empty list | a Home Assistant action sequence | The action sequence to run when a recovery cycle fails to bring the device back online. Typically a `notify` call, a `persistent_notification.create`, a script call, or any combination. Two variables are available inside the sequence: `recovery_reason` (one of `unavailable`, `stale`, `scheduled`) and `failed_entities` (a list of monitored_entities still in a failure state). |
 | `restart_guard_sensor` | No | blank | any entity | When set, all recovery branches skip while this entity reads `on`, `true`, or `True`. Used to suppress the blueprint during a known reboot window. |
 | `debug_enabled` | No | `false` | `true`, `false` | When enabled, the automation writes a log line for each branch it enters. Turn on during setup, turn off in normal operation. |
 
 ## Beta Status
 
-This is 1.0.0-beta. The blueprint design has been simulated against 21 scenarios covering the obvious failure modes and a few non-obvious ones (the recovery cycle's own turn-off accidentally firing self-recovery, two monitored entities going unavailable in the same instant queueing duplicate cycles, the staleness branch firing during a reboot window). The author is running it against three Aqara FP2 sensors at home and will graduate it to 1.0.0 stable when that deployment has run clean for a sustained window with no false positives and no missed wedges.
+This is 1.0.0-beta. The blueprint design has been simulated against 43 scenarios covering the obvious failure modes and a number of non-obvious ones (the recovery cycle's own turn-off accidentally firing self-recovery, two monitored entities going unavailable in the same instant queueing duplicate cycles, the staleness branch firing during a reboot window, the unavailable and stale detectors firing in sequence for the same wedge, the failure notification firing on persistent failure and not firing on successful recovery). The author is running it against three Aqara FP2 sensors at home and will graduate it to 1.0.0 stable when that deployment has run clean for a sustained window with no false positives and no missed wedges.
 
 **Verified in simulation:**
 
@@ -235,8 +280,9 @@ This is 1.0.0-beta. The blueprint design has been simulated against 21 scenarios
 - The restart guard blocks all three recovery branches.
 - The self-recovery `for:` delay is long enough that the recovery cycle's own turn-off does not fire it.
 - Simultaneous triggers (two entities unavailable in the same instant; stale and unavailable firing together) produce exactly one recovery cycle.
-- The cycle is one-attempt-per-freeze; the timer is not auto-restarted after the staleness branch fires.
+- The cycle is one-attempt-per-wedge across all three detectors: the unavailable and scheduled recovery branches cancel the heartbeat timer at the moment of cycle, so the freshness detector does not fire a second cycle for the same wedge.
 - The `treat_off_as_offline` input correctly extends the offline detector to `off` transitions when enabled, and leaves the default (unavailable/unknown only) behaviour unchanged when disabled.
+- Failure notification fires when the cycle does not recover the device by the end of the settle window, does NOT fire when the device recovers in time, and is correctly disabled by default. The self-recovery branch does not run failure notification.
 
 **Verified in production:** pending. The Panorama deployment starts on the living room FP2 in lighter mode with the active window enabled.
 
@@ -258,4 +304,4 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0-beta | Initial public preview. Three independent failure detectors firing into a single recovery cycle: an unavailable detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. Three-mode selector (responsive, lighter, minimal) for the freshness detector's event load. Optional active time window for the freshness branch, optional restart guard input, optional `treat_off_as_offline` input to extend the offline detector to `off` transitions (for ping-style sensors), and a self-recovery branch that uses a `for:` delay so the recovery cycle's own turn-off does not fight itself. Thirty-three simulator scenarios pass including simultaneous-trigger debouncing, the cycle-own-off case, the FP2 10-zone case, and the WiFi router ping scenario. Author-dogfooded only at release; will graduate to 1.0.0 stable after the home deployment runs clean. |
+| 1.0.0-beta | Initial public preview. Three independent failure detectors firing into a single recovery cycle: an unavailable detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. Three-mode selector (responsive, lighter, minimal) for the freshness detector's event load. Optional active time window for the freshness branch, optional restart guard input, optional `treat_off_as_offline` input to extend the offline detector to `off` transitions (for ping-style sensors), and a self-recovery branch that uses a `for:` delay so the recovery cycle's own turn-off does not fight itself. Unavailable and scheduled recovery branches cancel the heartbeat timer at cycle time, so the freshness detector does not fire a second cycle for the same wedge (one-attempt-per-wedge invariant). Optional failure notification: enable to wait a configurable settle period after each cycle, check whether monitored entities are still in a failure state, and run a user-configured action sequence (notify, persistent_notification, etc.) with `recovery_reason` and `failed_entities` variables available in the action context. Debug logging is written at info level with a `[Sensor Watchdog v<version>]` prefix, matching the Thinking Home blueprint style. Forty-three simulator scenarios pass including simultaneous-trigger debouncing, the cycle-own-off case, the FP2 10-zone case, the WiFi router ping scenario, the unavailable-into-stale double-fire case, and the failure notification firing-on-persistent-failure case. Author-dogfooded only at release; will graduate to 1.0.0 stable after the home deployment runs clean. |

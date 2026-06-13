@@ -12,7 +12,10 @@
 #           transitions from starting to running, after every integration
 #           has finished setup). State template evaluates to true; delay_on
 #           holds the on transition for the configured settling window
-#           before the sensor reports on (stable).
+#           before the sensor reports on (stable). Two diagnostic attributes
+#           are populated on trigger fire: stability_delay_seconds (the
+#           configured window) and trigger_fired_at (timestamp of when
+#           homeassistant: start fired).
 
 blueprint:
   name: System Stability
@@ -81,3 +84,6 @@ binary_sensor:
     state: "{{ true }}"
     delay_on:
       seconds: !input stability_delay_seconds
+    attributes:
+      stability_delay_seconds: !input stability_delay_seconds
+      trigger_fired_at: "{{ now().isoformat() }}"

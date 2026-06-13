@@ -1,29 +1,18 @@
-# -----------------------------------------------------------------------------
-# Restarting Status
-# -----------------------------------------------------------------------------
-# A template binary_sensor blueprint for Home Assistant that reports `on`
-# during a configurable window after HA boot, then `off` once the system
-# has been up longer than that window. Sourced from HA's built-in Uptime
-# integration.
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
 #
-# State transitions are event-driven. Lightest-weight implementation possible:
-# the sensor wakes on HA boot, stays on for the configured window, then
-# sleeps until the next restart. The binary_sensor turns on when the Uptime
-# sensor publishes a new boot timestamp or when the homeassistant: start
-# event fires (whichever arrives first). auto_off handles the timed return
-# to off.
-#
-# Author: James Lander
-# Version: 1.0.0
+# Restarting Status - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+# Full write-up, worked examples, and directions:
+# https://xeazy.com/restarting-status-template-blueprint/
 #
 # Changelog:
-#   1.0.0 - Trigger-based template binary_sensor fires from two sources:
-#           state change on the Uptime sensor (which publishes a new boot
-#           timestamp on every HA start) and the homeassistant: start event
-#           (a backup in case the state trigger races with template entity
-#           load on boot). State is a literal true; auto_off flips the
-#           sensor off after the configured window elapses.
-# -----------------------------------------------------------------------------
+#   1.0.0 - Trigger-based template binary_sensor fires from two sources: state
+#           change on the Uptime sensor (which publishes a new boot timestamp
+#           on every HA start) and the homeassistant: start event (a backup
+#           in case the state trigger races with template entity load on
+#           boot). State is a literal true; auto_off flips the sensor off
+#           after the configured window elapses.
 
 blueprint:
   name: Restarting Status

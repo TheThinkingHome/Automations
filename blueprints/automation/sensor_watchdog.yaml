@@ -8,11 +8,19 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
-#   1.0.2-beta - Stripped inline YAML comments from the triggers and actions
-#                blocks for consistency with the Thinking Home blueprint style
-#                and with James's coding standard (action aliases serve the
-#                same documentation purpose as the comments did). No logic
-#                change; same 46 simulator scenarios pass.
+#   1.0.2-beta - Default detection_mode flipped from responsive to minimal: a
+#                fresh import no longer requires a Timer helper. Generalized
+#                input descriptions: removed references to entity names
+#                specific to one installation that do not exist on others.
+#                Restart Guard description now points at the HA Uptime
+#                integration as the canonical pattern. Stripped inline YAML
+#                comments from the triggers and actions blocks (action
+#                aliases serve the same documentation purpose). README
+#                updated to describe the 1.0.1+ event-bus-filtered behavior
+#                of responsive mode (the 1.0.0 text described the old
+#                unfiltered behavior) and to add a Small Note on the Restart
+#                Guard with an example uptime-based template binary_sensor.
+#                No logic change; same 46 simulator scenarios pass.
 #   1.0.1-beta - Responsive trigger now filters at the event bus level via
 #                event_data: entity_id. The automation is no longer woken up
 #                by reports from non-monitored entities. Added a Home Assistant
@@ -27,33 +35,29 @@
 #                longer carries an event_data entity_id filter (was a load-
 #                time validation risk when heartbeat_timer was blank in
 #                minimal mode); the filter moved into the stale branch's
-#                condition list, where it gates on the user's configured
-#                heartbeat timer at runtime.
-#   1.0.0-beta - Initial public preview. Three independent failure detectors firing
-#                into a single recovery cycle: an unavailable detector with a
-#                tolerance window, a freshness detector backed by a timer helper,
-#                and an optional daily scheduled cycle. Three-mode selector
-#                (responsive, lighter, minimal) for the freshness detector's event
-#                load. Optional active time window for the freshness branch,
-#                optional restart guard input, optional treat_off_as_offline input
-#                to extend the offline detector to 'off' transitions (for ping-
-#                style sensors), and a self-recovery branch that uses a 'for:'
-#                delay so the recovery cycle's own turn-off does not fight
-#                itself. Unavailable and scheduled recovery branches cancel the
-#                heartbeat timer at cycle time, so the freshness detector does
-#                not fire a second cycle for the same wedge (one-attempt-per-
-#                wedge invariant). Optional failure notification: opt-in feature
-#                that waits a configurable settle period after each cycle,
-#                checks whether monitored entities are still in a failure
-#                state, and runs a user-configured action sequence (notify,
-#                persistent_notification, etc.). Debug logging is written at
-#                info level with a [Sensor Watchdog v<version>] prefix, matching
-#                the Thinking Home blueprint style. Forty-three simulator
-#                scenarios pass including simultaneous-trigger debouncing,
-#                cycle-own-off, FP2 10-zone, WiFi router ping, unavailable-into-
-#                stale double-fire, and failure-notification-on-persistent-
-#                failure. Author-dogfooded at release; will graduate to 1.0.0
-#                stable after the home deployment runs clean.
+#                condition list, where it gates on the configured heartbeat
+#                timer at runtime.
+#   1.0.0-beta - Initial public preview. Three independent failure detectors
+#                firing into a single recovery cycle: an unavailable detector
+#                with a tolerance window, a freshness detector backed by a
+#                timer helper, and an optional daily scheduled cycle. Three-
+#                mode selector (responsive, lighter, minimal) for the
+#                freshness detector's event load. Optional active time window
+#                for the freshness branch, optional restart guard input,
+#                optional treat_off_as_offline input to extend the offline
+#                detector to 'off' transitions (for ping-style sensors), and
+#                a self-recovery branch that uses a 'for:' delay so the
+#                recovery cycle's own turn-off does not fight itself.
+#                Unavailable and scheduled recovery branches cancel the
+#                heartbeat timer at cycle time, so the freshness detector
+#                does not fire a second cycle for the same wedge (one-
+#                attempt-per-wedge invariant). Optional failure notification:
+#                opt-in feature that waits a configurable settle period after
+#                each cycle, checks whether monitored entities are still in a
+#                failure state, and runs a user-configured action sequence.
+#                Debug logging is written at info level with a
+#                [Sensor Watchdog v<version>] prefix. Forty-three simulator
+#                scenarios pass.
 blueprint:
   name: Sensor Watchdog
   description: |
@@ -75,7 +79,7 @@ blueprint:
 
     Requires Home Assistant 2026.6 or later. That is the version the blueprint is verified on. If using responsive or lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
 
-    Originally built to recover three Aqara FP2 presence sensors at The Panorama that wedge every few days. Generalized for any flaky device whose only reliable fix is a power cycle: Zigbee router plugs, WiFi cameras, finicky sensors of any kind.
+    Originally built to recover Aqara FP2 presence sensors that wedge every few days, then generalized for any flaky device whose only reliable fix is a power cycle: Zigbee router plugs, WiFi cameras, smart-home gateways, finicky sensors of any kind.
 
     **Work in progress.** This is a public preview, still in beta. Feedback is welcome on the [forum](https://xeazy.com/logbook/).
 
@@ -99,10 +103,10 @@ blueprint:
             same recovery switch below, since one plug cycle is the
             recovery action for the whole group. Pairing multiple entities
             from the same physical device often improves detection
-            because their activity patterns complement each other. The
-            FP2 lux entity changes most during the day; the FP2 presence
-            entity changes most in the evening. Together they generate
-            heartbeats across the full day; alone, either one would have
+            because their activity patterns complement each other. A
+            sensor whose value changes mostly during the day paired with
+            one that changes mostly in the evening will together produce
+            heartbeats across the full day; either one alone would have
             quiet stretches that look like a freeze.
           selector:
             entity:
@@ -211,21 +215,26 @@ blueprint:
         detection_mode:
           name: Detection Mode
           description: >-
-            Responsive catches every device report including heartbeats
-            (heaviest, lowest latency). Lighter catches value changes only
-            (light, slight latency on quiet devices). Minimal does no
-            freeze detection and relies on unavailable and scheduled
-            reboot (lightest, no timer helper needed).
-          default: responsive
+            Minimal does no freshness detection at all and relies on the
+            unavailable detector and (optionally) the scheduled cycle.
+            This is the default because it works without a heartbeat
+            timer helper and has the lowest event-bus footprint. Lighter
+            adds a freshness detector that catches frozen-but-still-
+            online devices via a heartbeat timer (catches value changes
+            only). Responsive is the heaviest: it also wakes on same-
+            value device reports, catching the rare case of a device
+            stuck on heartbeats with a frozen value. Both lighter and
+            responsive require the Heartbeat Timer input below.
+          default: minimal
           selector:
             select:
               options:
-                - label: "Responsive (state_reported events, heaviest)"
-                  value: responsive
+                - label: "Minimal (unavailable + scheduled reboot only, lightest)"
+                  value: minimal
                 - label: "Lighter (state changes only)"
                   value: lighter
-                - label: "Minimal (unavailable + scheduled reboot only)"
-                  value: minimal
+                - label: "Responsive (state_reported events, heaviest)"
+                  value: responsive
         stale_threshold_minutes:
           name: Stale Threshold
           description: >-
@@ -257,10 +266,11 @@ blueprint:
           name: Restrict Staleness to Active Window
           description: >-
             When enabled, the staleness branch only fires within the
-            active time window below. Useful for FP2-style sensors that
-            naturally fall silent overnight in empty rooms. Unavailable
-            detection and scheduled reboot are not affected by this
-            window.
+            active time window below. Useful for presence-style or
+            motion-style sensors that naturally fall silent overnight in
+            empty rooms, where the silence is normal rather than a
+            failure. Unavailable detection and scheduled reboot are not
+            affected by this window.
           default: false
           selector:
             boolean:
@@ -319,9 +329,13 @@ blueprint:
           name: Restart Guard Sensor
           description: >-
             Optional. If set, all recovery branches skip when this
-            sensor's state is 'on' or 'true'. Used to prevent
-            power-cycling during HA restart windows. Panorama users
-            point this at sensor.restarting_status.
+            sensor's state reads truthy ('on' or 'true'). The typical
+            pattern is a template binary_sensor that reads true for a
+            minute or two after Home Assistant starts, so the watchdog
+            does not power-cycle devices while integrations are still
+            loading. You can build such a sensor from HA's Uptime
+            integration with a simple template. Leave blank if not
+            needed.
           default:
           selector:
             entity: {}

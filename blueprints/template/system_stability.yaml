@@ -38,12 +38,13 @@ blueprint:
   description: |
     # System Stability
 
-    *A binary sensor that reads `on` once Home Assistant has fully settled after a restart, and `unknown` while the system is still coming up.*
+    *A binary sensor that reads `on` once Home Assistant has fully settled after a restart, and `off` during the settling window and across HA shutdowns.*
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
     - 📖 [Read the article](https://xeazy.com/system-stability-template-blueprint/) - the design and worked examples.
-    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for this blueprint.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/system_stability.md) - import instructions, parameters, and attribute reference.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/d/40-system-stability-template-blueprint) - the forum thread for this blueprint.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
 
     ---

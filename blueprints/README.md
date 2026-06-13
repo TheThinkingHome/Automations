@@ -1,10 +1,10 @@
 # The Thinking Home Blueprints
 
-A collection of Home Assistant blueprints from [xeazy.com](https://xeazy.com). Each one is useful, kept deliberately simple, and tested on a real instance before it ships. Questions and discussion live on the forum: https://xeazy.com/logbook
+A collection of Home Assistant blueprints from [xeazy.com](https://xeazy.com). Each one is useful, kept deliberately simple, and tested on a real instance before it ships. They come in two kinds: **automation blueprints** are ready to use right after import, while **template blueprints** need one small `use_blueprint` block in your configuration to become a real entity. The two sections below are listed separately for that reason. Questions and discussion live on the forum: https://xeazy.com/logbook
 
 ## Automation Blueprints
 
-Blueprints that watch for events and run actions in response.
+Blueprints that watch for events and run actions in response. After import, click Create Automation on the Blueprints page, fill in the inputs, save, and the automation is running.
 
 ### Linked Entities Pro
 
@@ -12,15 +12,27 @@ Two switches that control the same fixture have to stay in sync, or the next pre
 
 **[Full directions and one-click import ->](automation/linked_entities_pro.md)**
 
+### Sensor Watchdog
+
+Some smart devices wedge silently. An Aqara FP2 presence sensor locks up at its last reading, the entity sits there forever pretending everything is fine, and the only fix is a power cycle of the upstream smart plug. Sensor Watchdog automates that. Point it at one or more monitored entities, a recovery switch, and (for freshness detection) a timer helper, and it cycles the plug when the entities go `unavailable`, when they stop reporting fresh values, or on a daily preventive schedule you configure. An optional failure-notification branch checks whether the cycle actually brought the device back and fires a configured action if not. Pair multiple entities from the same device to get better coverage: an FP2's presence and illuminance entities cover complementary parts of the day, and reports from either count as a heartbeat.
+
+**[Full directions and one-click import ->](automation/sensor_watchdog.md)**
+
 ## Template Blueprints
 
-Blueprints that build derived sensors and helpers from your existing entities.
+Blueprints that build derived sensors and helpers from your existing entities. After import, these do not get a Create button. You build entities from them by adding a short `use_blueprint` block under your `template:` configuration. The full walkthrough is [below the lists](#turning-a-template-blueprint-into-an-entity).
 
 ### Recently Active
 
 Home Assistant triggers fire once, at the instant a state crosses a line, and then the moment is gone. Recently Active holds onto it. It builds a binary sensor that stays `on` while your source is on, and for a chosen number of seconds after it turns off, so a fired-and-gone event becomes a state your other automations can still ask about. Point it at a door contact, a motion sensor, a switch, anything that reads on or off. The usual job is suppressing a notification or an analysis for a short window right after something happens, such as skipping a camera's "a person walked in" alert for a minute after the door opens.
 
 **[Full directions and one-click import ->](template/recently_active.md)**
+
+### Sensor Failover
+
+Some sensors drop out and come back, and the automations downstream keep tripping over the gap. A wireless temperature probe whose battery is fading, an outdoor lux sensor that loses signal every cold morning: the reading you actually want is more reliable than any single sensor can be on its own. Sensor Failover wraps a primary numeric sensor with a pool of backups. The primary's reading is used when it is online; when it goes offline, the value falls back to the average of any backups still online, optionally weighted if some you trust more than others; when everything is offline, the sensor returns a configurable default value or reports unavailable. An `active_source` attribute reports which tier is feeding the value at any moment, so a dashboard tile or a debugging session can see at a glance whether the wrapper is doing its job.
+
+**[Full directions and one-click import ->](template/sensor_failover.md)**
 
 ### System Stability
 

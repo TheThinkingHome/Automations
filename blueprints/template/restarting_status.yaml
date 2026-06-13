@@ -19,44 +19,39 @@ blueprint:
   description: |
     # Restarting Status
 
-    *Reports `on` during the configurable window after Home Assistant boots,
-    then flips to `off` once stable.*
+    *A binary sensor that reads `on` during the configurable window after Home Assistant boots, then `off` once the system has been up longer than that window.*
 
-    Use as a reboot guard in automations, scripts, and AppDaemon apps that
-    need to suppress activity during the HA restart window.
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/restarting-status-template-blueprint/) - the design and worked examples.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for this blueprint.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Use as a reboot guard in automations, scripts, and AppDaemon apps that need to suppress activity during the HA restart window. Common cases: light automations that should not fire while entities are still settling, scene activations that should wait for HA to stabilize, security monitoring that should not trip on transient unavailable states, and power-cycle automations for offline sensors.
 
     ## How it works
 
-    The blueprint produces a trigger-based template binary_sensor with two
-    triggers:
+    The blueprint produces a trigger-based template binary_sensor with two triggers:
 
-    1. State change on the Uptime integration's sensor. On every HA boot
-       the Uptime sensor publishes a new ISO timestamp, which fires this
-       trigger.
-    2. The `homeassistant: start` event. A backup trigger in case the state
-       trigger races with template entity load on boot.
+    1. State change on the Uptime integration's sensor. On every HA boot the Uptime sensor publishes a new ISO timestamp, which fires this trigger.
+    2. The `homeassistant: start` event. A backup trigger in case the state trigger races with template entity load on boot.
 
-    On either trigger the binary_sensor state is set to `on`. The `auto_off`
-    option then flips it back to `off` after the configured window elapses.
-    Lightest-weight implementation possible: active during the restart
-    window, then sleeps until the next HA boot.
+    On either trigger the binary_sensor state is set to `on`. The `auto_off` option then flips it back to `off` after the configured window elapses. Lightest-weight implementation possible: active during the restart window, then sleeps until the next HA boot.
 
     ## Initial state
 
-    Trigger-based template entities start in an `unknown` state until a
-    trigger fires for the first time. On a normal HA boot, one of the two
-    triggers fires within seconds. On a template integration reload without
-    an HA restart, the sensor reverts to `unknown` until the next HA boot.
-    Dependents that gate on this sensor should treat `unknown` permissively
-    (the same way they treat `unavailable`).
+    Trigger-based template entities start in an `unknown` state until a trigger fires for the first time. On a normal HA boot, one of the two triggers fires within seconds. On a template integration reload without an HA restart, the sensor reverts to `unknown` until the next HA boot. Dependents that gate on this sensor should treat `unknown` permissively (the same way they treat `unavailable`).
 
     ## Requirements
 
-    Home Assistant's Uptime integration must be enabled. To enable it:
-    Settings > Devices & Services > Add Integration > Uptime. The default
-    entity it creates is `sensor.uptime` (device_class: timestamp).
+    Home Assistant's Uptime integration must be enabled. To enable it: Settings > Devices & Services > Add Integration > Uptime. The default entity it creates is `sensor.uptime` (device_class: timestamp).
 
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+  author: James Lander (xeazy.com)
   domain: template
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/restarting_status.yaml
 
   homeassistant:
     min_version: 2024.6.0

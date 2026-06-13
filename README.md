@@ -53,6 +53,8 @@ Watch for events and run actions in response.
 
 * [Linked Entities Pro](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro.md)
    * Keeps two or more entities perfectly in sync, with a tiebreaker that wins on restart. Switches, lights, fans, input_booleans, and groups mix freely in the same linked group, and a change on any of them propagates to the others. On Home Assistant restart, or when a bridge sensor reconnects, a designated authority entity resolves drift the same way every time. Beta, until an external tester confirms it works on their setup. [Instructions](https://xeazy.com/linked-entities-pro/)
+* [Sensor Watchdog](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sensor_watchdog.md)
+   * Watches one or more entities behind a single smart plug and power-cycles the upstream device when those entities go unavailable, freeze at a stale value, or on a daily preventive schedule. Multiple entities from the same physical device can be paired so their complementary activity patterns give better heartbeat coverage than either alone. An optional failure-notification branch checks whether the cycle actually brought the device back and fires a configured action if not. Beta, while the author dogfoods it on three Aqara FP2 sensors at home. [Instructions](https://xeazy.com/sensor-watchdog-blueprint/)
 
 #### Template Blueprints
 
@@ -60,6 +62,10 @@ Build derived sensors and helpers from your existing entities.
 
 * [Recently Active](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/recently_active.md)
    * Turns a fired-once event into a state you can ask about later. It builds a binary sensor that stays on while a source is on, and for a set number of seconds after it turns off. Point it at any on/off entity: a contact sensor, a switch, an input_boolean. [Instructions](https://xeazy.com/how-to-use-a-home-assistant-blueprint-template-sensor-the-recently-active-sensor/)
+* [Sensor Failover](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/sensor_failover.md)
+   * Wraps a primary numeric sensor with a pool of backups so a flaky source no longer surfaces as unavailable to anything downstream. The primary's reading is used when online, online backups are averaged when the primary drops (optionally weighted), and a configurable default value (or unavailable) covers the case where everything is offline at once. An `active_source` attribute reports which tier is feeding the value at any moment for dashboard or debugging visibility. [Instructions](https://xeazy.com/sensor-failover-blueprint/)
+* [System Stability](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/system_stability.md)
+   * Holds a binary sensor in off through every Home Assistant restart and the settling window after it, then flips to on once integrations, Zigbee devices, and presence sensors have all stopped republishing stale state. Add it as a condition on any automation that misfires on boot noise and the misfire absorbs into the gate. One entity, one rule, no per-automation handlers to write. [Instructions](https://xeazy.com/system-stability-blueprint/)
 * [Weighted Confidence](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/weighted_confidence.md)
    * Infers a fuzzy state like "is it bedtime" from many signals at once, each carrying its own weight. The sensor turns on when enough agreeing weight crosses a threshold you set, a required signal can veto the result outright, and it reads numbers as readily as on and off. Pairs with Recently Active to bring time into the vote. Beta, so the signal format may still shift between releases. [Instructions](https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/)
 

@@ -97,7 +97,7 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a `binary_sensor.system_stable`. Watch it in Developer Tools, States: it will read `unknown` until the first HA shutdown-restart cycle. On that first shutdown, the sensor flips to `off`. After HA comes back up, it stays `off` during the loading phase, stays `off` during the `delay_on` window after `homeassistant: start` fires (typically when the "Home Assistant has restarted" toast appears at the bottom of the UI), and then flips to `on`. From that point it reads `on` for the rest of the session, until the next HA shutdown flips it back to `off`. That is the full lifecycle.
 
-## A Small Note on the Two Triggers and Why Both
+## A Small Note on Why Both Triggers Matter
 
 The blueprint listens for two HA events: `homeassistant: shutdown` and `homeassistant: start`. The shutdown trigger fires when HA begins its graceful shutdown sequence, before integration teardown completes. The start trigger fires when HA finishes loading after a restart, when it transitions from "starting" to "running".
 

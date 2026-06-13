@@ -1,6 +1,6 @@
 # System Stability
 
-A Home Assistant template blueprint that creates a binary sensor reading `on` once Home Assistant has fully settled after a restart, and `unknown` while the system is still coming up. Built on the `homeassistant: start` event with `delay_on` handling the timed transition to stable.
+A Home Assistant template blueprint that creates a binary sensor reading `on` once Home Assistant has fully settled after a restart, `off` during the settling window and across HA shutdowns. Built on the `homeassistant: shutdown` and `homeassistant: start` events with `delay_on` handling the timed transition to stable.
 
 After every HA restart there is a short window where things are settling. Integrations come online one by one, entities flicker between `unavailable` and their real states, MQTT-backed devices republish their states, presence sensors take a moment to find their occupants. Automations that fire on those state changes are firing on noise, not on real events. A motion-light automation that watches a presence sensor sees the sensor flip on (it just came up) and turns on the lights at 4 AM. A scene that reacts to `input_select.scene` changes sees the value bounce as helpers restore and triggers itself for no reason. A security automation watching for doors going from closed to open sees a contact sensor flicker as Zigbee re-establishes and treats it as an intrusion.
 
@@ -10,12 +10,12 @@ Full write-up and the longer story behind the design: <https://xeazy.com/system-
 
 ## What You Get
 
-- A binary sensor that reads `unknown` while HA is loading and during the settling window, then `on` once the system is stable. It stays `on` for the rest of the session, until the next HA restart.
-- A single trigger: the `homeassistant: start` event. HA fires it once per boot, after every integration has finished setup.
-- `delay_on` based timing. After the trigger fires, the sensor waits the configured number of seconds before transitioning to `on`. The settling period covers the residual delay between HA reporting itself as up and entities actually being stable.
+- A binary sensor that reads `off` during HA shutdowns and through the settling window after each restart, then `on` once the system is stable. It stays `on` for the rest of the session, until the next HA shutdown.
+- Two triggers: the `homeassistant: shutdown` event (sets the sensor to `off`, persisted across the restart) and the `homeassistant: start` event (sets it back toward `on`, with `delay_on` holding the transition for the configured window).
+- `delay_on` based timing on the start trigger. After `homeassistant: start` fires, the sensor waits the configured number of seconds before transitioning to `on`. The settling period covers the residual delay between HA reporting itself as up and entities actually being stable.
 - An adjustable window. 60 seconds is the default, which covers residual settling on most systems. Raise it for slower systems, lower it for faster ones.
 - A unique_id so the sensor is registered and can be renamed or placed in an area from the UI.
-- Two diagnostic attributes populated on trigger fire: `stability_delay_seconds` (the configured window) and `trigger_fired_at` (the timestamp of `homeassistant: start`).
+- Four diagnostic attributes: `stability_delay_seconds` (the configured window), `triggered_by` (which trigger fired most recently: `shutdown` or `start`), `last_shutdown_at` (ISO timestamp of the most recent shutdown trigger fire, preserved through subsequent starts), and `last_stable_at` (the projected stable moment, computed as `now() + stability_delay_seconds` when the start trigger fires, preserved through subsequent shutdowns).
 
 The sensor is `on` only when the system is fully stable. Use it as a condition (run only when on), as a trigger (run when the system has just finished settling), or as a wait point (`wait_for_trigger to: 'on'`).
 
@@ -29,7 +29,7 @@ This blueprint sits where you want a single system-level boolean every other aut
 
 ## Requirements
 
-Home Assistant 2024.6.0 or newer. No other integrations required; the blueprint uses only HA's built-in `homeassistant: start` event.
+Home Assistant 2024.6.0 or newer. No other integrations required; the blueprint uses only HA's built-in `homeassistant: shutdown` and `homeassistant: start` events.
 
 ## Step 1: Import the Blueprint
 
@@ -95,7 +95,7 @@ If you already keep template entities in your `configuration.yaml` under a `temp
 
 A brand-new package file needs a full Home Assistant restart to register the first time. After that, changes to the file only need a quick reload through Developer Tools, YAML, Reload Template Entities. If you put the block in `configuration.yaml` directly under an existing `template:` key, you can skip the restart and just reload template entities.
 
-When it comes up you will have a `binary_sensor.system_stable`. Watch it in Developer Tools, States: it will be `unknown` until the first time HA fully restarts. On the next HA restart, you will see it stay `unknown` during the loading phase, stay `unknown` during the `delay_on` window after `homeassistant: start` fires (typically when the "Home Assistant has restarted" toast appears at the bottom of the UI), and then flip to `on`. From that point it reads `on` for the rest of the session, until the next HA restart. That is the full lifecycle.
+When it comes up you will have a `binary_sensor.system_stable`. Watch it in Developer Tools, States: it will read `unknown` until the first HA shutdown-restart cycle. On that first shutdown, the sensor flips to `off`. After HA comes back up, it stays `off` during the loading phase, stays `off` during the `delay_on` window after `homeassistant: start` fires (typically when the "Home Assistant has restarted" toast appears at the bottom of the UI), and then flips to `on`. From that point it reads `on` for the rest of the session, until the next HA shutdown flips it back to `off`. That is the full lifecycle.
 
 ## A Small Note on Why the System Is Not Stable Yet
 
@@ -105,13 +105,15 @@ A critical automation that fires on those state changes is firing on noise, not 
 
 The blueprint's job is to give every dependent a single system-wide signal that says "the system is fully stable, run normally." Light automations watching presence sensors wait. Scene dispatchers wait. Security monitoring waits. Power-cycle recovery automations skip the round they would otherwise run on a sensor that is briefly unavailable simply because Zigbee has not finished republishing.
 
-## A Small Note on the Initial Unknown State
+## A Small Note on the Two Triggers and Why Both
 
-Trigger-based template entities in Home Assistant start in the `unknown` state and stay there until the trigger fires AND the `delay_on` window elapses. There is a window between HA boot and `homeassistant: start` firing where the binary sensor is `unknown`, plus the `delay_on` window after that during which the sensor is still `unknown` (waiting for residual settling). On a default setup the sensor reads `unknown` for roughly two minutes total wall-clock from boot, then transitions to `on`.
+The blueprint listens for two HA events: `homeassistant: shutdown` and `homeassistant: start`. The shutdown trigger fires when HA begins its graceful shutdown sequence, before integration teardown completes. The start trigger fires when HA finishes loading after a restart, when it transitions from "starting" to "running".
 
-The correct pattern for dependents is to use `state == 'on'` as the precondition to proceed. `unknown` does not match `'on'`, so dependents stay blocked through both the loading phase and the settling window. The sensor never transitions back to `unknown` during normal operation, so once it reads `on`, dependents can rely on that signal until the next HA restart.
+The shutdown trigger sets the sensor state to `off`. That `off` state persists to disk as part of HA's normal state-restore mechanism (`RestoreEntity`), so when HA comes back up the entity is restored as `off`. The start trigger then sets the state to `true` (which HA reads as `on`), but `delay_on` holds the transition for the configured number of seconds. The result is a real `off → on` state change every boot, with the timing controlled by `delay_on`.
 
-Two equivalent ways to write the precondition:
+The two-trigger pattern is the design choice that makes this blueprint work correctly. A single-trigger version (only `homeassistant: start`) would re-evaluate the state template to `true` on every restart, but HA would find the entity already on (because `RestoreEntity` preserved it from the previous session), and `delay_on` would have no state change to delay. The settling window would not engage. The shutdown trigger is what forces the entity to `off` in advance, so the start trigger has a real transition to act on.
+
+The correct pattern for dependents is to use `state == 'on'` as the precondition to proceed. Neither `unknown` (the first-run state) nor `off` (during shutdown, loading, and the settling window) match `'on'`, so dependents stay blocked through every phase that is not "fully stable." Two equivalent ways to write the precondition:
 
 ```yaml
 condition: state
@@ -124,9 +126,11 @@ condition: template
 value_template: "{{ states('binary_sensor.system_stable') == 'on' }}"
 ```
 
-Both read as "the system has fully settled, run normally." They block when the state is `'unknown'` (the loading phase and the settling window), and they would also block in the edge case where the state was `'unavailable'`. That is the right behavior: only proceed when the gate has explicitly cleared.
+Both read as "the system has fully settled, run normally." They block when the state is `'off'` or `'unknown'`, and they would also block in the edge case where the state was `'unavailable'`. That is the right behavior: only proceed when the gate has explicitly cleared.
 
-You will also see the sensor read `unknown` after a template integration reload (Developer Tools, YAML, Reload Template Entities) without an HA restart. The reload rebuilds the entity, the trigger has not fired since the reload, so the state goes back to `unknown` until the next HA restart fires `homeassistant: start` and the `delay_on` countdown completes. The same precondition pattern handles this correctly: dependents stay blocked, which is conservative but safe.
+You will also see the sensor read its restored value after a template integration reload (Developer Tools, YAML, Reload Template Entities) without an HA restart. Neither trigger fires on a template reload, so the state stays at whatever it was when the reload began (typically `on`, if the system had already settled). That is correct behavior: a template reload is not a restart, the system is still stable.
+
+Edge case worth knowing about: if HA crashes or is force-killed (no graceful shutdown), the shutdown trigger does not fire and the entity is restored as whatever its last persisted state was. If it was `on` at the time of the crash, the next boot will not engage the settling window. The common path of `ha core restart`, OS shutdown/restart, or container stop/start are all handled correctly; only abnormal terminations skip the shutdown trigger.
 
 ## A Small Note on the Window Size
 
@@ -148,7 +152,7 @@ template:
         stability_delay_seconds: 60
 ```
 
-This creates `binary_sensor.system_stable`, which stays `unknown` during the loading phase, stays `unknown` for the 60 seconds after `homeassistant: start` fires (typically up to a minute after boot, once every integration has finished loading), then transitions to `on`. Combined with the loading phase, dependents are blocked for roughly two minutes total wall-clock on a default setup.
+This creates `binary_sensor.system_stable`, which flips to `off` when HA next shuts down. On the next HA start, it stays `off` during the loading phase, stays `off` for the 60 seconds after `homeassistant: start` fires (typically up to a minute after boot, once every integration has finished loading), then transitions to `on`. Combined with the loading phase, dependents are blocked for roughly two minutes total wall-clock on a default setup. On the very first cycle after deployment (before HA has ever shut down with this blueprint loaded), the sensor reads `unknown` instead of `off`, but the dependent pattern `state == 'on'` handles both equivalently.
 
 A typical use in a downstream automation, as a condition that only allows the automation to run once the system is fully stable:
 
@@ -189,12 +193,14 @@ triggers:
 
 ## Attributes
 
-The binary sensor exposes two diagnostic attributes, populated when `homeassistant: start` fires and persisting for the rest of the session:
+The binary sensor exposes four diagnostic attributes. `stability_delay_seconds` and `triggered_by` are recomputed on every trigger fire. `last_shutdown_at` and `last_stable_at` are timestamps that are written by their respective triggers and preserved across other-trigger fires, so you always have the most recent of each:
 
 | Attribute | What it shows |
 | --- | --- |
 | `stability_delay_seconds` | The configured settling window in seconds. Echoes the input value, useful for confirming what the instance is running with. |
-| `trigger_fired_at` | ISO timestamp of when `homeassistant: start` fired on the most recent boot. Useful for checking how long HA took to load, and for verifying the trigger is actually catching boot. |
+| `triggered_by` | The id of the most recent trigger to fire: `shutdown` or `start`. Useful for debugging "did the shutdown trigger fire before the last restart?" |
+| `last_shutdown_at` | ISO timestamp of the most recent `homeassistant: shutdown` trigger fire. Set when shutdown fires, preserved through subsequent `homeassistant: start` fires. Reads `None` before the first shutdown has ever happened on this instance. |
+| `last_stable_at` | Projected ISO timestamp of the most recent transition to stable, computed as `now() + stability_delay_seconds` when the `homeassistant: start` trigger fires. This is the moment the sensor is expected to flip from `off` to `on` after `delay_on` runs out. Preserved through subsequent shutdown fires. Reads `None` before the first start has ever happened on this instance. |
 
 To view them: Developer Tools → States → search `binary_sensor.system_stable`. The attributes appear in the right-hand panel.
 
@@ -208,4 +214,5 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0 | Initial release. Trigger-based template binary_sensor fires once per HA boot from the `homeassistant: start` event. State template evaluates to `true`; `delay_on` holds the on transition for the configured settling window before the sensor reports `on` (stable). Two diagnostic attributes are populated on trigger fire: `stability_delay_seconds` (the configured window) and `trigger_fired_at` (timestamp of when `homeassistant: start` fired). |
+| 1.1.0 | Two-trigger rewrite. Trigger-based template binary_sensor now fires from two HA events: `homeassistant: shutdown` (sets state to `off`, persisted via `RestoreEntity` across the restart) and `homeassistant: start` (sets state to `true`, with `delay_on` holding the on transition for the configured settling window). The shutdown-then-start pattern ensures a real `off → on` state change every boot, so `delay_on` engages reliably. Attribute set rewritten: `stability_delay_seconds`, `triggered_by` (id of the most recent trigger to fire), `last_shutdown_at` (ISO timestamp of the most recent shutdown trigger fire, preserved through start fires), `last_stable_at` (projected stable moment, computed as `now() + delay` on the most recent start trigger fire, preserved through shutdown fires). `trigger_fired_at` removed since the two new timestamps replace its utility. |
+| 1.0.0 | Initial release. Trigger-based template binary_sensor fires once per HA boot from the `homeassistant: start` event. State template evaluates to `true`; `delay_on` holds the on transition for the configured settling window before the sensor reports `on` (stable). Two diagnostic attributes are populated on trigger fire: `stability_delay_seconds` and `trigger_fired_at`. Superseded by 1.1.0 because `RestoreEntity` preserves state across restarts, leaving `delay_on` with no transition to engage on, so the settling window never ran from the second boot onward. |

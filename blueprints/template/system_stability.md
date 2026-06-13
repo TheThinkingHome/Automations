@@ -4,9 +4,9 @@ A Home Assistant template blueprint that creates a binary sensor reading `on` on
 
 After every HA restart there is a short window where things are settling. Integrations come online one by one, entities flicker between `unavailable` and their real states, MQTT-backed devices republish their states, presence sensors take a moment to find their occupants. Automations that fire on those state changes are firing on noise, not on real events. A motion-light automation that watches a presence sensor sees the sensor flip on (it just came up) and turns on the lights at 4 AM. A scene that reacts to `input_select.scene` changes sees the value bounce as helpers restore and triggers itself for no reason. A security automation watching for doors going from closed to open sees a contact sensor flicker as Zigbee re-establishes and treats it as an intrusion.
 
-This blueprint creates a single binary sensor whose only job is to answer one question for the rest of your config: is the system fully stable? While the answer is anything other than `on` (typically `unknown` during boot and the settling window), dependent automations short-circuit themselves; only when it reads `on` should they run normally.
+This blueprint creates a single binary sensor whose only job is to answer one question for the rest of your config: is the system fully stable? While the answer is anything other than `on` (`off` during shutdown and across the settling window after each restart, or `unknown` on the very first cycle before the entity has been through a shutdown-restart pair), dependent automations short-circuit themselves; only when it reads `on` should they run normally.
 
-Full write-up and the longer story behind the design: <https://xeazy.com/system-stability-template-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
+Full write-up and the longer story behind the design: <https://xeazy.com/system-stability-template-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/d/40-system-stability-template-blueprint>
 
 ## What You Get
 
@@ -15,7 +15,7 @@ Full write-up and the longer story behind the design: <https://xeazy.com/system-
 - `delay_on` based timing on the start trigger. After `homeassistant: start` fires, the sensor waits the configured number of seconds before transitioning to `on`. The settling period covers the residual delay between HA reporting itself as up and entities actually being stable.
 - An adjustable window. 60 seconds is the default, which covers residual settling on most systems. Raise it for slower systems, lower it for faster ones.
 - A unique_id so the sensor is registered and can be renamed or placed in an area from the UI.
-- Four diagnostic attributes: `stability_delay_seconds` (the configured window), `triggered_by` (which trigger fired most recently: `shutdown` or `start`), `last_shutdown_at` (ISO timestamp of the most recent shutdown trigger fire, preserved through subsequent starts), and `last_stable_at` (the projected stable moment, computed as `now() + stability_delay_seconds` when the start trigger fires, preserved through subsequent shutdowns).
+- Four diagnostic attributes for debugging and dashboard display: `stability_delay_seconds`, `triggered_by`, `last_shutdown_at`, and `last_stable_at`. See the Attributes section below for the detail.
 
 The sensor is `on` only when the system is fully stable. Use it as a condition (run only when on), as a trigger (run when the system has just finished settling), or as a wait point (`wait_for_trigger to: 'on'`).
 
@@ -97,14 +97,6 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a `binary_sensor.system_stable`. Watch it in Developer Tools, States: it will read `unknown` until the first HA shutdown-restart cycle. On that first shutdown, the sensor flips to `off`. After HA comes back up, it stays `off` during the loading phase, stays `off` during the `delay_on` window after `homeassistant: start` fires (typically when the "Home Assistant has restarted" toast appears at the bottom of the UI), and then flips to `on`. From that point it reads `on` for the rest of the session, until the next HA shutdown flips it back to `off`. That is the full lifecycle.
 
-## A Small Note on Why the System Is Not Stable Yet
-
-Even after Home Assistant fires the `homeassistant: start` event, the system is not entirely stable. The heaviest state churn (integration setup, automation registration, entity creation) is over by then, but residual settling continues for another 30 to 60 seconds: Zigbee2MQTT republishing device states across the mesh, MQTT brokers reconnecting and replaying retained messages, presence sensors finding their occupants, contact sensors flickering as Zigbee re-establishes.
-
-A critical automation that fires on those state changes is firing on noise, not on real events. A light automation watching a presence sensor sees the sensor flip on (it just came up) and turns on the lights at 4 AM. A scene dispatcher sees `input_select.scene` bounce as helpers restore and triggers itself for no reason. A security automation watching for doors going from closed to open sees a contact sensor flicker as Zigbee re-establishes and treats it as an intrusion. A power-cycle recovery automation sees a sensor briefly unavailable and cycles the plug it is supposed to protect.
-
-The blueprint's job is to give every dependent a single system-wide signal that says "the system is fully stable, run normally." Light automations watching presence sensors wait. Scene dispatchers wait. Security monitoring waits. Power-cycle recovery automations skip the round they would otherwise run on a sensor that is briefly unavailable simply because Zigbee has not finished republishing.
-
 ## A Small Note on the Two Triggers and Why Both
 
 The blueprint listens for two HA events: `homeassistant: shutdown` and `homeassistant: start`. The shutdown trigger fires when HA begins its graceful shutdown sequence, before integration teardown completes. The start trigger fires when HA finishes loading after a restart, when it transitions from "starting" to "running".
@@ -152,7 +144,7 @@ template:
         stability_delay_seconds: 60
 ```
 
-This creates `binary_sensor.system_stable`, which flips to `off` when HA next shuts down. On the next HA start, it stays `off` during the loading phase, stays `off` for the 60 seconds after `homeassistant: start` fires (typically up to a minute after boot, once every integration has finished loading), then transitions to `on`. Combined with the loading phase, dependents are blocked for roughly two minutes total wall-clock on a default setup. On the very first cycle after deployment (before HA has ever shut down with this blueprint loaded), the sensor reads `unknown` instead of `off`, but the dependent pattern `state == 'on'` handles both equivalently.
+This creates `binary_sensor.system_stable`. On every HA shutdown the sensor flips to `off`. On the next HA start it stays `off` during the loading phase, stays `off` for the 60 seconds after `homeassistant: start` fires (the "Home Assistant has restarted" toast at the bottom of the UI marks that moment), then transitions to `on`. Combined with the loading phase, dependents are blocked for roughly two minutes total wall-clock on a default setup.
 
 A typical use in a downstream automation, as a condition that only allows the automation to run once the system is fully stable:
 

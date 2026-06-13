@@ -8,6 +8,11 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
+#   1.0.2-beta - Stripped inline YAML comments from the triggers and actions
+#                blocks for consistency with the Thinking Home blueprint style
+#                and with James's coding standard (action aliases serve the
+#                same documentation purpose as the comments did). No logic
+#                change; same 46 simulator scenarios pass.
 #   1.0.1-beta - Responsive trigger now filters at the event bus level via
 #                event_data: entity_id. The automation is no longer woken up
 #                by reports from non-monitored entities. Added a Home Assistant
@@ -364,8 +369,8 @@ trigger_variables:
   _treat_off_as_offline: !input treat_off_as_offline
 
 variables:
-  _version: "1.0.1-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.1-beta]"
+  _version: "1.0.2-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.2-beta]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled
@@ -374,10 +379,6 @@ variables:
   heartbeat_timer_var: !input heartbeat_timer
 
 triggers:
-  # ─────────────────────────────────────────────────────────────────────
-  # Unavailable detection - always on
-  # Fires when a monitored entity transitions to unavailable or unknown.
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input monitored_entities
     to:
@@ -387,12 +388,6 @@ triggers:
       seconds: !input unavailable_timeout_seconds
     id: unavailable
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Off-state detection - gated by 'Treat off as Offline'
-  # Same id and same downstream branch as unavailable; the only difference
-  # is the state being watched. Useful for ping sensors that report 'off'
-  # (not 'unavailable') when the target is unreachable.
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input monitored_entities
     to: "off"
@@ -401,12 +396,6 @@ triggers:
     enabled: !input treat_off_as_offline
     id: unavailable
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Heartbeat reset - responsive mode (every state_reported event)
-  # event_data filters at the trigger level, so the automation is only
-  # woken up for monitored entities. Chatty neighbours on the event bus
-  # do not consume queue slots here.
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: event
     event_type: state_reported
     event_data:
@@ -414,43 +403,21 @@ triggers:
     enabled: "{{ _detection_mode == 'responsive' }}"
     id: heartbeat_responsive
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Heartbeat reset - lighter mode (state changes only)
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input monitored_entities
     enabled: "{{ _detection_mode == 'lighter' }}"
     id: heartbeat_lighter
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Stale detection - timer finished event (responsive and lighter modes)
-  # No event_data filter on the trigger: the user's heartbeat_timer input
-  # may be blank when detection_mode is minimal, and a blank entity_id in
-  # event_data can fail trigger validation at automation load time. The
-  # stale branch in the action filters to the configured timer via a
-  # condition. timer.finished is a rare event, so the filter cost in the
-  # action is negligible.
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: event
     event_type: timer.finished
     enabled: "{{ _detection_mode != 'minimal' }}"
     id: stale
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Scheduled reboot - fires once per day at the configured time
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: time
     at: !input scheduled_reboot_time
     enabled: !input scheduled_reboot_enabled
     id: scheduled
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Self-recovery - recovery switch went off unexpectedly
-  # The 'for:' delay is computed as recovery_off_seconds + 30 so that the
-  # recovery cycle's own turn_off does not fire this trigger. The cycle
-  # turns the switch back on within recovery_off_seconds, which cancels
-  # the 'for:' delay before it completes.
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: state
     entity_id: !input recovery_switch
     to: "off"
@@ -458,15 +425,6 @@ triggers:
       seconds: "{{ _recovery_off_seconds + 30 }}"
     id: switch_off
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Home Assistant start - covers the case where a monitored entity is
-  # already in a failure state when HA loads (e.g., the device was dead
-  # during the nightly host reboot window). State triggers require an
-  # active transition; if the entity initializes as 'unavailable', no
-  # transition occurs and the offline detector never fires. This branch
-  # waits a settle period for integrations to finish loading, then
-  # evaluates the monitored entities and cycles if any are bad.
-  # ─────────────────────────────────────────────────────────────────────
   - trigger: homeassistant
     event: start
     id: ha_start
@@ -474,10 +432,6 @@ triggers:
 actions:
   - choose:
 
-      # ─────────────────────────────────────────────────────────────────
-      # Branch 1: Heartbeat reset (responsive mode)
-      # Filters for entity_id in monitored list, then resets timer.
-      # ─────────────────────────────────────────────────────────────────
       - alias: "Heartbeat reset (responsive)"
         conditions:
           - condition: trigger
@@ -501,11 +455,6 @@ actions:
             data:
               duration: "{{ _stale_threshold_minutes * 60 }}"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Branch 2: Heartbeat reset (lighter mode)
-      # State trigger already filtered to monitored entities. No
-      # additional entity check needed.
-      # ─────────────────────────────────────────────────────────────────
       - alias: "Heartbeat reset (lighter)"
         conditions:
           - condition: trigger
@@ -529,11 +478,6 @@ actions:
             data:
               duration: "{{ _stale_threshold_minutes * 60 }}"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Branch 3: Stale recovery
-      # Timer expired. Apply restart guard and active window, then run
-      # the recovery cycle.
-      # ─────────────────────────────────────────────────────────────────
       - alias: "Stale recovery"
         conditions:
           - condition: trigger
@@ -612,10 +556,6 @@ actions:
                           - conditions: []
                             sequence: !input on_failure_action
 
-      # ─────────────────────────────────────────────────────────────────
-      # Branch 4: Unavailable recovery
-      # Sensor went unavailable. Apply restart guard, then cycle.
-      # ─────────────────────────────────────────────────────────────────
       - alias: "Unavailable recovery"
         conditions:
           - condition: trigger
@@ -692,10 +632,6 @@ actions:
                           - conditions: []
                             sequence: !input on_failure_action
 
-      # ─────────────────────────────────────────────────────────────────
-      # Branch 5: Scheduled recovery
-      # Time-based preventive reboot. Apply restart guard, then cycle.
-      # ─────────────────────────────────────────────────────────────────
       - alias: "Scheduled recovery"
         conditions:
           - condition: trigger
@@ -770,13 +706,6 @@ actions:
                           - conditions: []
                             sequence: !input on_failure_action
 
-      # ─────────────────────────────────────────────────────────────────
-      # Branch 6: Post-restart evaluation
-      # Wait for HA to finish loading, then check if any monitored
-      # entity is already in a failure state. If so, fire the recovery
-      # cycle. Covers the case where a device was dead before HA started
-      # and no state transition was observed.
-      # ─────────────────────────────────────────────────────────────────
       - alias: "Post-restart evaluation"
         conditions:
           - condition: trigger
@@ -889,11 +818,6 @@ actions:
                                   - conditions: []
                                     sequence: !input on_failure_action
 
-      # ─────────────────────────────────────────────────────────────────
-      # Branch 7: Self-recovery
-      # Recovery switch went off unexpectedly. Turn it back on.
-      # Always-on; no guards. The switch should never be off for long.
-      # ─────────────────────────────────────────────────────────────────
       - alias: "Self-recovery"
         conditions:
           - condition: trigger

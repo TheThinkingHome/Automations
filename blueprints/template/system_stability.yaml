@@ -7,15 +7,31 @@
 # https://xeazy.com/system-stability-template-blueprint/
 #
 # Changelog:
-#   1.0.0 - Trigger-based template binary_sensor fires once per HA boot from
-#           the homeassistant: start event (which HA fires when it
-#           transitions from starting to running, after every integration
-#           has finished setup). State template evaluates to true; delay_on
-#           holds the on transition for the configured settling window
-#           before the sensor reports on (stable). Two diagnostic attributes
-#           are populated on trigger fire: stability_delay_seconds (the
-#           configured window) and trigger_fired_at (timestamp of when
-#           homeassistant: start fired).
+#   1.1.0 - Two-trigger rewrite. Trigger-based template binary_sensor now
+#           fires from two HA events: homeassistant: shutdown (sets state
+#           to off) and homeassistant: start (sets state to true, with
+#           delay_on holding the on transition for the configured settling
+#           window). The shutdown-then-start pattern ensures a real
+#           off-to-on state change every boot, so delay_on engages
+#           reliably. A single trigger could not guarantee this because
+#           HA's RestoreEntity preserves entity state across restarts.
+#           Attribute set rewritten: stability_delay_seconds, triggered_by
+#           (id of the most recent trigger to fire), last_shutdown_at
+#           (timestamp of the most recent shutdown trigger fire, preserved
+#           through start fires), last_stable_at (projected stable moment
+#           computed as now() + delay on the most recent start trigger
+#           fire, preserved through shutdown fires). trigger_fired_at
+#           removed since the two new timestamps replace its utility.
+#   1.0.0 - Initial release. Trigger-based template binary_sensor fires
+#           once per HA boot from the homeassistant: start event. State
+#           template evaluates to true; delay_on holds the on transition
+#           for the configured settling window before the sensor reports
+#           on (stable). Two diagnostic attributes are populated on
+#           trigger fire: stability_delay_seconds and trigger_fired_at.
+#           Superseded by 1.1.0 because RestoreEntity preserves state
+#           across restarts, leaving delay_on with no transition to engage
+#           on, so the settling window never ran from the second boot
+#           onward.
 
 blueprint:
   name: System Stability
@@ -36,15 +52,15 @@ blueprint:
 
     ## How it works
 
-    The blueprint produces a trigger-based template binary_sensor with one trigger: the `homeassistant: start` event. HA fires this event once per boot, when it transitions from "starting" to "running" after every integration has finished setup. On that trigger the state template evaluates to `true`, and the `delay_on` option holds the on transition for the configured number of seconds before the sensor actually transitions to `on`.
+    The blueprint produces a trigger-based template binary_sensor with two triggers: the `homeassistant: shutdown` event and the `homeassistant: start` event. On shutdown, the state template returns false and the sensor reads `off`; that off state persists to disk as part of HA's normal state-restore mechanism. On the next HA start, the entity is restored as `off`, the start trigger fires, the state template returns true, and the sensor transitions `off → on`. The `delay_on` option holds that transition for the configured number of seconds.
 
-    The sensor's lifecycle per boot is a single transition: `unknown` to `on`. There is no "off" state during normal operation; the sensor is `unknown` until the gate clears, and `on` for the rest of the session.
+    The two-trigger pattern is necessary because HA's `RestoreEntity` preserves trigger-based template binary_sensor state across HA restarts. A single trigger that always sets the state to true would find the sensor already on after a restart (restored from the previous session) and `delay_on` would have no state change to engage on. By explicitly setting the state to off on shutdown, the off-to-on transition on the next boot is guaranteed real.
 
     ## Initial state
 
-    Trigger-based template entities start in an `unknown` state until the trigger fires AND the `delay_on` window elapses. There is a window between HA boot and `homeassistant: start` firing where the sensor is `unknown` (typically up to a minute on a default system), then a further `delay_on` window during which the sensor is still `unknown` while residual settling happens. Only after both elapse does the sensor read `on`.
+    The sensor reads `unknown` only between the moment the blueprint instance is first created and the next HA shutdown-restart cycle. After the first cycle, the entity is always either `on` (stable) or `off` (settling or shut down).
 
-    The correct pattern for dependents is to use `state == 'on'` as their precondition to proceed. `unknown` does not match `'on'`, so dependents stay blocked through both the loading phase and the settling window. See the README for the full pattern and the reasoning.
+    The correct pattern for dependents is to use `state == 'on'` as their precondition to proceed. Neither `unknown` nor `off` match `'on'`, so dependents stay blocked through first-run unknown and through the settling window on every subsequent restart. See the README for the full pattern and the reasoning.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   author: James Lander (xeazy.com)
@@ -74,16 +90,36 @@ blueprint:
           mode: box
 
 trigger:
+  - alias: Home Assistant shutdown event
+    trigger: homeassistant
+    event: shutdown
+    id: shutdown
   - alias: Home Assistant start event
     trigger: homeassistant
     event: start
+    id: start
+
+variables:
+  delay_seconds: !input stability_delay_seconds
 
 binary_sensor:
   - name: System Stable
     unique_id: system_stable_blueprint_v1
-    state: "{{ true }}"
+    state: "{{ trigger.id == 'start' }}"
     delay_on:
       seconds: !input stability_delay_seconds
     attributes:
       stability_delay_seconds: !input stability_delay_seconds
-      trigger_fired_at: "{{ now().isoformat() }}"
+      triggered_by: "{{ trigger.id }}"
+      last_shutdown_at: >-
+        {% if trigger.id == 'shutdown' %}
+          {{ now().isoformat() }}
+        {% else %}
+          {{ this.attributes.last_shutdown_at | default(None) }}
+        {% endif %}
+      last_stable_at: >-
+        {% if trigger.id == 'start' %}
+          {{ (now() + timedelta(seconds=delay_seconds)).isoformat() }}
+        {% else %}
+          {{ this.attributes.last_stable_at | default(None) }}
+        {% endif %}

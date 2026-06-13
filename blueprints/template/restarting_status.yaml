@@ -1,0 +1,121 @@
+# -----------------------------------------------------------------------------
+# Restarting Status
+# -----------------------------------------------------------------------------
+# A template binary_sensor blueprint for Home Assistant that reports `on`
+# during a configurable window after HA boot, then `off` once the system
+# has been up longer than that window. Sourced from HA's built-in Uptime
+# integration.
+#
+# State transitions are event-driven. Lightest-weight implementation possible:
+# the sensor wakes on HA boot, stays on for the configured window, then
+# sleeps until the next restart. The binary_sensor turns on when the Uptime
+# sensor publishes a new boot timestamp or when the homeassistant: start
+# event fires (whichever arrives first). auto_off handles the timed return
+# to off.
+#
+# Author: James Lander
+# Version: 1.0.0
+#
+# Changelog:
+#   1.0.0 - Trigger-based template binary_sensor fires from two sources:
+#           state change on the Uptime sensor (which publishes a new boot
+#           timestamp on every HA start) and the homeassistant: start event
+#           (a backup in case the state trigger races with template entity
+#           load on boot). State is a literal true; auto_off flips the
+#           sensor off after the configured window elapses.
+# -----------------------------------------------------------------------------
+
+blueprint:
+  name: Restarting Status
+  description: |
+    # Restarting Status
+
+    *Reports `on` during the configurable window after Home Assistant boots,
+    then flips to `off` once stable.*
+
+    Use as a reboot guard in automations, scripts, and AppDaemon apps that
+    need to suppress activity during the HA restart window.
+
+    ## How it works
+
+    The blueprint produces a trigger-based template binary_sensor with two
+    triggers:
+
+    1. State change on the Uptime integration's sensor. On every HA boot
+       the Uptime sensor publishes a new ISO timestamp, which fires this
+       trigger.
+    2. The `homeassistant: start` event. A backup trigger in case the state
+       trigger races with template entity load on boot.
+
+    On either trigger the binary_sensor state is set to `on`. The `auto_off`
+    option then flips it back to `off` after the configured window elapses.
+    Lightest-weight implementation possible: active during the restart
+    window, then sleeps until the next HA boot.
+
+    ## Initial state
+
+    Trigger-based template entities start in an `unknown` state until a
+    trigger fires for the first time. On a normal HA boot, one of the two
+    triggers fires within seconds. On a template integration reload without
+    an HA restart, the sensor reverts to `unknown` until the next HA boot.
+    Dependents that gate on this sensor should treat `unknown` permissively
+    (the same way they treat `unavailable`).
+
+    ## Requirements
+
+    Home Assistant's Uptime integration must be enabled. To enable it:
+    Settings > Devices & Services > Add Integration > Uptime. The default
+    entity it creates is `sensor.uptime` (device_class: timestamp).
+
+  domain: template
+
+  homeassistant:
+    min_version: 2024.6.0
+
+  input:
+    uptime_sensor:
+      name: Uptime Sensor
+      description: >-
+        The sensor from Home Assistant's Uptime integration. Its state is the
+        ISO timestamp of the last HA boot. Typically `sensor.uptime`. The
+        selector is filtered to timestamp-class sensors so only valid
+        candidates appear.
+      selector:
+        entity:
+          domain: sensor
+          device_class: timestamp
+
+    restart_window_seconds:
+      name: Restart Window
+      description: >-
+        How many seconds after HA boot the system is considered to be
+        "still restarting". The binary_sensor is `on` during this window
+        and `off` afterwards. Default 120 seconds. Increase for slower
+        systems with many integrations, decrease for faster systems.
+      default: 120
+      selector:
+        number:
+          min: 30
+          max: 600
+          step: 10
+          unit_of_measurement: seconds
+          mode: box
+
+trigger:
+  - alias: Uptime sensor publishes new boot timestamp
+    trigger: state
+    entity_id: !input uptime_sensor
+    not_to:
+      - unavailable
+      - unknown
+
+  - alias: Home Assistant start event (backup trigger)
+    trigger: homeassistant
+    event: start
+
+binary_sensor:
+  - name: Restarting Status
+    unique_id: restarting_status_blueprint_v1
+    state: "{{ true }}"
+    auto_off:
+      seconds: !input restart_window_seconds

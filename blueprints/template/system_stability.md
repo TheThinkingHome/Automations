@@ -15,6 +15,7 @@ Full write-up and the longer story behind the design: <https://xeazy.com/system-
 - `delay_on` based timing. After the trigger fires, the sensor waits the configured number of seconds before transitioning to `on`. The settling period covers the residual delay between HA reporting itself as up and entities actually being stable.
 - An adjustable window. 60 seconds is the default, which covers residual settling on most systems. Raise it for slower systems, lower it for faster ones.
 - A unique_id so the sensor is registered and can be renamed or placed in an area from the UI.
+- Two diagnostic attributes populated on trigger fire: `stability_delay_seconds` (the configured window) and `trigger_fired_at` (the timestamp of `homeassistant: start`).
 
 The sensor is `on` only when the system is fully stable. Use it as a condition (run only when on), as a trigger (run when the system has just finished settling), or as a wait point (`wait_for_trigger to: 'on'`).
 
@@ -186,6 +187,17 @@ triggers:
 | --- | --- | --- | --- | --- |
 | `stability_delay_seconds` | No | `60` | integer between 15 and 300 | How many seconds after `homeassistant: start` fires before the sensor transitions to `on` (stable). This is the residual settling window: Z2M republish, MQTT reconnects, presence sensor wakeup. Default 60 seconds covers most systems. Raise for slower systems, lower for faster ones. |
 
+## Attributes
+
+The binary sensor exposes two diagnostic attributes, populated when `homeassistant: start` fires and persisting for the rest of the session:
+
+| Attribute | What it shows |
+| --- | --- |
+| `stability_delay_seconds` | The configured settling window in seconds. Echoes the input value, useful for confirming what the instance is running with. |
+| `trigger_fired_at` | ISO timestamp of when `homeassistant: start` fired on the most recent boot. Useful for checking how long HA took to load, and for verifying the trigger is actually catching boot. |
+
+To view them: Developer Tools → States → search `binary_sensor.system_stable`. The attributes appear in the right-hand panel.
+
 ## License
 
 Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>)
@@ -196,4 +208,4 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0 | Initial release. Trigger-based template binary_sensor fires once per HA boot from the `homeassistant: start` event. State template evaluates to `true`; `delay_on` holds the on transition for the configured settling window before the sensor reports `on` (stable). |
+| 1.0.0 | Initial release. Trigger-based template binary_sensor fires once per HA boot from the `homeassistant: start` event. State template evaluates to `true`; `delay_on` holds the on transition for the configured settling window before the sensor reports `on` (stable). Two diagnostic attributes are populated on trigger fire: `stability_delay_seconds` (the configured window) and `trigger_fired_at` (timestamp of when `homeassistant: start` fired). |

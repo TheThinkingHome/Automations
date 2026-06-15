@@ -8,6 +8,21 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
+#   1.0.3-beta - Removed Responsive detection mode and its state_reported
+#                event trigger. HA's automation validator refuses to register
+#                state_reported as an event_type in any trigger, regardless
+#                of the trigger's runtime enabled state, so the trigger had
+#                to come out entirely for the blueprint to save on current
+#                HA. Lighter and Minimal modes are unchanged. The rare same-
+#                value-heartbeat-stuck failure case that Responsive could
+#                catch is no longer detected; in practice that case is
+#                uncommon enough that Lighter mode plus the unavailable
+#                detector plus the scheduled cycle cover almost all wedges.
+#                The detection_mode selector now offers only Minimal (default)
+#                and Lighter. Input descriptions for detection_mode,
+#                stale_threshold_minutes, and heartbeat_timer updated to
+#                reflect the two-mode reality, and the blueprint description
+#                rewritten the same way.
 #   1.0.2-beta - Default detection_mode flipped from responsive to minimal: a
 #                fresh import no longer requires a Timer helper. Generalized
 #                input descriptions: removed references to entity names
@@ -75,9 +90,9 @@ blueprint:
 
     Watches one or more entities that share a single smart plug and automatically power-cycles the device behind that plug when any monitored entity goes offline or stops reporting fresh values. Multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone.
 
-    Three detection modes let you choose how much event traffic the freshness detector creates: responsive (catches every report including heartbeats, heaviest load), lighter (catches state changes only, lighter load), or minimal (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. An optional restart guard input blocks recovery during HA or router reboot windows.
+    Two detection modes let you choose how much event traffic the freshness detector creates: lighter (catches state changes only) or minimal (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. An optional restart guard input blocks recovery during HA or router reboot windows.
 
-    Requires Home Assistant 2026.6 or later. That is the version the blueprint is verified on. If using responsive or lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
+    Requires Home Assistant 2026.6 or later. That is the version the blueprint is verified on. If using lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
 
     Originally built to recover Aqara FP2 presence sensors that wedge every few days, then generalized for any flaky device whose only reliable fix is a power cycle: Zigbee router plugs, WiFi cameras, smart-home gateways, finicky sensors of any kind.
 
@@ -220,11 +235,8 @@ blueprint:
             This is the default because it works without a heartbeat
             timer helper and has the lowest event-bus footprint. Lighter
             adds a freshness detector that catches frozen-but-still-
-            online devices via a heartbeat timer (catches value changes
-            only). Responsive is the heaviest: it also wakes on same-
-            value device reports, catching the rare case of a device
-            stuck on heartbeats with a frozen value. Both lighter and
-            responsive require the Heartbeat Timer input below.
+            online devices via a heartbeat timer (catches state changes
+            only). Lighter requires the Heartbeat Timer input below.
           default: minimal
           selector:
             select:
@@ -233,15 +245,12 @@ blueprint:
                   value: minimal
                 - label: "Lighter (state changes only)"
                   value: lighter
-                - label: "Responsive (state_reported events, heaviest)"
-                  value: responsive
         stale_threshold_minutes:
           name: Stale Threshold
           description: >-
-            How long without a report (responsive) or without a value
-            change (lighter) before staleness is declared. Ignored in
-            minimal mode. Set this longer than the natural quiet stretches
-            of your device under normal conditions.
+            How long without a value change before staleness is declared.
+            Ignored in minimal mode. Set this longer than the natural
+            quiet stretches of your device under normal conditions.
           default: 5
           selector:
             number:
@@ -253,10 +262,9 @@ blueprint:
           name: Heartbeat Timer
           description: >-
             A timer helper used to track when monitored entities last
-            reported (or last changed, in lighter mode). Required in
-            responsive and lighter modes. Create via Settings, Devices &
-            Services, Helpers, Create Helper, Timer. Leave the timer
-            duration blank; this blueprint sets it dynamically. In
+            changed state. Required in lighter mode. Create via Settings,
+            Devices & Services, Helpers, Create Helper, Timer. Leave the
+            timer duration blank; this blueprint sets it dynamically. In
             minimal mode this input is ignored.
           default:
           selector:
@@ -383,8 +391,8 @@ trigger_variables:
   _treat_off_as_offline: !input treat_off_as_offline
 
 variables:
-  _version: "1.0.2-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.2-beta]"
+  _version: "1.0.3-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.3-beta]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled
@@ -409,13 +417,6 @@ triggers:
       seconds: !input unavailable_timeout_seconds
     enabled: !input treat_off_as_offline
     id: unavailable
-
-  - trigger: event
-    event_type: state_reported
-    event_data:
-      entity_id: !input monitored_entities
-    enabled: "{{ _detection_mode == 'responsive' }}"
-    id: heartbeat_responsive
 
   - trigger: state
     entity_id: !input monitored_entities
@@ -445,29 +446,6 @@ triggers:
 
 actions:
   - choose:
-
-      - alias: "Heartbeat reset (responsive)"
-        conditions:
-          - condition: trigger
-            id: heartbeat_responsive
-        sequence:
-          - alias: "Debug Log Heartbeat Responsive"
-            if:
-              - condition: template
-                value_template: "{{ _debug_enabled }}"
-            then:
-              - action: system_log.write
-                continue_on_error: true
-                data:
-                  level: info
-                  message: >-
-                    {{ _caller_prefix }} Heartbeat (responsive) from
-                    {{ trigger.event.data.entity_id }}. Resetting timer.
-          - action: timer.start
-            target:
-              entity_id: !input heartbeat_timer
-            data:
-              duration: "{{ _stale_threshold_minutes * 60 }}"
 
       - alias: "Heartbeat reset (lighter)"
         conditions:

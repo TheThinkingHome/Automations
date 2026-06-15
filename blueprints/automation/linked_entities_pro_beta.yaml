@@ -105,12 +105,12 @@ blueprint:
     sync_delay_section:
       name: ⏱ Sync Delay
       description: >-
-        The pause between the trigger firing and dispatching commands. This is a key parameter to tune for your setup. It controls both the cancellation window for rapid opposite presses (mode restart cancels in-flight runs before they dispatch) and the throttle that prevents redundant commands when many entities sync at once. The default of 200 ms works for most setups; the right value for your setup depends on the size of your linked group and the speed of your hardware.
+        Recommended starting points: 0 for a two-entity pair on fast hardware where there is nothing to absorb; 200 (default) for groups of 3 to 5 entities; 300 to 500 for large groups (6 or more), busy Zigbee meshes, or slow devices. Setting at or above the slowest device's response latency (typically 200 to 500 ms for Zigbee) eliminates redundant commands during the cascade. The article walks through the math for a 10-entity stress test: 0 ms generated 81 commands per press; 200 ms generated 9.
       input:
         sync_delay_ms:
           name: Sync Delay (ms)
           description: >-
-            Recommended starting points: 0 for a two-entity pair on fast hardware where there is nothing to absorb; 200 (default) for groups of 3 to 5 entities; 300 to 500 for large groups (6 or more), busy Zigbee meshes, or slow devices. Setting at or above the slowest device's response latency (typically 200 to 500 ms for Zigbee) eliminates redundant commands during the cascade. The article walks through the math for a 10-entity stress test: 0 ms generated 81 commands per press; 200 ms generated 9.
+            The pause between trigger and dispatch. Doubles as the cancellation window for rapid opposite presses (mode restart cancels in-flight runs) and as the throttle that prevents redundant commands during the cascade.
           default: 200
           selector:
             number:

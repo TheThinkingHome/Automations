@@ -8,6 +8,27 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
+#   1.0.7-beta - Changed automation mode from 'queued' (max: 10) to 'single'.
+#                Eliminates duplicate recovery cycles when paired entities on
+#                one device (e.g., presence and lux from the same FP2) go
+#                unavailable in rapid succession. Under v1.0.6-beta's queued
+#                mode, the second trigger's run was queued and started after
+#                the first completed; by then the recovery switch was back
+#                on, the state: on guard passed, and a second cycle fired.
+#                Under single mode, the second trigger is dropped while the
+#                first run is in progress, eliminating the redundant cycle.
+#                Discovery via simulator re-pass against the new v1.0.6-beta
+#                uptime-sensor gate template. The 46-scenario simulator now
+#                passes cleanly against v1.0.7-beta, including the s13
+#                paired-entity scenario that exposed the duplicate-cycle
+#                pathology. Edge case: heartbeat triggers (responsive mode)
+#                that fire during an in-progress recovery cycle are now
+#                dropped instead of queued. In practice this is benign: the
+#                heartbeat timer was already cancelled at cycle start, and
+#                the next post-cycle heartbeat starts the timer fresh.
+#                BREAKING: only for users who deliberately relied on queued
+#                semantics (running two recovery cycles back-to-back for a
+#                single failure event). No known user has done this.
 #   1.0.6-beta - Fixed "Use of 'now' is not supported in limited templates"
 #                error in trigger_variables. The previous approach captured
 #                HA load time via {{ as_timestamp(now()) }} in trigger_variables,
@@ -144,7 +165,7 @@ blueprint:
 
     **Work in progress.** This is a public preview, still in beta. Feedback is welcome on the [forum](https://xeazy.com/logbook/).
 
-    **Version: 1.0.6-beta**
+    **Version: 1.0.7-beta**
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   author: James Lander (xeazy.com)
@@ -444,16 +465,15 @@ blueprint:
           selector:
             boolean:
 
-mode: queued
-max: 10
+mode: single
 
 trigger_variables:
   _detection_mode: !input detection_mode
   _recovery_off_seconds: !input recovery_off_seconds
 
 variables:
-  _version: "1.0.6-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.6-beta]"
+  _version: "1.0.7-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.7-beta]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled

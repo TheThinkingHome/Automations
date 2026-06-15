@@ -8,6 +8,24 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
+#   1.0.8-beta - Removed the per-heartbeat debug log line. The
+#                heartbeat-reset branch no longer writes
+#                "Heartbeat (responsive) from <entity>. Resetting timer."
+#                on every state change of every monitored entity. In
+#                responsive mode with active sensors (e.g. a lux sensor
+#                reporting every second or two), that line was firing
+#                hundreds of times per minute and burying the
+#                interesting events (recovery cycles, post-restart
+#                evaluations, failure notifications) in noise. After
+#                the change, debug logs only fire for events that
+#                actually matter: cycle starts, post-restart phases,
+#                self-recovery, and failure notifications. Setup
+#                verification for the heartbeat path now uses Home
+#                Assistant's Traces view, which already shows every
+#                branch entry with full context and is the right tool
+#                for confirming the heartbeat-reset branch is firing.
+#                No other behavior change: the timer is still reset on
+#                every heartbeat, just silently.
 #   1.0.7-beta - Changed automation mode from 'queued' (max: 10) to 'single'.
 #                Eliminates duplicate recovery cycles when paired entities on
 #                one device (e.g., presence and lux from the same FP2) go
@@ -165,7 +183,7 @@ blueprint:
 
     **Work in progress.** This is a public preview, still in beta. Feedback is welcome on the [forum](https://xeazy.com/logbook/).
 
-    **Version: 1.0.7-beta**
+    **Version: 1.0.8-beta**
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   author: James Lander (xeazy.com)
@@ -472,8 +490,8 @@ trigger_variables:
   _recovery_off_seconds: !input recovery_off_seconds
 
 variables:
-  _version: "1.0.7-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.7-beta]"
+  _version: "1.0.8-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.8-beta]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled
@@ -540,18 +558,6 @@ actions:
           - condition: trigger
             id: heartbeat_responsive
         sequence:
-          - alias: "Debug Log Heartbeat Responsive"
-            if:
-              - condition: template
-                value_template: "{{ debug_enabled_var }}"
-            then:
-              - action: system_log.write
-                continue_on_error: true
-                data:
-                  level: info
-                  message: >-
-                    {{ _caller_prefix }} Heartbeat (responsive) from
-                    {{ trigger.entity_id }}. Resetting timer.
           - action: timer.start
             target:
               entity_id: !input heartbeat_timer

@@ -2,25 +2,36 @@
 # Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
 # See the LICENSE file for the full text.
 #
-# Linked Entities Pro (Beta) - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
-# Work in progress. Public preview, still in beta.
-# Full write-up, worked examples, and directions:
-# https://xeazy.com/linked-entities-pro/
+# Version: 1.0.1-beta
+# Article: https://xeazy.com/linked-entity-pro/
 #
 # Changelog:
-#   1.0.1-beta - Unknown Flip fix. The "Verify Source Still in Captured State"
-#                check no longer cancels dispatch when the source briefly drops
-#                to unknown or unavailable during the sync_delay_ms window.
-#                The check now only cancels when the source has explicitly
-#                flipped to the opposite known state ('on' or 'off').
+#   1.0.1-beta - Replaced suppress_during input with optional HA-startup
+#                block, gated on the HA Uptime integration. Three new inputs:
+#                use_uptime_sensor (boolean), uptime_sensor (entity), and
+#                ha_start_block_seconds (number). Box unchecked: no block,
+#                blueprint behaves as before for peer sync. Box checked: the
+#                gate reads the configured Uptime sensor, converts via its
+#                unit_of_measurement attribute (seconds, minutes, hours, or
+#                days are all handled), and suppresses peer sync while
+#                elapsed uptime is below the threshold. The block applies
+#                to peer sync only; reconciliation branches (HA start and
+#                reconcile sensor) are NOT blocked because they are the
+#                intended response to boot drift.
+#                BREAKING: users who had suppress_during pointed at an HA
+#                uptime sensor should enable use_uptime_sensor and set
+#                ha_start_block_seconds to a similar value (typically
+#                120-180 seconds). Users who used suppress_during for
+#                maintenance windows or manual override modes lose that
+#                capability in this version.
 #   1.0.0-beta - Initial beta release. On/off sync only. Authority-on-reconcile
 #                model. Cross-domain entity selector. State equality breaks
 #                sync loops, so changes from physical presses, dashboards,
 #                automations, scenes, and voice all propagate. Mode restart so
 #                rapid toggles resolve to the latest state. HA start and
 #                optional reconcile-trigger-sensor branches for restart and
-#                bridge-reconnect drift recovery. Suppress-during gate. Debug
-#                logging.
+#                bridge-reconnect drift recovery. Suppress-during gate.
+#                Debug logging.
 
 blueprint:
   name: Linked Entities Pro (Beta)
@@ -31,7 +42,7 @@ blueprint:
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-    - 📖 [Read the article](https://xeazy.com/linked-entities-pro/) - the design and how it differs from other sync blueprints.
+    - 📖 [Read the article](https://xeazy.com/linked-entity-pro/) - the design and how it differs from other sync blueprints.
     - 💬 [Discuss in the community](https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint) - the forum thread for this blueprint.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
 
@@ -39,14 +50,11 @@ blueprint:
 
     Switches, lights, fans, input_booleans, and groups can mix freely in the same linked group. A change on any entity propagates to the others. On Home Assistant restart or when an optional bridge sensor reconnects, a designated authority entity acts as the tiebreaker to resolve drift.
 
-    This release syncs binary on/off state only. Brightness, color, and fan speed do not propagate, by design - those are planned for v1.1.0.
-
     Originally built to keep a Zigbee wall switch and a Tasmota relay in lockstep, but generalized to N entities and any mix of integrations.
 
     **Work in progress.** This is a public preview. Feedback is welcome on the forum. Once an external tester confirms it works in their environment, the blueprint graduates from beta and the file is republished at `blueprints/automation/linked_entities_pro.yaml`.
 
-    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
-
+    **Version: 1.0.1-beta**
   domain: automation
   author: James Lander (xeazy.com)
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro_beta.yaml
@@ -59,9 +67,7 @@ blueprint:
         linked_entities:
           name: Linked Entities
           description: >-
-            Switches, lights, input_booleans, fans, and groups are all supported
-            and can be mixed freely. A change on any of them propagates to all
-            the others.
+            Switches, lights, input_booleans, fans, and groups are all supported and can be mixed freely. A change on any of them propagates to all the others.
           selector:
             entity:
               multiple: true
@@ -72,16 +78,12 @@ blueprint:
                     - input_boolean
                     - fan
                     - group
-
+              reorder: false
         authority_entity:
           name: Authority Entity
           description: >-
-            The tiebreaker entity. Used only when Home Assistant restarts or
-            the reconcile trigger sensor fires. During normal use, any linked
-            entity can drive the others - the authority only matters when
-            there is ambiguity to resolve. If left blank, the first entity in
-            the Linked Entities list is used.
-          default: ""
+            The tiebreaker entity. Used only when Home Assistant restarts or the reconcile trigger sensor fires. During normal use, any linked entity can drive the others - the authority only matters when there is ambiguity to resolve. If left blank, the first entity in the Linked Entities list is used.
+          default: ''
           selector:
             entity:
               filter:
@@ -91,39 +93,64 @@ blueprint:
                     - input_boolean
                     - fan
                     - group
+              multiple: false
+              reorder: false
 
     reconciliation_section:
       name: 🔄 Reconciliation
       description: >-
-        Resolve drift after restarts and bridge reconnects. Without this,
-        devices that come back online with stale or republished states can
-        leave your linked group out of sync.
+        Resolve drift after restarts and bridge reconnects. Without this, devices that come back online with stale or republished states can leave your linked group out of sync.
       input:
         reconcile_on_ha_start:
           name: Reconcile on Home Assistant Start
           description: >-
-            When Home Assistant starts up, reconcile linked entities to the
-            authority's state. Useful because devices come back online in
-            unpredictable order during boot. Leave on unless you have a
-            specific reason to turn it off.
+            When Home Assistant starts up, reconcile linked entities to the authority's state. Useful because devices come back online in unpredictable order during boot. Leave on unless you have a specific reason to turn it off.
           default: true
           selector:
             boolean: {}
-
         reconcile_trigger_sensor:
           name: Reconcile Trigger Sensor
           description: >-
-            When this sensor goes from off to on, reconcile linked entities
-            to the authority's state. Useful for catching state cascades
-            after a bridge reconnect. Zigbee2MQTT users should point this at
-            binary_sensor.zigbee2mqtt_running. ZHA, Z-Wave, and WiFi users
-            can usually leave this blank - the Home Assistant start
-            reconcile above is sufficient for them.
-          default: ""
+            When this sensor goes from off to on, reconcile linked entities to the authority's state. Useful for catching state cascades after a bridge reconnect. Zigbee2MQTT users should point this at binary_sensor.zigbee2mqtt_running. ZHA, Z-Wave, and WiFi users can usually leave this blank - the Home Assistant start reconcile above is sufficient for them.
+          default: ''
           selector:
             entity:
               filter:
-                - domain: binary_sensor
+                - domain:
+                    - binary_sensor
+              multiple: false
+              reorder: false
+        use_uptime_sensor:
+          name: Block Peer Sync During HA Startup (Uptime Integration)
+          description: >-
+            Check this box if you have the Home Assistant Uptime integration installed. When enabled, peer sync is suppressed for a configurable period after HA starts, preventing republished stale states from propagating during boot. The Uptime integration is a built-in HA core integration; add it via Settings > Devices & Services > Add Integration > Uptime if you don't already have it. Reconciliation branches (HA Start and Reconcile Trigger Sensor) are NOT blocked - they are the intended response to boot drift. Leave unchecked if you don't have the integration.
+          default: false
+          selector:
+            boolean: {}
+        uptime_sensor:
+          name: Uptime Sensor
+          description: >-
+            The Uptime integration's sensor entity. Only consulted when the box above is checked. Default is sensor.uptime, which is the conventional name. Any sensor whose state represents elapsed time since HA started works; the blueprint reads the sensor's unit_of_measurement attribute (s, min, h, or d) and converts automatically.
+          default: sensor.uptime
+          selector:
+            entity:
+              filter:
+                - domain:
+                    - sensor
+              multiple: false
+              reorder: false
+        ha_start_block_seconds:
+          name: Block Peer Sync After HA Start (seconds)
+          description: >-
+            How long after Home Assistant loads to suppress peer sync. Only consulted when the box above is checked. 120 seconds is a good default. Set to 0 to disable the block while keeping the integration setup, e.g., during troubleshooting.
+          default: 120
+          selector:
+            number:
+              min: 0
+              max: 900
+              step: 10
+              unit_of_measurement: seconds
+              mode: box
 
     behavior_tuning_section:
       name: ⚙️ Behavior Tuning
@@ -132,11 +159,7 @@ blueprint:
         sync_delay_ms:
           name: Sync Delay (ms)
           description: >-
-            Milliseconds to wait between dispatching actions to followers.
-            Helps Zigbee meshes and busy hubs avoid command storms when many
-            entities sync at once. 200 is a good default. Increase if
-            commands get dropped on large groups; decrease toward 0 if you
-            are running on fast hardware with a snappy mesh.
+            Milliseconds to wait between dispatching actions to followers. Helps Zigbee meshes and busy hubs avoid command storms when many entities sync at once. 200 is a good default. Increase if commands get dropped on large groups; decrease toward 0 if you are running on fast hardware with a snappy mesh.
           default: 200
           selector:
             number:
@@ -146,18 +169,6 @@ blueprint:
               unit_of_measurement: ms
               mode: box
 
-        suppress_during:
-          name: Suppress During
-          description: >-
-            When this sensor is on, sync is suppressed entirely. Useful for
-            maintenance windows, manual override modes, or pointing at a
-            Home Assistant restart indicator. Leave blank if not needed.
-          default: ""
-          selector:
-            entity:
-              filter:
-                - domain: binary_sensor
-
     advanced_section:
       name: 🛠 Advanced
       description: Use these only when troubleshooting.
@@ -165,9 +176,7 @@ blueprint:
         debug_enabled:
           name: Debug Logging
           description: >-
-            Write detailed log lines to the system log on every trigger and
-            action. Helpful for confirming behavior during setup. Noisy in
-            normal operation, so leave off unless troubleshooting.
+            Write detailed log lines to the system log on every trigger and action. Helpful for confirming behavior during setup. Noisy in normal operation, so leave off unless troubleshooting.
           default: false
           selector:
             boolean: {}
@@ -180,8 +189,8 @@ triggers:
     trigger: state
     entity_id: !input linked_entities
     to:
-      - "on"
-      - "off"
+      - 'on'
+      - 'off'
     id: linked_entity_changed
   - alias: Home Assistant Started
     trigger: homeassistant
@@ -190,12 +199,12 @@ triggers:
   - alias: Reconcile Trigger Sensor Came Online
     trigger: state
     entity_id: !input reconcile_trigger_sensor
-    to: "on"
+    to: 'on'
     id: reconcile_sensor
 
 variables:
-  _version: "1.0.1"
-  _caller_prefix: "[Linked Entities Pro Beta v1.0.1]"
+  _version: "1.0.1-beta"
+  _caller_prefix: "[Linked Entities Pro Beta v1.0.1-beta]"
   linked_entities_var: !input linked_entities
   authority_entity_input: !input authority_entity
   authority_entity_resolved: >-
@@ -208,22 +217,47 @@ variables:
   reconcile_on_ha_start: !input reconcile_on_ha_start
   reconcile_trigger_sensor: !input reconcile_trigger_sensor
   sync_delay_ms: !input sync_delay_ms
-  suppress_during: !input suppress_during
+  use_uptime_sensor: !input use_uptime_sensor
+  uptime_sensor: !input uptime_sensor
+  ha_start_block_seconds_var: !input ha_start_block_seconds
   debug_enabled: !input debug_enabled
 
 conditions: []
 
 actions:
-  - alias: Global Gate - Suppress During Sensor
+  - alias: Skip HA Start if Reconcile Disabled
     if:
-      - alias: Suppress sensor configured
-        condition: template
-        value_template: "{{ suppress_during != '' and suppress_during is not none }}"
-      - alias: Suppress sensor is on
-        condition: template
-        value_template: "{{ states(suppress_during) == 'on' }}"
+      - condition: trigger
+        id: ha_start
+      - condition: template
+        value_template: "{{ not reconcile_on_ha_start }}"
     then:
-      - alias: Debug Log Suppressed
+      - stop: Reconcile on Home Assistant start is disabled.
+
+  - alias: Block Peer Sync during HA Start Window
+    if:
+      - condition: trigger
+        id: linked_entity_changed
+      - alias: Uptime sensor configured and within block window
+        condition: template
+        value_template: >-
+          {{
+            use_uptime_sensor
+            and uptime_sensor not in ['', none]
+            and states(uptime_sensor) not in ['unknown', 'unavailable', none]
+            and (
+              (states(uptime_sensor) | float(99999))
+              * ({'s': 1, 'seconds': 1,
+                  'min': 60, 'minutes': 60,
+                  'h': 3600, 'hours': 3600,
+                  'd': 86400, 'days': 86400}.get(
+                    state_attr(uptime_sensor, 'unit_of_measurement') | string | lower, 1
+                  ))
+              < (ha_start_block_seconds_var | int(0))
+            )
+          }}
+    then:
+      - alias: Debug Log Blocked
         if:
           - condition: template
             value_template: "{{ debug_enabled }}"
@@ -233,18 +267,12 @@ actions:
             data:
               level: info
               message: >-
-                {{ _caller_prefix }} Sync suppressed because {{ suppress_during }} is on.
-                Trigger was {{ trigger.id }}.
-      - stop: Suppress-during sensor is on. No action taken.
-
-  - alias: Skip HA Start if Reconcile Disabled
-    if:
-      - condition: trigger
-        id: ha_start
-      - condition: template
-        value_template: "{{ not reconcile_on_ha_start }}"
-    then:
-      - stop: Reconcile on Home Assistant start is disabled.
+                {{ _caller_prefix }} Peer sync blocked. HA start block window
+                is {{ ha_start_block_seconds_var }}s, current uptime sensor
+                reading is {{ states(uptime_sensor) }}
+                {{ state_attr(uptime_sensor, 'unit_of_measurement') }}.
+                Source: {{ trigger.entity_id }} -> {{ trigger.to_state.state }}.
+      - stop: Within HA start block window. Peer sync suppressed.
 
   - alias: Skip Peer Sync if States Already Agree
     if:
@@ -267,7 +295,8 @@ actions:
             data:
               level: info
               message: >-
-                {{ _caller_prefix }} Skip. All linked entities already match. Source: {{ trigger.entity_id }} -> {{ trigger.to_state.state }}.
+                {{ _caller_prefix }} Skip. All linked entities already match.
+                Source: {{ trigger.entity_id }} -> {{ trigger.to_state.state }}.
       - stop: All linked entities already agree.
 
   - alias: Dispatch by Trigger
@@ -289,31 +318,9 @@ actions:
                   message: >-
                     {{ _caller_prefix }} Peer sync. Source: {{ trigger.entity_id }} -> {{ trigger.to_state.state }}.
                     Targets: {{ linked_entities_var | reject('eq', trigger.entity_id) | list | join(', ') }}.
-
           - alias: Throttle Delay
             delay:
               milliseconds: "{{ sync_delay_ms }}"
-
-          - alias: Verify Source Still in Captured State
-            if:
-              - condition: template
-                value_template: >-
-                  {{ states(trigger.entity_id) in ['on', 'off']
-                     and states(trigger.entity_id) != trigger.to_state.state }}
-            then:
-              - alias: Debug Log Stale Dispatch Canceled
-                if:
-                  - condition: template
-                    value_template: "{{ debug_enabled }}"
-                then:
-                  - action: system_log.write
-                    continue_on_error: true
-                    data:
-                      level: info
-                      message: >-
-                        {{ _caller_prefix }} Dispatch canceled. Source {{ trigger.entity_id }} flipped during delay from {{ trigger.to_state.state }} to {{ states(trigger.entity_id) }}.
-              - stop: Source flipped during delay. Dispatch canceled.
-
           - alias: Propagate State to All Other Linked Entities
             action: "homeassistant.turn_{{ trigger.to_state.state }}"
             continue_on_error: true
@@ -328,17 +335,14 @@ actions:
               - reconcile_sensor
         sequence:
           - alias: Wait for Authority to Settle
-            wait_template: >-
-              {{ states(authority_entity_resolved) in ['on', 'off'] }}
+            wait_template: "{{ states(authority_entity_resolved) in ['on', 'off'] }}"
             timeout:
               seconds: 30
             continue_on_timeout: true
-
           - alias: Skip if Authority Not in a Known State
             if:
               - condition: template
-                value_template: >-
-                  {{ states(authority_entity_resolved) not in ['on', 'off'] }}
+                value_template: "{{ states(authority_entity_resolved) not in ['on', 'off'] }}"
             then:
               - alias: Debug Log Authority Unavailable
                 if:
@@ -352,7 +356,6 @@ actions:
                       message: >-
                         {{ _caller_prefix }} Reconcile skipped. Authority {{ authority_entity_resolved }} not in a known state.
               - stop: Authority not in a known state. Cannot reconcile.
-
           - alias: Debug Log Reconcile
             if:
               - condition: template
@@ -363,13 +366,12 @@ actions:
                 data:
                   level: info
                   message: >-
-                    {{ _caller_prefix }} Reconcile via {{ trigger.id }}. Authority: {{ authority_entity_resolved }} = {{ states(authority_entity_resolved) }}.
+                    {{ _caller_prefix }} Reconcile via {{ trigger.id }}.
+                    Authority: {{ authority_entity_resolved }} = {{ states(authority_entity_resolved) }}.
                     Aligning followers: {{ linked_entities_var | reject('eq', authority_entity_resolved) | list | join(', ') }}.
-
           - alias: Throttle Delay
             delay:
               milliseconds: "{{ sync_delay_ms }}"
-
           - alias: Align All Non-Authority Entities to Authority
             action: "homeassistant.turn_{{ states(authority_entity_resolved) }}"
             continue_on_error: true

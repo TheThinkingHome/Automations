@@ -8,20 +8,19 @@ This blueprint answers that question three ways at once. It cycles the plug when
 
 Full write-up and the longer story behind the design: <https://xeazy.com/sensor-watchdog-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
 
-**Current version: 1.0.0-beta.** This blueprint is shipped as a public preview. The author is dogfooding it on three Aqara FP2 sensors at home and will not graduate it to 1.0.0 stable until that deployment has run clean for a sustained window. Use it on your own setup if you are comfortable troubleshooting; feedback on the forum is welcome.
+**Current version: 1.0.5-beta.** This blueprint is shipped as a public preview. The author is dogfooding it on three Aqara FP2 sensors at home and will not graduate it to 1.0.0 stable until that deployment has run clean for a sustained window. Use it on your own setup if you are comfortable troubleshooting; feedback on the forum is welcome.
 
 ## What You Get
 
 - Three independent failure detectors firing into the same recovery cycle: an `unavailable` detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. An optional input also extends the unavailable detector to treat the `off` state as offline, so the blueprint can recover devices monitored via HA's ping integration (which reports `off`, not `unavailable`, when a target is unreachable).
-- A three-way mode selector that lets you choose how the freshness detector behaves: minimal (the default; skip the freshness detector entirely and rely on the unavailable detector plus the optional scheduled cycle), lighter (catches state changes only, light load), or responsive (catches every report from monitored entities including same-value heartbeats, heaviest load). Lighter and responsive require a timer helper; minimal does not.
+- A two-way mode selector that lets you choose how the freshness detector behaves: light (the default; skip the freshness detector entirely and rely on the unavailable detector plus the optional scheduled cycle) or responsive (catches state changes on monitored entities via a heartbeat timer). Responsive requires a timer helper; light does not.
 - An optional active time window for the freshness detector, so a presence sensor in an empty room overnight is not flagged as frozen just because nothing in the room is changing. The unavailable detector and the scheduled cycle ignore the window; a sensor that has dropped offline is broken at 3am the same as it is at 3pm.
-- An optional restart guard input. Point it at a sensor that goes truthy during your Home Assistant or router reboot window, and all three recovery branches will skip while it is active. Stops the blueprint from cycling plugs in response to the natural unavailability that a reboot creates.
+- A built-in block window that suppresses recovery for a configurable period after Home Assistant starts (or after the automation reloads). No external sensor or helper is required: the blueprint captures its own load time in trigger_variables and gates every recovery branch on elapsed time since load. This keeps the blueprint from cycling plugs while integrations are still coming up, without asking the user to build a binary_sensor first.
 - A self-recovery branch that turns the recovery switch back on if it is found off for longer than the recovery cycle would normally hold it. Protects against a dashboard click or a voice command that accidentally takes the upstream plug offline.
 - Debug logging that you can turn on during setup and turn off in normal operation. Log lines are written to the system log at info level, prefixed with `[Sensor Watchdog v<version>]` so they are easy to grep.
+- Optional failure notification: when enabled, the blueprint waits a configurable settle period after each recovery cycle, then checks whether the monitored entities are still in a failure state. If they are, a user-configured action sequence runs: a notify call, a persistent_notification.create, a script call, anything you can express as a Home Assistant action. Disabled by default; opt-in.
 
-- Optional failure notification: when enabled, the blueprint waits a configurable settle period after each recovery cycle, then checks whether the monitored entities are still in a failure state. If they are, a user-configured action sequence runs - a notify call, a persistent_notification.create, a script call, anything you can express as a Home Assistant action. Disabled by default; opt-in.
-
-A monitored entity counts as "online" whenever it has any state value at all that is not `unavailable` or `unknown`. The freshness detector measures from the entity's `last_reported` timestamp in responsive mode (which updates on every report including same-value heartbeats) or from `last_changed` in lighter mode (which only advances when the value actually changes).
+A monitored entity counts as "online" whenever it has any state value at all that is not `unavailable` or `unknown` (and not `off`, when `treat_off_as_offline` is enabled). The freshness detector in responsive mode measures from the entity's `last_changed` timestamp, which advances when the value actually changes.
 
 ## Where This Fits
 
@@ -35,7 +34,9 @@ This blueprint sits where you have one or more devices that wedge often enough t
 
 Home Assistant 2026.6 or newer. That is the version the blueprint is verified on.
 
-If you use the responsive or lighter detection modes, you will also need to create a Timer helper to act as the heartbeat clock. Minimal mode does not need one.
+If you use responsive detection mode, you will also need to create a Timer helper to act as the heartbeat clock. Light mode does not need one.
+
+No template binary_sensor is required. The blueprint no longer expects you to build a restart guard sensor on your own; the post-start block window is handled internally.
 
 ## Step 1: Import the Blueprint
 
@@ -59,7 +60,7 @@ After import, the blueprint appears on the Blueprints page with a Create Automat
 
 ## Step 2: Create the Heartbeat Timer
 
-Skip this step if you plan to use minimal mode.
+Skip this step if you plan to use light mode.
 
 A Timer helper is the clock the freshness detector reads from. Reports from the monitored entities reset it; if it ever expires, the blueprint declares the device frozen.
 
@@ -78,9 +79,9 @@ One timer helper per blueprint instance. If you watch three FP2s, you have three
 3. Fill in the inputs:
     - Monitored Entities: the entities you want to watch. For an FP2 you can pick more than one (the illuminance sensor and the presence sensor, for example); reports from any of them count as a heartbeat.
     - Recovery Switch: the smart plug that powers the upstream device.
-    - Heartbeat Timer: the timer helper you created in Step 2. Leave blank only if Detection Mode is set to minimal.
-    - Detection Mode: defaults to minimal. Change to lighter or responsive if you want freshness detection. See the note below for guidance.
-    - The remaining inputs have sensible defaults. Adjust the active window, scheduled reboot, and restart guard if you need them.
+    - Heartbeat Timer: the timer helper you created in Step 2. Leave blank if Detection Mode is set to light.
+    - Detection Mode: defaults to light. Change to responsive if you want freshness detection. See the note below for guidance.
+    - The remaining inputs have sensible defaults. Adjust the active window, scheduled reboot, and block-after-HA-start window if you need them.
 4. Save.
 
 The automation is now armed. Watch it in Settings, Automations & Scenes, the Traces view, the first time a monitored entity reports. You should see a trace that resets the heartbeat timer and exits cleanly.
@@ -93,15 +94,13 @@ An Aqara FP2 exposes both a presence entity and an illuminance entity. The illum
 
 The pairing rule is straightforward: the entities all have to live on the same smart plug, since the recovery action is one plug cycle for the whole group. If you have two flaky devices on two different plugs, that is two instances of the blueprint, not one. If you have one device with three useful entities, that is one instance watching all three.
 
-## A Small Note on the Three Detection Modes
+## A Small Note on the Two Detection Modes
 
-Minimal mode is the default. The freshness detector is off, so the blueprint only fires recovery when an entity transitions to `unavailable` or `unknown`, when the optional scheduled cycle fires, or when the post-restart branch detects an already-failed entity at HA start. No timer helper is needed and no `state_reported` traffic flows through the automation at all. The cost is that a silent freeze (a sensor reporting the same value forever while still appearing online) goes undetected until the next scheduled cycle. For most devices on most installs, this is enough.
+Light mode is the default. The freshness detector is off, so the blueprint only fires recovery when an entity transitions to `unavailable` or `unknown` (or `off`, with `treat_off_as_offline` enabled), when the optional scheduled cycle fires, or when the post-start branch detects an already-failed entity at HA boot. No timer helper is needed. The cost is that a silent freeze (a sensor reporting the same value forever while still appearing online) goes undetected until the next scheduled cycle. For most devices on most installs, this is enough.
 
-Lighter mode adds a freshness detector that fires on actual state *changes* on the monitored entities. The trigger filters at Home Assistant's entity-id level, so the automation only wakes for changes on the entities you are watching, never for anything else on the bus. This is the right mode for devices whose values move around enough that a quiet hour reliably means "device is broken." A presence sensor in an active room qualifies; an outdoor temperature sensor that holds the same value for ten minutes at a time does not. Lighter mode requires a timer helper (see Step 2).
+Responsive mode adds a freshness detector that fires on actual state changes on the monitored entities. Each change resets the heartbeat timer; if the timer expires before another change arrives, the device is declared stale and the recovery cycle fires. The trigger filters at Home Assistant's entity-id level, so the automation only wakes for changes on the entities you are watching, never for anything else on the bus. This is the right mode for devices whose values move around enough that a quiet stretch reliably means "device is broken." A presence sensor in an active room qualifies; an outdoor temperature sensor that holds the same value for ten minutes at a time does not. Responsive mode requires a timer helper (see Step 2).
 
-Responsive mode is the heaviest of the three. It wakes the freshness detector on every `state_reported` event from a monitored entity, including same-value heartbeats. The trigger filters at the event bus via `event_data: entity_id`, so chatty entities elsewhere in your installation do not consume queue slots on this automation. The reason to choose responsive over lighter is the rare case of a device that keeps sending heartbeats forever with frozen values: lighter cannot tell that apart from healthy quiet, responsive can. Responsive mode also requires a timer helper.
-
-If you are not sure which mode fits, start with minimal. Upgrade to lighter if you have devices that go silent without going `unavailable` (a real freeze). Upgrade to responsive only for devices that keep heartbeating with stuck values, which is a narrow case.
+If you are not sure which mode fits, start with light. Upgrade to responsive once you have devices that need it.
 
 ## A Small Note on the Active Window
 
@@ -113,7 +112,7 @@ The unavailable detector asks "is this entity reachable at all," and the answer 
 
 The scheduled cycle is preventive maintenance you have deliberately scheduled at a quiet hour for the explicit purpose of doing recovery during that hour. Gating it by a window would defeat its only purpose.
 
-For v1.0.0 the active window cannot cross midnight. Set the start earlier than the end and you are fine. If you need a window that wraps midnight (for an environment that is "active" through the night), that is on the v1.1.0 list.
+For v1.0.x the active window cannot cross midnight. Set the start earlier than the end and you are fine. If you need a window that wraps midnight (for an environment that is "active" through the night), that is on the v1.1.0 list.
 
 ## A Small Note on What Counts as Offline
 
@@ -145,31 +144,23 @@ The blueprint avoids this with a `for:` delay on the self-recovery trigger: the 
 
 The practical effect: a manual or accidental turn-off of the recovery switch takes a few tens of seconds to be corrected, not instantaneously. For a router plug that has other devices behind it, that is a small but acceptable network gap. For a use case where the recovery switch is dedicated to a single device, the gap is invisible.
 
-## A Small Note on the Restart Guard
+## A Small Note on the HA Start Block Window
 
-The Restart Guard Sensor input is the blueprint's way of staying out of trouble during known maintenance windows. When the sensor reads truthy (`on` or `true`), all recovery branches skip. The most common use is to suppress recovery during a Home Assistant restart, since integrations come online in unpredictable order during boot and entities are routinely `unavailable` for the first thirty to ninety seconds while everything settles. Without a guard, the offline detector could see those startup-window unavailables, wait out the offline timeout, and start cycling plugs while integrations are still loading.
+Integrations come up in unpredictable order when Home Assistant starts. For the first thirty seconds to a couple of minutes after boot, entities are routinely `unavailable` while their integrations finish loading. Without something stopping it, the unavailable detector would see that startup-window unavailability, ride out its offline timeout, and start cycling plugs while HA is still coming up.
 
-A small template binary_sensor built on HA's Uptime integration is the canonical pattern. Add the Uptime integration from Settings → Devices & Services → Add Integration → Uptime if you do not already have it. Then add a template like this to your `template:` configuration:
+Earlier versions of this blueprint solved that with a `restart_guard_sensor` input that expected you to build a template binary_sensor on top of HA's Uptime integration and point the input at it. That worked but asked every user to write a small template before they could use the blueprint safely. Most people do not want to write a sensor to use a sensor.
 
-```yaml
-template:
-  - binary_sensor:
-      - name: "Watchdog Restart Guard"
-        unique_id: watchdog_restart_guard
-        state: >-
-          {% set started = states('sensor.uptime') %}
-          {% if started in ['unknown', 'unavailable'] or started is none %}
-            false
-          {% else %}
-            {{ (as_timestamp(now()) - as_timestamp(started, default=0) < 120) | lower }}
-          {% endif %}
-```
+Starting in v1.0.4-beta the block window is internal. The blueprint captures `as_timestamp(now())` into a `trigger_variables` entry called `_ha_load_timestamp` at automation initialization, which happens at HA start. Every recovery branch then adds a single template condition comparing `as_timestamp(now()) - _ha_load_timestamp` against the configured `ha_start_block_seconds`. While elapsed time is below the threshold, recovery branches exit silently. Once elapsed time crosses the threshold, the gate opens and the blueprint operates normally.
 
-That sensor reads `on` for the first 120 seconds after every HA start and `off` afterward. Point the blueprint's Restart Guard Sensor input at `binary_sensor.watchdog_restart_guard` and the blueprint will be silent for two minutes after every restart, then resume normal operation.
+No external sensor, no additional helper. Trigger_variables are evaluated once when the automation is initialized, the resulting timestamp is held in memory for the lifetime of the automation, and the per-branch comparison is a few microseconds of arithmetic. The cost is well below the noise floor of any other thing your install is doing.
 
-The pattern also works for router reboot windows or any other known-noisy interval: build a binary_sensor that reads truthy during the window and falsy otherwise, point the guard at it, and the blueprint stays out of the way.
+The block window has one useful side effect worth knowing about: trigger_variables are re-evaluated when the automation is reloaded, including on a configuration reload (Developer Tools → YAML → Reload Automations). After a reload, `_ha_load_timestamp` updates to the current time and the block kicks in again for the configured duration. That is the right behavior. A config reload is exactly the moment when you might have just changed something, and the watchdog should not be cycling devices while you are mid-edit.
 
+The default `ha_start_block_seconds` is 120 (two minutes), which is enough for most installs to settle. Set it longer if you have a complex install with many slow-loading integrations (HACS-heavy installs, large MQTT broker connections, big Z-Wave or Zigbee networks). Set it to 0 to disable the block window entirely; nothing else in the blueprint depends on it being non-zero.
 
+The same value is also used as the initial delay in the post-restart evaluation branch. That branch triggers on `homeassistant: start`, waits `ha_start_block_seconds`, then evaluates whether any monitored entity is still in a failure state. If yes (a device that was dead before HA loaded and never got a transition to fire the unavailable trigger), the recovery cycle runs once. The single shared value keeps the two behaviors consistent: the block lifts and the post-start evaluation runs at the same moment.
+
+## A Small Note on Failure Notification
 
 A recovery cycle is a best effort. The blueprint cycles the upstream plug, the device gets a fresh boot, and most of the time the entities come back online and life goes on. Sometimes the device is dead, the power supply is gone, the WiFi credentials have aged out, the SD card has corrupted, and a power cycle will not save it. Without something else doing the watching, those failures sit there quietly until you notice the room is still dark or the data is still wrong.
 
@@ -177,7 +168,7 @@ The Failure Notification feature is the something else. When you enable it, ever
 
 The settle period (default 60 seconds) is the only tunable that really matters. Set it to roughly the slowest boot time of the devices you watch: 30-60 seconds for most Zigbee plugs and sensors, 60-90 for WiFi routers, 90-120 for NAS units or anything else that takes a real moment to come up. Setting it too short means you get false failure notifications when the device is just still booting. Setting it too long is fine for correctness; you just learn about failures a bit later.
 
-The On Failure Action input takes a full Home Assistant action sequence: notify calls, persistent_notification.create, script calls, MQTT publish, anything. Two variables are available inside that sequence: `recovery_reason` (one of `unavailable`, `stale`, `scheduled`) and `failed_entities` (a list of monitored_entities still in a failure state). A typical setup notifies a phone or chat channel; a thorough one also creates a persistent notification in Home Assistant so the failure is visible on the dashboard until acknowledged. See the worked examples below.
+The On Failure Action input takes a full Home Assistant action sequence: notify calls, persistent_notification.create, script calls, MQTT publish, anything. Two variables are available inside that sequence: `recovery_reason` (one of `unavailable`, `stale`, `scheduled`, `post_restart`) and `failed_entities` (a list of monitored_entities still in a failure state). A typical setup notifies a phone or chat channel; a thorough one also creates a persistent notification in Home Assistant so the failure is visible on the dashboard until acknowledged. See the worked examples below.
 
 The Self-Recovery branch does not run failure detection: it is just turning the switch back on after an external off, not power-cycling a device that needs to come back, so there is no "success or failure" to evaluate.
 
@@ -193,7 +184,7 @@ Living Room FP2:
 - Recovery Switch: `switch.fp2_living_room_plug`
 - Recovery Off Duration: 10 seconds
 - Offline Timeout: 30 seconds
-- Detection Mode: Lighter
+- Detection Mode: Responsive
 - Stale Threshold: 30 minutes
 - Heartbeat Timer: `timer.fp2_living_room_heartbeat`
 - Restrict Staleness to Active Window: enabled
@@ -202,9 +193,9 @@ Living Room FP2:
 - Enable Scheduled Reboot: enabled
 - Scheduled Reboot Time: 04:30:00
 - Treat 'off' as Offline: **disabled** (the presence entity legitimately goes `off` when the room is empty)
-- Restart Guard Sensor: optional. If you maintain a binary_sensor that reads true for a minute or two after Home Assistant starts, point this input at it. Otherwise leave blank.
+- Block After HA Start: 120 seconds (the default)
 
-The living room is active enough during the day that 30 minutes without a value change reliably means the FP2 has wedged, and quiet enough at night that the active window prevents false positives. The scheduled cycle at 04:30 catches any silent wedge the freshness detector misses, and a restart guard (if configured) keeps the blueprint quiet during reboot windows. The same configuration with the entities and timer swapped applies to the other FP2s.
+The living room is active enough during the day that 30 minutes without a state change reliably means the FP2 has wedged, and quiet enough at night that the active window prevents false positives. The scheduled cycle at 04:30 catches any silent wedge the freshness detector misses, and the 120-second block window keeps the blueprint quiet during HA's startup settling period. The same configuration with the entities and timer swapped applies to the other FP2s.
 
 `Treat 'off' as Offline` is left off because the presence entity going `off` is a normal event (the room emptied), not a failure. The offline detector catches the FP2's failure modes (`unavailable` and `unknown` states) without needing to treat `off` as a problem.
 
@@ -231,14 +222,14 @@ This produces `binary_sensor.router_gateway_ping`, which reports `on` when the g
 - Recovery Switch: `switch.wifi_router_zigbee_plug`
 - Recovery Off Duration: 15 seconds
 - Offline Timeout: 90 seconds
-- Detection Mode: **Minimal** (the ping sensor sits at `on` for days when the router is healthy; freshness detection in `responsive` or `lighter` mode would falsely flag the long-quiet stretches)
-- Heartbeat Timer: (blank; minimal mode does not need one)
+- Detection Mode: **Light** (the ping sensor sits at `on` for days when the router is healthy; freshness detection in responsive mode would falsely flag the long-quiet stretches)
+- Heartbeat Timer: (blank; light mode does not need one)
 - Treat 'off' as Offline: **enabled** (the whole reason we are using a ping sensor)
 - Enable Scheduled Reboot: enabled
 - Scheduled Reboot Time: 04:00:00
-- Restart Guard Sensor: optional, as above.
+- Block After HA Start: 180 seconds (a router watchdog has more reason than most to wait for the WAN side to come up)
 
-In minimal mode the offline detector is the workhorse. The 90-second offline timeout rides out brief network blips and short DHCP renewals without falsely cycling the router. When the gateway has been unreachable for more than 90 seconds the plug cycles, the router boots, and the gateway comes back online within another minute or so. The 04:00 scheduled cycle is preventive maintenance, useful for routers with slow memory leaks.
+In light mode the offline detector is the workhorse. The 90-second offline timeout rides out brief network blips and short DHCP renewals without falsely cycling the router. When the gateway has been unreachable for more than 90 seconds the plug cycles, the router boots, and the gateway comes back online within another minute or so. The 04:00 scheduled cycle is preventive maintenance, useful for routers with slow memory leaks.
 
 The Zigbee plug for the recovery switch is deliberate. If the recovery switch were a WiFi smart plug, it would also be offline during the outage and the cycle could not run. A Zigbee plug stays reachable through the Zigbee coordinator regardless of what the WiFi network is doing.
 
@@ -249,14 +240,14 @@ For the router we also want to know if the cycle did NOT bring it back, since a 
 - On Failure Action:
 
 ```yaml
-- service: notify.mobile_app_james_phone
+- action: notify.mobile_app_james_phone
   data:
     title: "Router watchdog: cycle did not recover"
     message: >-
       The router was cycled at {{ now().strftime('%H:%M') }} because
       {{ recovery_reason }}, but {{ failed_entities | join(', ') }}
       is still failed after the settle period.
-- service: persistent_notification.create
+- action: persistent_notification.create
   data:
     title: "Router watchdog failure"
     message: >-
@@ -278,42 +269,41 @@ For more worked examples, including Zigbee router plugs, smart cameras, and NAS 
 | `recovery_switch` | Yes | none | a `switch` entity | The smart plug or other switch that powers the upstream device. Cycled (off, wait, on) by every recovery branch. |
 | `recovery_off_seconds` | No | 10 | 1 to 60 | How long to hold the recovery switch off between the off action and the on action. Long enough for the device to fully power down. |
 | `unavailable_timeout_seconds` | No | 30 | 5 to 600 | How long an entity must stay in an offline state before recovery fires. "Offline" means `unavailable` or `unknown` by default; with `treat_off_as_offline` enabled, also includes `off`. Long enough to ride out transient outages without missing real failures. |
-| `detection_mode` | No | `responsive` | `responsive`, `lighter`, `minimal` | Which mechanism feeds the freshness detector. Responsive catches every report including heartbeats (heaviest load). Lighter catches value changes only (lighter, recommended starting point). Minimal disables freshness detection entirely. |
-| `stale_threshold_minutes` | No | 5 | 1 to 1440 | How long without a report (responsive) or without a value change (lighter) before the device is declared stale. Ignored in minimal mode. |
-| `heartbeat_timer` | No (Yes for responsive and lighter) | none | a `timer` entity | The timer helper that tracks heartbeats. Create one timer per blueprint instance, with a blank duration. Required for responsive and lighter modes; ignored in minimal mode. |
+| `detection_mode` | No | `light` | `light`, `responsive` | Which mechanism feeds the freshness detector. Light disables freshness detection entirely and relies on the unavailable detector and (optionally) the scheduled cycle. Responsive catches state changes on monitored entities via a heartbeat timer. |
+| `stale_threshold_minutes` | No | 5 | 1 to 1440 | How long without a value change before the device is declared stale. Ignored in light mode. |
+| `heartbeat_timer` | No (Yes for responsive) | none | a `timer` entity | The timer helper that tracks heartbeats. Create one timer per blueprint instance, with a blank duration. Required for responsive mode; ignored in light mode. |
 | `active_window_enabled` | No | `false` | `true`, `false` | When enabled, the freshness branch only fires within the active time window below. Unavailable detection and scheduled reboot are not affected. |
 | `active_after` | No | `06:00:00` | a time (HH:MM:SS) | Start of the active window. Ignored when the window is disabled. |
-| `active_before` | No | `23:00:00` | a time (HH:MM:SS) | End of the active window. Must be later than `active_after`. v1.0.0 does not support windows that cross midnight. Ignored when the window is disabled. |
-| `scheduled_reboot_enabled` | No | `false` | `true`, `false` | When enabled, the recovery cycle fires once per day at the scheduled time. Works in all detection modes including minimal. |
+| `active_before` | No | `23:00:00` | a time (HH:MM:SS) | End of the active window. Must be later than `active_after`. v1.0.x does not support windows that cross midnight. Ignored when the window is disabled. |
+| `scheduled_reboot_enabled` | No | `false` | `true`, `false` | When enabled, the recovery cycle fires once per day at the scheduled time. Works in all detection modes. |
 | `scheduled_reboot_time` | No | `04:30:00` | a time (HH:MM:SS) | The time of day to fire the scheduled cycle. Ignored when the scheduled cycle is disabled. |
 | `treat_off_as_offline` | No | `false` | `true`, `false` | When enabled, a monitored entity transitioning to `off` is treated the same as one transitioning to `unavailable` or `unknown` and triggers recovery after the offline timeout. Enable only for entities whose `off` state means failure (e.g., binary_sensors from HA's `ping` integration, which report `off` when the target is unreachable). Leave disabled for entities whose `off` state is normal operation (presence sensors, motion sensors, door contacts, switches). The setting is per-instance: every monitored entity in this instance shares the same value. See "A Small Note on What Counts as Offline" above. |
 | `failure_notification_enabled` | No | `false` | `true`, `false` | When enabled, every recovery cycle is followed by a settle delay and a check for whether any monitored entity is still in a failure state. If yes, the On Failure Action runs. Disabled by default; opt-in. See "A Small Note on Failure Notification" above. |
 | `recovery_settle_seconds` | No | 60 | 5 to 600 | How long to wait after the recovery switch turns back on before checking whether the device recovered. Roughly the boot time of the slowest device on the recovery switch. Ignored when failure notification is disabled. |
-| `on_failure_action` | No | empty list | a Home Assistant action sequence | The action sequence to run when a recovery cycle fails to bring the device back online. Typically a `notify` call, a `persistent_notification.create`, a script call, or any combination. Two variables are available inside the sequence: `recovery_reason` (one of `unavailable`, `stale`, `scheduled`) and `failed_entities` (a list of monitored_entities still in a failure state). |
-| `restart_guard_sensor` | No | blank | any entity | When set, all recovery branches skip while this entity reads `on`, `true`, or `True`. Used to suppress the blueprint during a known reboot window. |
+| `on_failure_action` | No | empty list | a Home Assistant action sequence | The action sequence to run when a recovery cycle fails to bring the device back online. Typically a `notify` call, a `persistent_notification.create`, a script call, or any combination. Two variables are available inside the sequence: `recovery_reason` (one of `unavailable`, `stale`, `scheduled`, `post_restart`) and `failed_entities` (a list of monitored_entities still in a failure state). |
+| `ha_start_block_seconds` | No | 120 | 0 to 900 | How long after Home Assistant starts (or the automation reloads) before recovery branches are allowed to run. Prevents the watchdog from cycling devices while integrations are still loading. The same value is used as the initial wait in the post-restart evaluation branch. Set to 0 to disable. See "A Small Note on the HA Start Block Window" above. |
 | `debug_enabled` | No | `false` | `true`, `false` | When enabled, the automation writes a log line for each branch it enters. Turn on during setup, turn off in normal operation. |
 
 ## Beta Status
 
-This is 1.0.0-beta. The blueprint design has been simulated against 43 scenarios covering the obvious failure modes and a number of non-obvious ones (the recovery cycle's own turn-off accidentally firing self-recovery, two monitored entities going unavailable in the same instant queueing duplicate cycles, the staleness branch firing during a reboot window, the unavailable and stale detectors firing in sequence for the same wedge, the failure notification firing on persistent failure and not firing on successful recovery). The author is running it against three Aqara FP2 sensors at home and will graduate it to 1.0.0 stable when that deployment has run clean for a sustained window with no false positives and no missed wedges.
+This is 1.0.5-beta. The blueprint design has been simulated against 43 scenarios covering the obvious failure modes and a number of non-obvious ones (the recovery cycle's own turn-off accidentally firing self-recovery, two monitored entities going unavailable in the same instant queueing duplicate cycles, the staleness branch firing during a reboot window, the unavailable and stale detectors firing in sequence for the same wedge, the failure notification firing on persistent failure and not firing on successful recovery). The author is running it against three Aqara FP2 sensors at home and will graduate it to 1.0.0 stable when that deployment has run clean for a sustained window with no false positives and no missed wedges.
 
 **Verified in simulation:**
 
-- All three detection modes route correctly through the choose: block.
+- Both detection modes route correctly through the choose: block.
 - The active window gates only the freshness branch; the unavailable detector and the scheduled cycle ignore it.
-- The restart guard blocks all three recovery branches.
+- The HA start block window blocks all recovery branches and lifts at the configured threshold.
 - The self-recovery `for:` delay is long enough that the recovery cycle's own turn-off does not fire it.
 - Simultaneous triggers (two entities unavailable in the same instant; stale and unavailable firing together) produce exactly one recovery cycle.
 - The cycle is one-attempt-per-wedge across all three detectors: the unavailable and scheduled recovery branches cancel the heartbeat timer at the moment of cycle, so the freshness detector does not fire a second cycle for the same wedge.
 - The `treat_off_as_offline` input correctly extends the offline detector to `off` transitions when enabled, and leaves the default (unavailable/unknown only) behaviour unchanged when disabled.
 - Failure notification fires when the cycle does not recover the device by the end of the settle window, does NOT fire when the device recovers in time, and is correctly disabled by default. The self-recovery branch does not run failure notification.
 
-**Verified in production:** pending. The author's home test run starts on a living-room FP2 in lighter mode with the active window enabled.
+**Verified in production:** pending. The author's home test run starts on a living-room FP2 in responsive mode with the active window enabled, plus parallel master-bedroom and guest-bedroom FP2 instances in light mode.
 
 **Not yet verified:**
 
-- The behavior in responsive mode on a real install. The trigger filters at the event bus via `event_data: entity_id`, so the automation only wakes for state reports from the monitored entities themselves, not for other entities on the bus. This filtering pattern needs to be confirmed on Home Assistant 2026.6 with a list-valued input as the filter value.
-- The post-restart branch. A `homeassistant: start` trigger fires when HA loads, waits the configured settle period, and evaluates monitored entities. This was added in 1.0.1-beta and has been simulated but not yet exercised on a real HA restart.
+- The post-restart branch. A `homeassistant: start` trigger fires when HA loads, waits the configured block period, and evaluates monitored entities. This was added in 1.0.1-beta and reworked in 1.0.4-beta to share the new `ha_start_block_seconds` value; it has been simulated but not yet exercised on a real HA restart.
 - Multi-day scheduled cycles. v1.0.x is daily-only; weekly or specific-days scheduling is on the v1.1.0 list.
 
 If you run into any of the above before the author does, or you find a case the simulator missed, the forum thread is the right place to flag it.
@@ -328,6 +318,9 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
+| 1.0.5-beta | Renamed detection modes for clarity: "minimal" is now "light" and "lighter" is now "responsive". No logic change. BREAKING: existing instances using `detection_mode: minimal` or `detection_mode: lighter` will need to be re-saved with the new value. |
+| 1.0.4-beta | Replaced `restart_guard_sensor` input with `ha_start_block_seconds`. The new approach uses `trigger_variables` to capture HA load time as a Unix timestamp at automation initialization, then gates all recovery branches on elapsed time since load. No external sensor required, no additional helper required. The block also applies after automation reload, which is desirable: a config reload should not immediately cycle devices either. Merged `post_restart_settle_seconds` into `ha_start_block_seconds` since both inputs serve the same concept (wait time after HA start). The post-restart evaluation branch now uses `ha_start_block_seconds` as its initial delay. BREAKING: existing instances using `restart_guard_sensor` will need to be re-saved with the new input set to a similar value (120-180 seconds is typical). |
+| 1.0.3-beta | Removed Responsive detection mode and its `state_reported` event trigger. HA's automation validator refuses to register `state_reported` as an event_type in any trigger, regardless of the trigger's runtime enabled state, so the trigger had to come out entirely for the blueprint to save on current HA. Lighter and Minimal modes (later renamed in 1.0.5-beta) are unchanged. The rare same-value-heartbeat-stuck failure case that the old Responsive mode could catch is no longer detected; in practice that case is uncommon enough that the remaining modes plus the unavailable detector plus the scheduled cycle cover almost all wedges. The detection_mode selector now offers only the two remaining modes. |
 | 1.0.2-beta | Default detection_mode flipped from responsive to minimal: a fresh import no longer requires a Timer helper. Generalized input descriptions: removed references to entity names specific to one installation that do not exist on others. Restart Guard description now points at the HA Uptime integration as the canonical pattern. Stripped inline `#` comments from inside the `triggers:` and `actions:` blocks (action aliases serve the same documentation purpose). README updated to describe the 1.0.1+ event-bus-filtered behavior of responsive mode (the 1.0.0 text described the old unfiltered behavior) and to add a Small Note on the Restart Guard with an example uptime-based template binary_sensor. No logic change; same 46 simulator scenarios pass. |
 | 1.0.1-beta | Trigger-level filter on the responsive heartbeat: the automation no longer wakes up for state reports from non-monitored entities. New Home Assistant start branch: after a configurable settle period (default 180 seconds), the blueprint evaluates monitored entities and fires the recovery cycle if any are already in a failure state. Covers the case where a device was dead before HA loaded and no state transition occurred. Refactored the failed-entities templates in all four failure-notification branches from namespace loops to `expand()` / `selectattr` filter chains: same behavior, native list output. Stale trigger no longer references the heartbeat_timer input in `event_data` (was a load-time validation risk when the input was left blank in minimal mode); the filter moved to a runtime condition in the stale branch. New input: `post_restart_settle_seconds`. Three new simulator scenarios (s44, s45, s46) validating the post-restart branch. |
 | 1.0.0-beta | Initial public preview. Three independent failure detectors firing into a single recovery cycle: an unavailable detector with a tolerance window, a freshness detector backed by a timer helper, and an optional daily scheduled cycle. Three-mode selector (responsive, lighter, minimal) for the freshness detector's event load. Optional active time window for the freshness branch, optional restart guard input, optional `treat_off_as_offline` input to extend the offline detector to `off` transitions (for ping-style sensors), and a self-recovery branch that uses a `for:` delay so the recovery cycle's own turn-off does not fight itself. Unavailable and scheduled recovery branches cancel the heartbeat timer at cycle time, so the freshness detector does not fire a second cycle for the same wedge. Optional failure notification: enable to wait a configurable settle period after each cycle, check whether monitored entities are still in a failure state, and run a user-configured action sequence with `recovery_reason` and `failed_entities` variables available in the action context. Debug logging is written at info level with a `[Sensor Watchdog v<version>]` prefix. Forty-three simulator scenarios pass. |

@@ -2,10 +2,16 @@
 # Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
 # See the LICENSE file for the full text.
 #
-# Version: 1.0.1-beta
+# Version: 1.0.2-beta
 # Article: https://xeazy.com/linked-entity-pro/
 #
 # Changelog:
+#   1.0.2-beta - Promoted sync_delay_ms to its own top-level input section,
+#                placed between Linked Entities and Reconciliation. The
+#                section makes the parameter visible and signals that it is
+#                a key tuning input that should be considered for every
+#                setup. The empty Behavior Tuning section was removed.
+#                No functional changes from 1.0.1-beta.
 #   1.0.1-beta - Replaced suppress_during input with optional HA-startup
 #                block, gated on the HA Uptime integration. Three new inputs:
 #                use_uptime_sensor (boolean), uptime_sensor (entity), and
@@ -54,7 +60,7 @@ blueprint:
 
     **Work in progress.** This is a public preview. Feedback is welcome on the forum. Once an external tester confirms it works in their environment, the blueprint graduates from beta and the file is republished at `blueprints/automation/linked_entities_pro.yaml`.
 
-    **Version: 1.0.1-beta**
+    **Version: 1.0.2-beta**
   domain: automation
   author: James Lander (xeazy.com)
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro_beta.yaml
@@ -95,6 +101,24 @@ blueprint:
                     - group
               multiple: false
               reorder: false
+
+    sync_delay_section:
+      name: ⏱ Sync Delay
+      description: >-
+        The pause between the trigger firing and dispatching commands. This is a key parameter to tune for your setup. It controls both the cancellation window for rapid opposite presses (mode restart cancels in-flight runs before they dispatch) and the throttle that prevents redundant commands when many entities sync at once. The default of 200 ms works for most setups; the right value for your setup depends on the size of your linked group and the speed of your hardware.
+      input:
+        sync_delay_ms:
+          name: Sync Delay (ms)
+          description: >-
+            Recommended starting points: 0 for a two-entity pair on fast hardware where there is nothing to absorb; 200 (default) for groups of 3 to 5 entities; 300 to 500 for large groups (6 or more), busy Zigbee meshes, or slow devices. Setting at or above the slowest device's response latency (typically 200 to 500 ms for Zigbee) eliminates redundant commands during the cascade. The article walks through the math for a 10-entity stress test: 0 ms generated 81 commands per press; 200 ms generated 9.
+          default: 200
+          selector:
+            number:
+              min: 0
+              max: 5000
+              step: 50
+              unit_of_measurement: ms
+              mode: box
 
     reconciliation_section:
       name: 🔄 Reconciliation
@@ -152,23 +176,6 @@ blueprint:
               unit_of_measurement: seconds
               mode: box
 
-    behavior_tuning_section:
-      name: ⚙️ Behavior Tuning
-      description: Fine-tune how the automation behaves in edge cases.
-      input:
-        sync_delay_ms:
-          name: Sync Delay (ms)
-          description: >-
-            Milliseconds to wait between dispatching actions to followers. Helps Zigbee meshes and busy hubs avoid command storms when many entities sync at once. 200 is a good default. Increase if commands get dropped on large groups; decrease toward 0 if you are running on fast hardware with a snappy mesh.
-          default: 200
-          selector:
-            number:
-              min: 0
-              max: 5000
-              step: 50
-              unit_of_measurement: ms
-              mode: box
-
     advanced_section:
       name: 🛠 Advanced
       description: Use these only when troubleshooting.
@@ -203,8 +210,8 @@ triggers:
     id: reconcile_sensor
 
 variables:
-  _version: "1.0.1-beta"
-  _caller_prefix: "[Linked Entities Pro Beta v1.0.1-beta]"
+  _version: "1.0.2-beta"
+  _caller_prefix: "[Linked Entities Pro Beta v1.0.2-beta]"
   linked_entities_var: !input linked_entities
   authority_entity_input: !input authority_entity
   authority_entity_resolved: >-

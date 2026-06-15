@@ -8,6 +8,20 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
+#   1.0.4-beta - Replaced restart_guard_sensor input with ha_start_block_seconds.
+#                The new approach uses trigger_variables to capture HA load
+#                time as a Unix timestamp at automation initialization, then
+#                gates all recovery branches on elapsed time since load. No
+#                external sensor required, no additional helper required. The
+#                block also applies after automation reload, which is
+#                desirable: a config reload should not immediately cycle
+#                devices either. Merged post_restart_settle_seconds into
+#                ha_start_block_seconds since both inputs serve the same
+#                concept (wait time after HA start). The post-restart
+#                evaluation branch now uses ha_start_block_seconds as its
+#                initial delay. BREAKING: existing instances using
+#                restart_guard_sensor will need to be re-saved with the new
+#                input set to a similar value (120-180 seconds is typical).
 #   1.0.3-beta - Removed Responsive detection mode and its state_reported
 #                event trigger. HA's automation validator refuses to register
 #                state_reported as an event_type in any trigger, regardless
@@ -90,7 +104,7 @@ blueprint:
 
     Watches one or more entities that share a single smart plug and automatically power-cycles the device behind that plug when any monitored entity goes offline or stops reporting fresh values. Multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone.
 
-    Two detection modes let you choose how much event traffic the freshness detector creates: lighter (catches state changes only) or minimal (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. An optional restart guard input blocks recovery during HA or router reboot windows.
+    Two detection modes let you choose how much event traffic the freshness detector creates: lighter (catches state changes only) or minimal (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. A configurable block window prevents recovery while HA is still loading after start; no external sensor required.
 
     Requires Home Assistant 2026.6 or later. That is the version the blueprint is verified on. If using lighter mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; minimal mode does not need a timer.
 
@@ -333,34 +347,22 @@ blueprint:
           default: false
           selector:
             boolean:
-        restart_guard_sensor:
-          name: Restart Guard Sensor
+        ha_start_block_seconds:
+          name: Block After HA Start
           description: >-
-            Optional. If set, all recovery branches skip when this
-            sensor's state reads truthy ('on' or 'true'). The typical
-            pattern is a template binary_sensor that reads true for a
-            minute or two after Home Assistant starts, so the watchdog
-            does not power-cycle devices while integrations are still
-            loading. You can build such a sensor from HA's Uptime
-            integration with a simple template. Leave blank if not
-            needed.
-          default:
-          selector:
-            entity: {}
-        post_restart_settle_seconds:
-          name: Post-Restart Settle
-          description: >-
-            How long to wait after Home Assistant starts before
-            evaluating monitored entities for already-failed states.
-            Long enough for all integrations to finish loading.
-            Two to five minutes is appropriate for most setups. The
-            restart guard still applies during this window, so if your
-            guard is on during HA boot, the evaluation will skip
-            regardless of this value.
-          default: 180
+            How long after Home Assistant starts before recovery
+            branches are allowed to run. Prevents the watchdog from
+            cycling devices while integrations are still loading. The
+            same value is used as the initial wait inside the post-
+            restart evaluation branch. The block also applies after
+            automation reload (which is desirable: a config reload
+            should not immediately cycle devices either). Two to five
+            minutes is appropriate for most setups. Set to 0 to
+            disable.
+          default: 120
           selector:
             number:
-              min: 30
+              min: 0
               max: 900
               unit_of_measurement: seconds
               mode: box
@@ -384,20 +386,21 @@ trigger_variables:
   _active_window_enabled: !input active_window_enabled
   _active_after: !input active_after
   _active_before: !input active_before
-  _restart_guard_sensor: !input restart_guard_sensor
+  _ha_load_timestamp: "{{ as_timestamp(now()) }}"
+  _ha_start_block_seconds: !input ha_start_block_seconds
   _debug_enabled: !input debug_enabled
   _recovery_switch: !input recovery_switch
   _recovery_off_seconds: !input recovery_off_seconds
   _treat_off_as_offline: !input treat_off_as_offline
 
 variables:
-  _version: "1.0.3-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.3-beta]"
+  _version: "1.0.4-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.4-beta]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled
   recovery_settle_seconds_var: !input recovery_settle_seconds
-  post_restart_settle_seconds_var: !input post_restart_settle_seconds
+  ha_start_block_seconds_var: !input ha_start_block_seconds
   heartbeat_timer_var: !input heartbeat_timer
 
 triggers:
@@ -481,12 +484,8 @@ actions:
             entity_id: !input recovery_switch
             state: "on"
           - condition: template
-            value_template: >-
-              {% if _restart_guard_sensor in [none, ''] %}
-                true
-              {% else %}
-                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
-              {% endif %}
+            alias: "Block recovery during HA start window"
+            value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
           - condition: template
             value_template: >-
               {% if not _active_window_enabled %}
@@ -556,12 +555,8 @@ actions:
             entity_id: !input recovery_switch
             state: "on"
           - condition: template
-            value_template: >-
-              {% if _restart_guard_sensor in [none, ''] %}
-                true
-              {% else %}
-                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
-              {% endif %}
+            alias: "Block recovery during HA start window"
+            value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
         sequence:
           - alias: "Debug Log Unavailable Recovery"
             if:
@@ -632,12 +627,8 @@ actions:
             entity_id: !input recovery_switch
             state: "on"
           - condition: template
-            value_template: >-
-              {% if _restart_guard_sensor in [none, ''] %}
-                true
-              {% else %}
-                {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
-              {% endif %}
+            alias: "Block recovery during HA start window"
+            value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
         sequence:
           - alias: "Debug Log Scheduled Recovery"
             if:
@@ -714,9 +705,9 @@ actions:
                   level: info
                   message: >-
                     {{ _caller_prefix }} HA start detected. Waiting
-                    {{ post_restart_settle_seconds_var }}s for integrations to load.
+                    {{ ha_start_block_seconds_var }}s for integrations to load.
           - delay:
-              seconds: "{{ post_restart_settle_seconds_var }}"
+              seconds: "{{ ha_start_block_seconds_var }}"
           - variables:
               post_restart_failed_entities: >-
                 {% set bad = ['unavailable', 'unknown'] + (['off'] if treat_off_as_offline_var else []) %}
@@ -742,12 +733,8 @@ actions:
                     entity_id: !input recovery_switch
                     state: "on"
                   - condition: template
-                    value_template: >-
-                      {% if _restart_guard_sensor in [none, ''] %}
-                        true
-                      {% else %}
-                        {{ states(_restart_guard_sensor) not in ['on', 'true', 'True'] }}
-                      {% endif %}
+                    alias: "Block recovery during HA start window"
+                    value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
                 sequence:
                   - alias: "Debug Log Post-Restart Cycle"
                     if:

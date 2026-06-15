@@ -16,7 +16,7 @@ Full write-up and the longer story behind the design: <https://xeazy.com/linked-
 - Cross-domain support. Switches, lights, input_booleans, fans, and groups can mix freely in the same linked group.
 - A state-equality gate that stops a run when the other linked entities match the source's new state, so the followers' responses cannot loop the trigger back on itself.
 - A reconcile branch that runs on Home Assistant start and on an optional bridge sensor reporting back online, with a designated authority entity acting as the tiebreaker.
-- An optional suppress-during binary sensor that pauses the automation during maintenance windows, reboot indicators, or whatever you can dream up.
+- An optional peer-sync block for the first minute or two after Home Assistant starts, gated on the built-in Uptime integration. Prevents republished stale states from propagating during boot. The reconcile branches still run.
 - Debug logging that can be toggled on during setup and off in normal operation.
 
 Trigger filtering on the linked entities is restricted to `to: ['on', 'off']`, so devices coming back online from `unavailable` do not fire the trigger. The reconcile branch waits up to 30 seconds for the authority to enter a known state before acting, so an unavailable authority on boot does not corrupt the alignment.
@@ -36,6 +36,8 @@ This blueprint sits where you want two-way sync across two or more entities, wan
 ## Requirements
 
 Home Assistant 2026.6.0 or newer. That is the version it is verified on.
+
+Optional: the built-in HA Uptime integration, if you want the HA-start peer-sync block. Setup is one click via Settings > Devices & Services > Add Integration > Uptime. The blueprint works fine without it.
 
 ## Step 1: Import the Blueprint
 
@@ -62,8 +64,8 @@ After import, the blueprint appears on the Blueprints page with a Create Automat
 Click Create Automation on the imported blueprint. Home Assistant opens the automation editor with the blueprint's inputs grouped into four sections.
 
 - **📦 Linked Entities**: pick the entities you want to keep in sync, and optionally designate one as the authority.
-- **🔄 Reconciliation**: turn the Home Assistant start reconcile on or off, and optionally point at a bridge sensor (Zigbee2MQTT users want `binary_sensor.zigbee2mqtt_running`).
-- **⚙️ Behavior Tuning**: set the sync delay between dispatched actions and optionally point at a suppress-during sensor.
+- **🔄 Reconciliation**: turn the Home Assistant start reconcile on or off, optionally point at a bridge sensor (Zigbee2MQTT users want `binary_sensor.zigbee2mqtt_running`), and optionally enable the HA-startup peer-sync block via the Uptime integration.
+- **⚙️ Behavior Tuning**: set the sync delay between dispatched actions.
 - **🛠 Advanced**: toggle debug logging while you confirm the setup.
 
 Give the automation a name, save it, and the sync is live.
@@ -88,6 +90,18 @@ A Zigbee2MQTT bridge reconnect is the second event. Z2M republishes every device
 
 Users of other Zigbee integrations or other transports can usually leave the reconcile trigger sensor blank: ZHA does not republish on coordinator reconnect, Z-Wave JS tracks node state internally and does not flood events, and WiFi devices reconnect per device, not as a cascade. See the table further down.
 
+## A Small Note on the HA Start Block Window
+
+The reconcile branch handles drift after Home Assistant restarts. The HA start block window prevents a different problem: a republished stale state from one device propagating through peer sync to the others before the reconcile has caught up. The two work together.
+
+Picture the kitchen wall switch and the Tasmota relay on the same fixture, both via Z2M. Home Assistant starts. The Z2M bridge takes 45 seconds to fully come up. As it does, the bridge republishes the wall switch's state (off, from before the restart) and the relay's state (on, also from before the restart). Without a block, the off state arrives first, peer sync fires, and the blueprint commands the relay off. Then the relay's actual state (on) arrives a moment later, peer sync fires again, and the blueprint commands the wall switch on. The fixture is now in the state it was before the restart, but it took two pointless dispatches to get there, and during that window the light was wrong.
+
+The HA start block window stops that. When `use_uptime_sensor` is checked and uptime is below `ha_start_block_seconds`, the peer sync branch quietly skips. The reconcile branch, which is the intended response to startup drift, still runs. The authority entity wins, and the followers are aligned in one pass instead of a cascade.
+
+Setup is straightforward. Settings > Devices & Services > Add Integration > Uptime, click through, you get `sensor.uptime`. The default unit is hours; the blueprint reads the sensor's `unit_of_measurement` attribute and converts, so seconds, minutes, hours, and days are all handled. If you want a different default unit, the integration lets you choose it. If you do not want the block at all, leave `use_uptime_sensor` unchecked and the blueprint behaves as it did before the input existed.
+
+The block applies only to peer sync. The reconcile-on-HA-start branch and the reconcile-trigger-sensor branch are not blocked, because they are the intended response to boot drift. Skipping them would defeat the point of having them.
+
 ## A Small Note on Cascade Timing
 
 A sync run has three phases. First, the trigger fires and the loop-prevention gate decides whether to proceed. Second, the automation waits for `sync_delay_ms` before dispatching. Third, the dispatch fires and the followers report their new states some milliseconds later. Most of the time this is invisible; the cascade ends in well under a second. Two cases are worth knowing about.
@@ -108,11 +122,15 @@ Configure the blueprint like this:
 - **Authority Entity**: `switch.kitchen_counter_relay` (closer to the load, so it carries the true state if the two disagree)
 - **Reconcile on Home Assistant Start**: ON
 - **Reconcile Trigger Sensor**: `binary_sensor.zigbee2mqtt_running`
+- **Block Peer Sync During HA Startup**: ON, if you have the Uptime integration installed
+- **Uptime Sensor**: `sensor.uptime`
+- **Block Peer Sync After HA Start (seconds)**: 120
 - **Sync Delay**: 0 (a two-entity pair has no mesh-load risk, so throttling is not needed)
-- **Suppress During**: blank
 - **Debug Logging**: ON for the first day, OFF after
 
 Press the wall switch and the relay follows. Toggle the relay from the dashboard and the wall switch follows. Restart Home Assistant and the wall switch is pulled into alignment with the relay. Cycle the Z2M addon and the same thing happens. The two states never drift apart.
+
+The startup block matters most for Z2M-heavy setups. When the bridge reconnects after a restart, it republishes every device's state in unpredictable order, and the block prevents the peer sync from chasing those republished states while the reconcile branch is doing its work. For non-Z2M setups, the block is less critical but still useful as a guard against any stale-state cascade.
 
 For more worked examples, including mixed-integration groups and the longer story behind each design choice, see the article: <https://xeazy.com/linked-entity-pro/>
 
@@ -134,8 +152,10 @@ For more worked examples, including mixed-integration groups and the longer stor
 | `authority_entity` | No | first entity in `linked_entities` | one entity from the same domain set | The tiebreaker entity. Used only on reconcile events, never during ordinary use. |
 | `reconcile_on_ha_start` | No | `true` | `true`, `false` | When true, a reconcile runs on Home Assistant start. |
 | `reconcile_trigger_sensor` | No | none | any `binary_sensor` | When set, a reconcile runs on the sensor's off-to-on transition. Catches bridge-reconnect cascades. |
+| `use_uptime_sensor` | No | `false` | `true`, `false` | When true, peer sync is suppressed while HA uptime is below `ha_start_block_seconds`. Reconcile branches are not blocked. Requires the Uptime integration. |
+| `uptime_sensor` | No | `sensor.uptime` | any `sensor` entity whose state is elapsed time since HA started | Consulted only when `use_uptime_sensor` is true. The blueprint reads the sensor's `unit_of_measurement` attribute (s, min, h, or d) and converts. |
+| `ha_start_block_seconds` | No | `120` | 0 to 900 | How long after HA starts to suppress peer sync. Set to 0 to disable the block while keeping the configuration. |
 | `sync_delay_ms` | No | `200` | a whole number of milliseconds, 0 to 5000 | Milliseconds between the trigger and the dispatched commands. Doubles as the cancellation window for rapid opposite presses, so a larger value gives `mode: restart` more room to absorb in-flight changes. Setting it at or above the slowest device's response latency (typically 200 to 500 ms for Zigbee) eliminates redundant commands during the cascade. Set to 0 for a pair on fast hardware where there is nothing for the delay to absorb. |
-| `suppress_during` | No | none | any `binary_sensor` | When this sensor is on, the automation is suppressed entirely. Useful for maintenance windows or reboot indicators. |
 | `debug_enabled` | No | `false` | `true`, `false` | When true, writes a log line for every trigger and action. Turn off in normal operation. |
 
 A note on groups. If you add a group entity to the linked list along with one of its own members, the sync still works correctly. The state-equality gate prevents the infinite loop you would otherwise get. The cost is one or two redundant `homeassistant.turn_*` service calls per state change, since the group commands its member which is already being commanded directly. For cleanliness, prefer to link either the group or its members, not both.
@@ -156,5 +176,6 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
+| 1.0.2-beta | `suppress_during` replaced with an optional HA-startup peer-sync block, gated on the built-in Uptime integration. Three new inputs: `use_uptime_sensor` (boolean), `uptime_sensor` (entity, default `sensor.uptime`), `ha_start_block_seconds` (number, default 120). Box unchecked or sensor unavailable: no block, blueprint behaves the same as before for peer sync. Box checked and sensor reading: peer sync suppressed while uptime is below the threshold, with unit conversion for seconds, minutes, hours, or days based on the sensor's `unit_of_measurement` attribute. Reconcile branches are not blocked, because they are the intended response to boot drift. README: new section "A Small Note on the HA Start Block Window," worked example updated, parameters table updated. **Breaking**: users who had `suppress_during` pointed at an uptime sensor should enable `use_uptime_sensor` with a comparable `ha_start_block_seconds` value (120 to 180 is typical). Users who used `suppress_during` for maintenance windows or manual override modes lose that capability in this version. |
 | 1.0.1-beta | Unknown Flip fix. The dispatch verify step no longer cancels when the source briefly drops to `unknown` or `unavailable` during the `sync_delay_ms` window. It now only cancels when the source has explicitly flipped to the opposite known state (`on` or `off`). README: brightness/speed disclaimer promoted to the intro. Note added about mixing a group entity with one of its own members (works, but produces redundant service calls). |
 | 1.0.0-beta | Initial beta release. On/off sync only. Authority-on-reconcile model. Cross-domain entity selector (switches, lights, input_booleans, fans, groups). State equality breaks sync loops, so changes from physical presses, dashboards, automations, scenes, and voice all propagate. Mode restart so rapid toggles resolve to the latest state. HA start and optional reconcile-trigger-sensor branches for restart and bridge-reconnect drift recovery. Suppress-during gate. Debug logging. |

@@ -8,6 +8,33 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
+#   1.0.6-beta - Fixed "Use of 'now' is not supported in limited templates"
+#                error in trigger_variables. The previous approach captured
+#                HA load time via {{ as_timestamp(now()) }} in trigger_variables,
+#                but trigger_variables run in a limited template context where
+#                now() is not allowed; the line errored on every render and
+#                left the gate broken. Replaced with an optional uptime-
+#                sensor-based gate that reads the configured Uptime sensor
+#                state and converts via its unit_of_measurement attribute
+#                (s, min, h, or d are all handled). Two new inputs in the
+#                Advanced section: use_uptime_sensor (boolean, default
+#                false) and uptime_sensor (entity, default sensor.uptime).
+#                Box unchecked or sensor unavailable: no uptime-based block,
+#                the stale/unavailable/scheduled branches rely on their per-
+#                trigger 'for:' delays to ride out brief boot-window flicker
+#                (this is the same behaviour as pre-v1.0.4 Sensor Watchdog).
+#                Box checked: the four recovery branches are blocked while
+#                uptime is below ha_start_block_seconds. The post-restart
+#                evaluation branch continues to use ha_start_block_seconds
+#                as its initial delay regardless of the uptime sensor (the
+#                delay does the same job for that branch). The HA Uptime
+#                integration is a built-in HA core integration; add via
+#                Settings > Devices & Services > Add Integration > Uptime.
+#                BREAKING: users relying on the previous (broken)
+#                ha_start_block_seconds gate must enable use_uptime_sensor
+#                to get an effective block; without it, the stale/
+#                unavailable/scheduled branches will no longer be gated
+#                during HA boot.
 #   1.0.5-beta - Renamed detection modes for clarity: "minimal" is now "light"
 #                and "lighter" is now "responsive". No logic change. BREAKING:
 #                existing instances using detection_mode: minimal or
@@ -109,7 +136,7 @@ blueprint:
 
     Watches one or more entities that share a single smart plug and automatically power-cycles the device behind that plug when any monitored entity goes offline or stops reporting fresh values. Multiple entities from the same physical device often have complementary activity patterns, and pairing them gives better heartbeat coverage than either alone.
 
-    Two detection modes let you choose how much event traffic the freshness detector creates: responsive (catches state changes only) or light (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. A configurable block window prevents recovery while HA is still loading after start; no external sensor required.
+    Two detection modes let you choose how much event traffic the freshness detector creates: responsive (catches state changes only) or light (skip freshness detection entirely and rely on the unavailable detector plus the optional scheduled cycle). An optional active time window prevents quiet empty rooms from being mistaken for frozen devices. An optional uptime-sensor-based block prevents recovery while HA is still loading after start; requires the built-in HA Uptime integration.
 
     Requires Home Assistant 2026.6 or later. That is the version the blueprint is verified on. If using responsive mode, you must also create a Timer helper and pass its entity id via the Heartbeat Timer input; light mode does not need a timer.
 
@@ -232,10 +259,10 @@ blueprint:
             bring the device back online. Typically a notify call, a
             persistent_notification.create, or a script call. The
             following variables are available inside this action:
-            recovery_reason (one of 'unavailable', 'stale', 'scheduled')
-            and failed_entities (a list of monitored_entities still in a
-            failure state). The recovery_switch and other inputs are
-            also accessible by name.
+            recovery_reason (one of 'unavailable', 'stale', 'scheduled',
+            'post_restart') and failed_entities (a list of monitored
+            entities still in a failure state). The recovery_switch and
+            other inputs are also accessible by name.
           default: []
           selector:
             action: {}
@@ -285,7 +312,7 @@ blueprint:
             changed state. Required in responsive mode. Create via Settings,
             Devices & Services, Helpers, Create Helper, Timer. Leave the
             timer duration blank; this blueprint sets it dynamically. In
-            minimal mode this input is ignored.
+            light mode this input is ignored.
           default:
           selector:
             entity:
@@ -353,18 +380,51 @@ blueprint:
           default: false
           selector:
             boolean:
+        use_uptime_sensor:
+          name: Block Recovery During HA Startup (Uptime Integration)
+          description: >-
+            Check this box if you have the Home Assistant Uptime
+            integration installed. When enabled, the stale, unavailable,
+            and scheduled recovery branches are blocked while uptime is
+            below the Block After HA Start value below. The Uptime
+            integration is a built-in HA core integration; add it via
+            Settings > Devices & Services > Add Integration > Uptime
+            if you don't already have it. The post-restart evaluation
+            branch always uses Block After HA Start as its initial
+            delay regardless of this setting (the delay does the same
+            job for that branch).
+          default: false
+          selector:
+            boolean:
+        uptime_sensor:
+          name: Uptime Sensor
+          description: >-
+            The Uptime integration's sensor entity. Only consulted when
+            the box above is checked. Default is sensor.uptime, which is
+            the conventional name. Any sensor whose state represents
+            elapsed time since HA started works; the blueprint reads the
+            sensor's unit_of_measurement attribute (s, min, h, or d) and
+            converts automatically.
+          default: sensor.uptime
+          selector:
+            entity:
+              filter:
+                - domain:
+                    - sensor
+              multiple: false
+              reorder: false
         ha_start_block_seconds:
           name: Block After HA Start
           description: >-
-            How long after Home Assistant starts before recovery
-            branches are allowed to run. Prevents the watchdog from
-            cycling devices while integrations are still loading. The
-            same value is used as the initial wait inside the post-
-            restart evaluation branch. The block also applies after
-            automation reload (which is desirable: a config reload
-            should not immediately cycle devices either). Two to five
-            minutes is appropriate for most setups. Set to 0 to
-            disable.
+            How long after Home Assistant loads before recovery is
+            allowed. Always used as the initial wait inside the post-
+            restart evaluation branch. For the stale, unavailable, and
+            scheduled branches to also be blocked during this window,
+            enable the Uptime Sensor above; otherwise those branches
+            rely on their per-trigger 'for:' delays to ride out brief
+            boot-window flicker. Two to five minutes is appropriate for
+            most setups. Set to 0 to disable both the post-restart
+            delay and (when enabled) the uptime-based block.
           default: 120
           selector:
             number:
@@ -387,27 +447,24 @@ max: 10
 
 trigger_variables:
   _detection_mode: !input detection_mode
-  _monitored_entities: !input monitored_entities
-  _stale_threshold_minutes: !input stale_threshold_minutes
-  _active_window_enabled: !input active_window_enabled
-  _active_after: !input active_after
-  _active_before: !input active_before
-  _ha_load_timestamp: "{{ as_timestamp(now()) }}"
-  _ha_start_block_seconds: !input ha_start_block_seconds
-  _debug_enabled: !input debug_enabled
-  _recovery_switch: !input recovery_switch
   _recovery_off_seconds: !input recovery_off_seconds
-  _treat_off_as_offline: !input treat_off_as_offline
 
 variables:
-  _version: "1.0.5-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.5-beta]"
+  _version: "1.0.6-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.6-beta]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled
   recovery_settle_seconds_var: !input recovery_settle_seconds
   ha_start_block_seconds_var: !input ha_start_block_seconds
   heartbeat_timer_var: !input heartbeat_timer
+  use_uptime_sensor: !input use_uptime_sensor
+  uptime_sensor: !input uptime_sensor
+  stale_threshold_minutes_var: !input stale_threshold_minutes
+  active_window_enabled_var: !input active_window_enabled
+  active_after_var: !input active_after
+  active_before_var: !input active_before
+  debug_enabled_var: !input debug_enabled
 
 triggers:
   - trigger: state
@@ -464,7 +521,7 @@ actions:
           - alias: "Debug Log Heartbeat Responsive"
             if:
               - condition: template
-                value_template: "{{ _debug_enabled }}"
+                value_template: "{{ debug_enabled_var }}"
             then:
               - action: system_log.write
                 continue_on_error: true
@@ -477,7 +534,7 @@ actions:
             target:
               entity_id: !input heartbeat_timer
             data:
-              duration: "{{ _stale_threshold_minutes * 60 }}"
+              duration: "{{ stale_threshold_minutes_var * 60 }}"
 
       - alias: "Stale recovery"
         conditions:
@@ -489,22 +546,37 @@ actions:
           - condition: state
             entity_id: !input recovery_switch
             state: "on"
-          - condition: template
-            alias: "Block recovery during HA start window"
-            value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
+          - alias: "Block recovery during HA start window (uptime-sensor gate)"
+            condition: template
+            value_template: >-
+              {{ not (
+                   use_uptime_sensor
+                   and uptime_sensor not in ['', none]
+                   and states(uptime_sensor) not in ['unknown', 'unavailable', none]
+                   and (
+                     (states(uptime_sensor) | float(99999))
+                     * ({'s': 1, 'seconds': 1,
+                         'min': 60, 'minutes': 60,
+                         'h': 3600, 'hours': 3600,
+                         'd': 86400, 'days': 86400}.get(
+                           state_attr(uptime_sensor, 'unit_of_measurement') | string | lower, 1
+                         ))
+                     < (ha_start_block_seconds_var | int(0))
+                   )
+                 ) }}
           - condition: template
             value_template: >-
-              {% if not _active_window_enabled %}
+              {% if not active_window_enabled_var %}
                 true
               {% else %}
                 {% set t_now = now().strftime('%H:%M:%S') %}
-                {{ t_now >= _active_after and t_now < _active_before }}
+                {{ t_now >= active_after_var and t_now < active_before_var }}
               {% endif %}
         sequence:
           - alias: "Debug Log Stale Recovery"
             if:
               - condition: template
-                value_template: "{{ _debug_enabled }}"
+                value_template: "{{ debug_enabled_var }}"
             then:
               - action: system_log.write
                 continue_on_error: true
@@ -540,7 +612,7 @@ actions:
                       - alias: "Debug Log Failure"
                         if:
                           - condition: template
-                            value_template: "{{ _debug_enabled }}"
+                            value_template: "{{ debug_enabled_var }}"
                         then:
                           - action: system_log.write
                             continue_on_error: true
@@ -560,14 +632,29 @@ actions:
           - condition: state
             entity_id: !input recovery_switch
             state: "on"
-          - condition: template
-            alias: "Block recovery during HA start window"
-            value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
+          - alias: "Block recovery during HA start window (uptime-sensor gate)"
+            condition: template
+            value_template: >-
+              {{ not (
+                   use_uptime_sensor
+                   and uptime_sensor not in ['', none]
+                   and states(uptime_sensor) not in ['unknown', 'unavailable', none]
+                   and (
+                     (states(uptime_sensor) | float(99999))
+                     * ({'s': 1, 'seconds': 1,
+                         'min': 60, 'minutes': 60,
+                         'h': 3600, 'hours': 3600,
+                         'd': 86400, 'days': 86400}.get(
+                           state_attr(uptime_sensor, 'unit_of_measurement') | string | lower, 1
+                         ))
+                     < (ha_start_block_seconds_var | int(0))
+                   )
+                 ) }}
         sequence:
           - alias: "Debug Log Unavailable Recovery"
             if:
               - condition: template
-                value_template: "{{ _debug_enabled }}"
+                value_template: "{{ debug_enabled_var }}"
             then:
               - action: system_log.write
                 continue_on_error: true
@@ -612,7 +699,7 @@ actions:
                       - alias: "Debug Log Failure"
                         if:
                           - condition: template
-                            value_template: "{{ _debug_enabled }}"
+                            value_template: "{{ debug_enabled_var }}"
                         then:
                           - action: system_log.write
                             continue_on_error: true
@@ -632,14 +719,29 @@ actions:
           - condition: state
             entity_id: !input recovery_switch
             state: "on"
-          - condition: template
-            alias: "Block recovery during HA start window"
-            value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
+          - alias: "Block recovery during HA start window (uptime-sensor gate)"
+            condition: template
+            value_template: >-
+              {{ not (
+                   use_uptime_sensor
+                   and uptime_sensor not in ['', none]
+                   and states(uptime_sensor) not in ['unknown', 'unavailable', none]
+                   and (
+                     (states(uptime_sensor) | float(99999))
+                     * ({'s': 1, 'seconds': 1,
+                         'min': 60, 'minutes': 60,
+                         'h': 3600, 'hours': 3600,
+                         'd': 86400, 'days': 86400}.get(
+                           state_attr(uptime_sensor, 'unit_of_measurement') | string | lower, 1
+                         ))
+                     < (ha_start_block_seconds_var | int(0))
+                   )
+                 ) }}
         sequence:
           - alias: "Debug Log Scheduled Recovery"
             if:
               - condition: template
-                value_template: "{{ _debug_enabled }}"
+                value_template: "{{ debug_enabled_var }}"
             then:
               - action: system_log.write
                 continue_on_error: true
@@ -682,7 +784,7 @@ actions:
                       - alias: "Debug Log Failure"
                         if:
                           - condition: template
-                            value_template: "{{ _debug_enabled }}"
+                            value_template: "{{ debug_enabled_var }}"
                         then:
                           - action: system_log.write
                             continue_on_error: true
@@ -703,7 +805,7 @@ actions:
           - alias: "Debug Log Post-Restart Begin"
             if:
               - condition: template
-                value_template: "{{ _debug_enabled }}"
+                value_template: "{{ debug_enabled_var }}"
             then:
               - action: system_log.write
                 continue_on_error: true
@@ -721,7 +823,7 @@ actions:
           - alias: "Debug Log Post-Restart Eval"
             if:
               - condition: template
-                value_template: "{{ _debug_enabled }}"
+                value_template: "{{ debug_enabled_var }}"
             then:
               - action: system_log.write
                 continue_on_error: true
@@ -738,14 +840,11 @@ actions:
                   - condition: state
                     entity_id: !input recovery_switch
                     state: "on"
-                  - condition: template
-                    alias: "Block recovery during HA start window"
-                    value_template: "{{ as_timestamp(now()) - (_ha_load_timestamp | float) > (_ha_start_block_seconds | int) }}"
                 sequence:
                   - alias: "Debug Log Post-Restart Cycle"
                     if:
                       - condition: template
-                        value_template: "{{ _debug_enabled }}"
+                        value_template: "{{ debug_enabled_var }}"
                     then:
                       - action: system_log.write
                         continue_on_error: true
@@ -790,7 +889,7 @@ actions:
                               - alias: "Debug Log Failure"
                                 if:
                                   - condition: template
-                                    value_template: "{{ _debug_enabled }}"
+                                    value_template: "{{ debug_enabled_var }}"
                                 then:
                                   - action: system_log.write
                                     continue_on_error: true
@@ -811,7 +910,7 @@ actions:
           - alias: "Debug Log Self-Recovery"
             if:
               - condition: template
-                value_template: "{{ _debug_enabled }}"
+                value_template: "{{ debug_enabled_var }}"
             then:
               - action: system_log.write
                 continue_on_error: true

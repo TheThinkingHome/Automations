@@ -43,7 +43,7 @@ Optional: the built-in HA Uptime integration, if you want the HA-start peer-sync
 
 The quick way, one click:
 
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FTheThinkingHome%2FAutomations%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Flinked_entities_pro_beta.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FTheThinkingHome%2FAutomations%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Flinked_entities_pro.yaml)
 
 Or by hand:
 
@@ -52,7 +52,7 @@ Or by hand:
 3. Paste this URL and click Preview:
 
 ```
-https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro_beta.yaml
+https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro.yaml
 ```
 
 4. Confirm and Import.
@@ -98,7 +98,7 @@ Picture the kitchen wall switch and the Tasmota relay on the same fixture, both 
 
 The HA start block window stops that. When `use_uptime_sensor` is checked and uptime is below `ha_start_block_seconds`, the peer sync branch quietly skips. The reconcile branch, which is the intended response to startup drift, still runs. The authority entity wins, and the followers are aligned in one pass instead of a cascade.
 
-Setup is straightforward. Settings > Devices & Services > Add Integration > Uptime, click through, you get `sensor.uptime`. The default unit is hours; the blueprint reads the sensor's `unit_of_measurement` attribute and converts, so seconds, minutes, hours, and days are all handled. If you want a different default unit, the integration lets you choose it. If you do not want the block at all, leave `use_uptime_sensor` unchecked and the blueprint behaves as it did before the input existed.
+Setup is straightforward. Settings > Devices & Services > Add Integration > Uptime, click through, you get `sensor.uptime`. The integration reports the moment Home Assistant last started as an ISO8601 timestamp (the only mode the modern config-flow Uptime integration produces). The blueprint reads that timestamp and computes elapsed seconds via `(now() - sensor_value).total_seconds()`. No configuration needed. If you do not want the block at all, leave `use_uptime_sensor` unchecked and the blueprint behaves as it did before the input existed.
 
 The block applies only to peer sync. The reconcile-on-HA-start branch and the reconcile-trigger-sensor branch are not blocked, because they are the intended response to boot drift. Skipping them would defeat the point of having them.
 
@@ -153,7 +153,7 @@ For more worked examples, including mixed-integration groups and the longer stor
 | `reconcile_on_ha_start` | No | `true` | `true`, `false` | When true, a reconcile runs on Home Assistant start. |
 | `reconcile_trigger_sensor` | No | none | any `binary_sensor` | When set, a reconcile runs on the sensor's off-to-on transition. Catches bridge-reconnect cascades. |
 | `use_uptime_sensor` | No | `false` | `true`, `false` | When true, peer sync is suppressed while HA uptime is below `ha_start_block_seconds`. Reconcile branches are not blocked. Requires the Uptime integration. |
-| `uptime_sensor` | No | `sensor.uptime` | any `sensor` entity whose state is elapsed time since HA started | Consulted only when `use_uptime_sensor` is true. The blueprint reads the sensor's `unit_of_measurement` attribute (s, min, h, or d) and converts. |
+| `uptime_sensor` | No | `sensor.uptime` | any `sensor` entity whose state parses as an ISO8601 timestamp via `as_datetime()` | Consulted only when `use_uptime_sensor` is true. The blueprint expects the modern HA Uptime integration's timestamp mode; elapsed seconds computed via `(now() - state).total_seconds()`. |
 | `ha_start_block_seconds` | No | `120` | 0 to 900 | How long after HA starts to suppress peer sync. Set to 0 to disable the block while keeping the configuration. |
 | `sync_delay_ms` | No | `200` | a whole number of milliseconds, 0 to 5000 | Milliseconds between the trigger and the dispatched commands. Doubles as the cancellation window for rapid opposite presses, so a larger value gives `mode: restart` more room to absorb in-flight changes. Setting it at or above the slowest device's response latency (typically 200 to 500 ms for Zigbee) eliminates redundant commands during the cascade. Set to 0 for a pair on fast hardware where there is nothing for the delay to absorb. |
 | `debug_enabled` | No | `false` | `true`, `false` | When true, writes a log line for every trigger and action. Turn off in normal operation. |
@@ -162,7 +162,7 @@ A note on groups. If you add a group entity to the linked list along with one of
 
 ## Beta Status
 
-This is a public preview. The blueprint runs in production at the original home it was built for, with two pairs verified: a Zigbee wall switch and a Tasmota relay (cross-integration), and two Z2M switches on the same fixture (same-integration). It has not yet been validated by an external tester on a different setup. Once an external tester confirms it works in their environment, the blueprint graduates from beta. At that point the file is republished at `blueprints/automation/linked_entities_pro.yaml` (without the `_beta` suffix) and the version becomes 1.0.0 stable.
+This is a public preview, currently at v1.0.3-beta. The blueprint runs in production at the original home it was built for, with two pairs verified: a Zigbee wall switch and a Tasmota relay (cross-integration), and two Z2M switches on the same fixture (same-integration). It has not yet been validated by an external tester on a different setup. Once an external tester confirms it works in their environment, the blueprint graduates from beta and the version becomes 1.0.0 stable. The file path stays at `blueprints/automation/linked_entities_pro.yaml` (the `_beta` suffix on the filename was dropped in v1.0.3-beta).
 
 Want to be that tester? [Drop into the forum thread](https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint) and say hi.
 
@@ -176,6 +176,7 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
+| 1.0.3-beta | Three structural changes. (1) Gate template for the HA-start block window rewritten to handle timestamp-mode `sensor.uptime`. The earlier template did `states(uptime_sensor) | float(99999)` and a `unit_of_measurement` lookup, which worked only when the Uptime integration was in numeric duration mode. The modern config-flow Uptime integration in HA 2026.6+ produces only timestamp mode (an ISO8601 datetime like `2026-06-16T08:32:18+00:00`), where `float()` failed and fell back to the sentinel `99999`. The comparison `99999 < ha_start_block_seconds` was always false, so the gate was silently inert and the HA-start block never engaged. New template computes `(now() - as_datetime(states(uptime_sensor))).total_seconds()`. The reconcile branches and post-restart branches were unaffected because they use the input directly as a `delay:`, not through the gate. (2) Per-target availability filter on the peer-sync action. Before dispatching `homeassistant.turn_*`, the target list is filtered to exclude any linked entity currently in `unavailable` or `unknown` state. Stops HA from logging "Referenced entities X are missing or not currently available" service warnings when an upstream component (router, Z2M coordinator) restarts and entities flap to unavailable while HA itself remains up. Targets that come back will sync on their next state change. (3) Filename renamed from `linked_entities_pro_beta.yaml` to `linked_entities_pro.yaml`. The path no longer changes at graduation. `source_url` in the YAML and import links in this README updated accordingly. **Breaking**: users on the previous file path will need to re-import via the new URL on next blueprint refresh; existing imports continue to work without action. |
 | 1.0.2-beta | Promoted `sync_delay_ms` to its own top-level input section, placed between Linked Entities and Reconciliation. The section makes the parameter visible and signals that it is a key tuning input that should be considered for every setup. The empty Behavior Tuning section was removed. No functional changes from 1.0.1-beta. |
 | 1.0.1-beta | `suppress_during` replaced with an optional HA-startup peer-sync block, gated on the built-in Uptime integration. Three new inputs: `use_uptime_sensor` (boolean), `uptime_sensor` (entity, default `sensor.uptime`), `ha_start_block_seconds` (number, default 120). Box unchecked or sensor unavailable: no block, blueprint behaves the same as before for peer sync. Box checked and sensor reading: peer sync suppressed while uptime is below the threshold, with unit conversion for seconds, minutes, hours, or days based on the sensor's `unit_of_measurement` attribute. Reconcile branches are not blocked, because they are the intended response to boot drift. README: new section "A Small Note on the HA Start Block Window," worked example updated, parameters table updated. **Breaking**: users who had `suppress_during` pointed at an uptime sensor should enable `use_uptime_sensor` with a comparable `ha_start_block_seconds` value (120 to 180 is typical). Users who used `suppress_during` for maintenance windows or manual override modes lose that capability in this version. |
 | 1.0.0-beta | Initial beta release. On/off sync only. Authority-on-reconcile model. Cross-domain entity selector (switches, lights, input_booleans, fans, groups). State equality breaks sync loops, so changes from physical presses, dashboards, automations, scenes, and voice all propagate. Mode restart so rapid toggles resolve to the latest state. HA start and optional reconcile-trigger-sensor branches for restart and bridge-reconnect drift recovery. Suppress-during gate. Debug logging. |

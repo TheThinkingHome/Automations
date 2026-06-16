@@ -8,6 +8,43 @@
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
+#   1.0.9-beta - Two structural fixes folded into one release. First: the
+#                HA-start block window's uptime-sensor gate template was
+#                silently broken since v1.0.6-beta. The template did
+#                `states(uptime_sensor) | float(99999)`, which works only
+#                when the Uptime integration is in numeric duration mode
+#                (hours/minutes/seconds/days). The modern config-flow
+#                Uptime integration in HA 2026.6+ only produces timestamp
+#                mode (an ISO8601 datetime like "2026-06-16T08:32:18+00:00"),
+#                where float() fails and falls back to the sentinel 99999.
+#                The comparison `99999 < ha_start_block_seconds` is always
+#                FALSE, so the gate has been silently inert across all
+#                deployments. The post-restart branch still worked because
+#                it uses ha_start_block_seconds as a `delay:` directly,
+#                independent of the gate, but the offline / stale /
+#                scheduled branches lost their boot-window protection.
+#                Replaced the template with a timestamp-only path that
+#                computes `(now() - as_datetime(states(uptime_sensor)))
+#                .total_seconds()`. now() is allowed in condition templates
+#                (the restriction is only inside trigger_variables). The
+#                template fails closed: if the sensor is unavailable or
+#                returns something that can't be parsed as a datetime, the
+#                gate returns false (no block), which matches the prior
+#                effective behavior. Discovered when production logs
+#                showed the gate was never engaging during the 03:30 HA
+#                restart window; investigation traced it to the timestamp
+#                vs numeric mode mismatch.
+#                Second: added `max_exceeded: silent` alongside `mode:
+#                single`. HA defaults to logging dropped triggers at
+#                warning level when single mode drops an in-progress
+#                trigger. Those warnings appeared in production as
+#                "Watchdog - Living Room FP2: Already running" during
+#                long-running runs (post-restart wait, recovery cycle +
+#                settle window). The drops themselves are correct (mode:
+#                single doing its job), but the warning-level log output
+#                was noise that contradicted the blueprint's "supposed to
+#                be quiet" design philosophy. With max_exceeded: silent,
+#                drops are truly silent in the log; behavior is identical.
 #   1.0.8-beta - Removed the per-heartbeat debug log line. The
 #                heartbeat-reset branch no longer writes
 #                "Heartbeat (responsive) from <entity>. Resetting timer."
@@ -183,7 +220,7 @@ blueprint:
 
     **Work in progress.** This is a public preview, still in beta. Feedback is welcome on the [forum](https://xeazy.com/logbook/).
 
-    **Version: 1.0.8-beta**
+    **Version: 1.0.9-beta**
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   author: James Lander (xeazy.com)
@@ -484,14 +521,15 @@ blueprint:
             boolean:
 
 mode: single
+max_exceeded: silent
 
 trigger_variables:
   _detection_mode: !input detection_mode
   _recovery_off_seconds: !input recovery_off_seconds
 
 variables:
-  _version: "1.0.8-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.8-beta]"
+  _version: "1.0.9-beta"
+  _caller_prefix: "[Sensor Watchdog v1.0.9-beta]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled
@@ -577,20 +615,12 @@ actions:
           - alias: "Block recovery during HA start window (uptime-sensor gate)"
             condition: template
             value_template: >-
+              {% set dt = states(uptime_sensor) | as_datetime(default=none) %}
               {{ not (
                    use_uptime_sensor
                    and uptime_sensor not in ['', none]
-                   and states(uptime_sensor) not in ['unknown', 'unavailable', none]
-                   and (
-                     (states(uptime_sensor) | float(99999))
-                     * ({'s': 1, 'seconds': 1,
-                         'min': 60, 'minutes': 60,
-                         'h': 3600, 'hours': 3600,
-                         'd': 86400, 'days': 86400}.get(
-                           state_attr(uptime_sensor, 'unit_of_measurement') | string | lower, 1
-                         ))
-                     < (ha_start_block_seconds_var | int(0))
-                   )
+                   and dt is not none
+                   and (now() - dt).total_seconds() < (ha_start_block_seconds_var | int(0))
                  ) }}
           - condition: template
             value_template: >-
@@ -663,20 +693,12 @@ actions:
           - alias: "Block recovery during HA start window (uptime-sensor gate)"
             condition: template
             value_template: >-
+              {% set dt = states(uptime_sensor) | as_datetime(default=none) %}
               {{ not (
                    use_uptime_sensor
                    and uptime_sensor not in ['', none]
-                   and states(uptime_sensor) not in ['unknown', 'unavailable', none]
-                   and (
-                     (states(uptime_sensor) | float(99999))
-                     * ({'s': 1, 'seconds': 1,
-                         'min': 60, 'minutes': 60,
-                         'h': 3600, 'hours': 3600,
-                         'd': 86400, 'days': 86400}.get(
-                           state_attr(uptime_sensor, 'unit_of_measurement') | string | lower, 1
-                         ))
-                     < (ha_start_block_seconds_var | int(0))
-                   )
+                   and dt is not none
+                   and (now() - dt).total_seconds() < (ha_start_block_seconds_var | int(0))
                  ) }}
         sequence:
           - alias: "Debug Log Unavailable Recovery"
@@ -750,20 +772,12 @@ actions:
           - alias: "Block recovery during HA start window (uptime-sensor gate)"
             condition: template
             value_template: >-
+              {% set dt = states(uptime_sensor) | as_datetime(default=none) %}
               {{ not (
                    use_uptime_sensor
                    and uptime_sensor not in ['', none]
-                   and states(uptime_sensor) not in ['unknown', 'unavailable', none]
-                   and (
-                     (states(uptime_sensor) | float(99999))
-                     * ({'s': 1, 'seconds': 1,
-                         'min': 60, 'minutes': 60,
-                         'h': 3600, 'hours': 3600,
-                         'd': 86400, 'days': 86400}.get(
-                           state_attr(uptime_sensor, 'unit_of_measurement') | string | lower, 1
-                         ))
-                     < (ha_start_block_seconds_var | int(0))
-                   )
+                   and dt is not none
+                   and (now() - dt).total_seconds() < (ha_start_block_seconds_var | int(0))
                  ) }}
         sequence:
           - alias: "Debug Log Scheduled Recovery"

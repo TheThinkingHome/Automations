@@ -3,198 +3,45 @@
 # See the LICENSE file for the full text.
 #
 # Sensor Watchdog - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
-# Work in progress. Public preview, still in beta.
 # Full write-up, worked examples, and directions:
 # https://xeazy.com/sensor-watchdog-blueprint/
 #
 # Changelog:
-#   1.0.9-beta - Two structural fixes folded into one release. First: the
-#                HA-start block window's uptime-sensor gate template was
-#                silently broken since v1.0.6-beta. The template did
-#                `states(uptime_sensor) | float(99999)`, which works only
-#                when the Uptime integration is in numeric duration mode
-#                (hours/minutes/seconds/days). The modern config-flow
-#                Uptime integration in HA 2026.6+ only produces timestamp
-#                mode (an ISO8601 datetime like "2026-06-16T08:32:18+00:00"),
-#                where float() fails and falls back to the sentinel 99999.
-#                The comparison `99999 < ha_start_block_seconds` is always
-#                FALSE, so the gate has been silently inert across all
-#                deployments. The post-restart branch still worked because
-#                it uses ha_start_block_seconds as a `delay:` directly,
-#                independent of the gate, but the offline / stale /
-#                scheduled branches lost their boot-window protection.
-#                Replaced the template with a timestamp-only path that
-#                computes `(now() - as_datetime(states(uptime_sensor)))
-#                .total_seconds()`. now() is allowed in condition templates
-#                (the restriction is only inside trigger_variables). The
-#                template fails closed: if the sensor is unavailable or
-#                returns something that can't be parsed as a datetime, the
-#                gate returns false (no block), which matches the prior
-#                effective behavior. Discovered when production logs
-#                showed the gate was never engaging during the 03:30 HA
-#                restart window; investigation traced it to the timestamp
-#                vs numeric mode mismatch.
-#                Second: added `max_exceeded: silent` alongside `mode:
-#                single`. HA defaults to logging dropped triggers at
-#                warning level when single mode drops an in-progress
-#                trigger. Those warnings appeared in production as
-#                "Watchdog - Living Room FP2: Already running" during
-#                long-running runs (post-restart wait, recovery cycle +
-#                settle window). The drops themselves are correct (mode:
-#                single doing its job), but the warning-level log output
-#                was noise that contradicted the blueprint's "supposed to
-#                be quiet" design philosophy. With max_exceeded: silent,
-#                drops are truly silent in the log; behavior is identical.
-#   1.0.8-beta - Removed the per-heartbeat debug log line. The
-#                heartbeat-reset branch no longer writes
-#                "Heartbeat (responsive) from <entity>. Resetting timer."
-#                on every state change of every monitored entity. In
-#                responsive mode with active sensors (e.g. a lux sensor
-#                reporting every second or two), that line was firing
-#                hundreds of times per minute and burying the
-#                interesting events (recovery cycles, post-restart
-#                evaluations, failure notifications) in noise. After
-#                the change, debug logs only fire for events that
-#                actually matter: cycle starts, post-restart phases,
-#                self-recovery, and failure notifications. Setup
-#                verification for the heartbeat path now uses Home
-#                Assistant's Traces view, which already shows every
-#                branch entry with full context and is the right tool
-#                for confirming the heartbeat-reset branch is firing.
-#                No other behavior change: the timer is still reset on
-#                every heartbeat, just silently.
-#   1.0.7-beta - Changed automation mode from 'queued' (max: 10) to 'single'.
-#                Eliminates duplicate recovery cycles when paired entities on
-#                one device (e.g., presence and lux from the same FP2) go
-#                unavailable in rapid succession. Under v1.0.6-beta's queued
-#                mode, the second trigger's run was queued and started after
-#                the first completed; by then the recovery switch was back
-#                on, the state: on guard passed, and a second cycle fired.
-#                Under single mode, the second trigger is dropped while the
-#                first run is in progress, eliminating the redundant cycle.
-#                Discovery via simulator re-pass against the new v1.0.6-beta
-#                uptime-sensor gate template. The 46-scenario simulator now
-#                passes cleanly against v1.0.7-beta, including the s13
-#                paired-entity scenario that exposed the duplicate-cycle
-#                pathology. Edge case: heartbeat triggers (responsive mode)
-#                that fire during an in-progress recovery cycle are now
-#                dropped instead of queued. In practice this is benign: the
-#                heartbeat timer was already cancelled at cycle start, and
-#                the next post-cycle heartbeat starts the timer fresh.
-#                BREAKING: only for users who deliberately relied on queued
-#                semantics (running two recovery cycles back-to-back for a
-#                single failure event). No known user has done this.
-#   1.0.6-beta - Fixed "Use of 'now' is not supported in limited templates"
-#                error in trigger_variables. The previous approach captured
-#                HA load time via {{ as_timestamp(now()) }} in trigger_variables,
-#                but trigger_variables run in a limited template context where
-#                now() is not allowed; the line errored on every render and
-#                left the gate broken. Replaced with an optional uptime-
-#                sensor-based gate that reads the configured Uptime sensor
-#                state and converts via its unit_of_measurement attribute
-#                (s, min, h, or d are all handled). Two new inputs in the
-#                Advanced section: use_uptime_sensor (boolean, default
-#                false) and uptime_sensor (entity, default sensor.uptime).
-#                Box unchecked or sensor unavailable: no uptime-based block,
-#                the stale/unavailable/scheduled branches rely on their per-
-#                trigger 'for:' delays to ride out brief boot-window flicker
-#                (this is the same behaviour as pre-v1.0.4 Sensor Watchdog).
-#                Box checked: the four recovery branches are blocked while
-#                uptime is below ha_start_block_seconds. The post-restart
-#                evaluation branch continues to use ha_start_block_seconds
-#                as its initial delay regardless of the uptime sensor (the
-#                delay does the same job for that branch). The HA Uptime
-#                integration is a built-in HA core integration; add via
-#                Settings > Devices & Services > Add Integration > Uptime.
-#                BREAKING: users relying on the previous (broken)
-#                ha_start_block_seconds gate must enable use_uptime_sensor
-#                to get an effective block; without it, the stale/
-#                unavailable/scheduled branches will no longer be gated
-#                during HA boot.
-#   1.0.5-beta - Renamed detection modes for clarity: "minimal" is now "light"
-#                and "lighter" is now "responsive". No logic change. BREAKING:
-#                existing instances using detection_mode: minimal or
-#                detection_mode: lighter will need to be re-saved with the
-#                new value.
-#   1.0.4-beta - Replaced restart_guard_sensor input with ha_start_block_seconds.
-#                The new approach uses trigger_variables to capture HA load
-#                time as a Unix timestamp at automation initialization, then
-#                gates all recovery branches on elapsed time since load. No
-#                external sensor required, no additional helper required. The
-#                block also applies after automation reload, which is
-#                desirable: a config reload should not immediately cycle
-#                devices either. Merged post_restart_settle_seconds into
-#                ha_start_block_seconds since both inputs serve the same
-#                concept (wait time after HA start). The post-restart
-#                evaluation branch now uses ha_start_block_seconds as its
-#                initial delay. BREAKING: existing instances using
-#                restart_guard_sensor will need to be re-saved with the new
-#                input set to a similar value (120-180 seconds is typical).
-#   1.0.3-beta - Removed Responsive detection mode and its state_reported
-#                event trigger. HA's automation validator refuses to register
-#                state_reported as an event_type in any trigger, regardless
-#                of the trigger's runtime enabled state, so the trigger had
-#                to come out entirely for the blueprint to save on current
-#                HA. Lighter and Minimal modes are unchanged. The rare same-
-#                value-heartbeat-stuck failure case that Responsive could
-#                catch is no longer detected; in practice that case is
-#                uncommon enough that Lighter mode plus the unavailable
-#                detector plus the scheduled cycle cover almost all wedges.
-#                The detection_mode selector now offers only Minimal (default)
-#                and Lighter. Input descriptions for detection_mode,
-#                stale_threshold_minutes, and heartbeat_timer updated to
-#                reflect the two-mode reality, and the blueprint description
-#                rewritten the same way.
-#   1.0.2-beta - Default detection_mode flipped from responsive to minimal: a
-#                fresh import no longer requires a Timer helper. Generalized
-#                input descriptions: removed references to entity names
-#                specific to one installation that do not exist on others.
-#                Restart Guard description now points at the HA Uptime
-#                integration as the canonical pattern. Stripped inline YAML
-#                comments from the triggers and actions blocks (action
-#                aliases serve the same documentation purpose). README
-#                updated to describe the 1.0.1+ event-bus-filtered behavior
-#                of responsive mode (the 1.0.0 text described the old
-#                unfiltered behavior) and to add a Small Note on the Restart
-#                Guard with an example uptime-based template binary_sensor.
-#                No logic change; same 46 simulator scenarios pass.
-#   1.0.1-beta - Responsive trigger now filters at the event bus level via
-#                event_data: entity_id. The automation is no longer woken up
-#                by reports from non-monitored entities. Added a Home Assistant
-#                start branch that waits a configurable settle period, then
-#                evaluates monitored entities and fires recovery if any are
-#                already in a failure state (covers the case where a device
-#                was dead before HA started and no state transition occurred).
-#                Refactored the failed-entities templates in all four
-#                recovery-with-failure-notification branches from namespace
-#                loops to expand()/selectattr filter chains. New input:
-#                post_restart_settle_seconds (default 180). Stale trigger no
-#                longer carries an event_data entity_id filter (was a load-
-#                time validation risk when heartbeat_timer was blank in
-#                minimal mode); the filter moved into the stale branch's
-#                condition list, where it gates on the configured heartbeat
-#                timer at runtime.
-#   1.0.0-beta - Initial public preview. Three independent failure detectors
-#                firing into a single recovery cycle: an unavailable detector
-#                with a tolerance window, a freshness detector backed by a
-#                timer helper, and an optional daily scheduled cycle. Three-
-#                mode selector (responsive, lighter, minimal) for the
-#                freshness detector's event load. Optional active time window
-#                for the freshness branch, optional restart guard input,
-#                optional treat_off_as_offline input to extend the offline
-#                detector to 'off' transitions (for ping-style sensors), and
-#                a self-recovery branch that uses a 'for:' delay so the
-#                recovery cycle's own turn-off does not fight itself.
-#                Unavailable and scheduled recovery branches cancel the
-#                heartbeat timer at cycle time, so the freshness detector
-#                does not fire a second cycle for the same wedge (one-
-#                attempt-per-wedge invariant). Optional failure notification:
-#                opt-in feature that waits a configurable settle period after
-#                each cycle, checks whether monitored entities are still in a
-#                failure state, and runs a user-configured action sequence.
-#                Debug logging is written at info level with a
-#                [Sensor Watchdog v<version>] prefix. Forty-three simulator
-#                scenarios pass.
+#   1.0.0 - Initial stable release. Three independent failure detectors fire
+#           into a single recovery cycle: an offline detector (unavailable
+#           or unknown, optionally including off for ping-style sensors)
+#           with a tolerance window; a freshness detector backed by a timer
+#           helper that catches frozen-but-still-online devices; and an
+#           optional daily scheduled cycle for preventive maintenance. A
+#           self-recovery branch turns the recovery switch back on if it
+#           is externally toggled off, using a 'for:' delay so the recovery
+#           cycle's own turn-off does not fight itself. A post-restart
+#           evaluation branch fires on Home Assistant start, waits for
+#           integrations to load, then cycles the switch if any monitored
+#           entity is already in a failure state. Two detection modes
+#           ('light' and 'responsive') select how much event traffic the
+#           freshness detector creates; light is the default and needs no
+#           timer helper. An optional active time window gates the
+#           freshness branch only, leaving the offline detector and the
+#           scheduled cycle to fire any time of day. An optional uptime-
+#           sensor-based block (built on Home Assistant's built-in Uptime
+#           integration) suppresses the offline, stale, and scheduled
+#           branches while HA is still booting. An optional failure-
+#           notification path waits a configurable settle period after
+#           each cycle, checks whether any monitored entity is still
+#           failing, and runs a user-supplied action sequence if so;
+#           recovery_reason and failed_entities are exposed in the action
+#           context. Debug logging fires only on rare events (cycle
+#           starts, post-restart phases, self-recovery, failure
+#           notifications) and is gated by a per-instance toggle.
+#           Automation mode is 'single' with 'max_exceeded: silent', so
+#           paired-entity simultaneous triggers do not duplicate cycles
+#           and the drop is silent in the log.
+#           Verified across 46 simulator scenarios and a four-instance
+#           home deployment (three Aqara FP2 presence sensors plus one
+#           router via the built-in ping integration). Beta-cycle history
+#           (1.0.0-beta through 1.0.9-beta) archived in the project
+#           document.
 blueprint:
   name: Sensor Watchdog
   description: |
@@ -218,9 +65,9 @@ blueprint:
 
     Originally built to recover Aqara FP2 presence sensors that wedge every few days, then generalized for any flaky device whose only reliable fix is a power cycle: Zigbee router plugs, WiFi cameras, smart-home gateways, finicky sensors of any kind.
 
-    **Work in progress.** This is a public preview, still in beta. Feedback is welcome on the [forum](https://xeazy.com/logbook/).
+    Feedback is welcome on the [forum](https://xeazy.com/logbook/).
 
-    **Version: 1.0.9-beta**
+    **Version: 1.0.0**
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   author: James Lander (xeazy.com)
@@ -479,10 +326,10 @@ blueprint:
           description: >-
             The Uptime integration's sensor entity. Only consulted when
             the box above is checked. Default is sensor.uptime, which is
-            the conventional name. Any sensor whose state represents
-            elapsed time since HA started works; the blueprint reads the
-            sensor's unit_of_measurement attribute (s, min, h, or d) and
-            converts automatically.
+            the conventional name. The blueprint expects the modern
+            config-flow Uptime integration's timestamp mode (an ISO8601
+            datetime) and computes elapsed seconds via
+            (now() - sensor_value).total_seconds().
           default: sensor.uptime
           selector:
             entity:
@@ -528,8 +375,8 @@ trigger_variables:
   _recovery_off_seconds: !input recovery_off_seconds
 
 variables:
-  _version: "1.0.9-beta"
-  _caller_prefix: "[Sensor Watchdog v1.0.9-beta]"
+  _version: "1.0.0"
+  _caller_prefix: "[Sensor Watchdog v1.0.0]"
   monitored_entities_var: !input monitored_entities
   treat_off_as_offline_var: !input treat_off_as_offline
   failure_notification_enabled_var: !input failure_notification_enabled

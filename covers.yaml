@@ -1,10 +1,11 @@
 # -------------------------------------------------------------------------------------
 # Guarded Cover Template
+# Version: 2.1.0
 #
 # This configuration creates a "guarded" or "proxy" cover entity for an existing
-# physical cover. This is a powerful pattern that allows you to intercept commands
-# sent to a cover and decide whether to pass them through or block them based on
-# a separate condition, such as an open window or a security mode.
+# physical cover. This is a pattern that allows you to intercept commands
+# sent to a cover and decide whether to pass them through, modify them, or block
+# them based on a separate condition, such as an open window or a security mode.
 #
 # How it works:
 # 1. A template cover (e.g., cover.master_city_blinds_guarded) is created.
@@ -12,73 +13,158 @@
 # 2. The template cover's state is always a direct reflection of the real cover's
 #    state (e.g., cover.master_city_blinds).
 # 3. When a command (open, close, set_position) is sent to the guarded cover,
-#    it first checks the state of a "guard" entity (e.g., a binary_sensor or
-#    input_boolean).
-# 4. If the guard is 'on' (meaning it's safe to operate), the command is passed
-#    directly to the real cover entity.
-# 5. If the guard is 'off' (meaning operation is blocked), the command is instead
-#    routed to a handler script. This script can be used to send a notification,
-#    log the event, or, as in this example, simply do nothing.
+#    it first checks a hard-block gate (a binary sensor that combines conditions
+#    like a disable helper or a door open). If the gate says block, the command
+#    is routed to a handler script (script.do_nothing in the simplest form).
+# 4. If the hard-block gate passes, a soft-adjust window-floor clamp is then
+#    applied. When the corresponding window is open, the effective floor is
+#    min(current_position, 62). Commands below the floor are rewritten to the
+#    floor value. Commands at or above the floor pass through unchanged.
+# 5. When the window is closed, the command passes through to the real cover.
 #
-# This approach cleanly separates the "what" (e.g., close all blinds at sunset)
-# from the "if" (e.g., but only if the windows are closed), making your automations
-# simpler and more robust.
+# Why the floor clamp matters:
+# The original guard pattern only had two paths: block when guard is off, pass
+# through otherwise. That works for hard blocks (maintenance disable, security
+# mode), but leaves a gap for open-window safety. A naive 62-percent clamp
+# applied unconditionally would raise the shade from below 62 percent up to 62
+# percent during sensor cascades (for example, the window contacts blinking
+# through unavailable and unknown after a Home Assistant restart). The floor
+# model fixes that. The floor follows the current position when it is below
+# 62, so a shade at 15 percent commanded to 15 percent during a cascade stays
+# at 15. The floor stays at 62 when the shade is above 62, so a shade at 100
+# percent commanded to close lowers to 62 only, preserving the original safety
+# behavior for that case.
+#
+# Behavior summary by current position with window open:
+#   Above 62: lowering commands clamp to 62. Raising commands pass through.
+#   At or below 62: lowering commands clamp to current (no descent). Raising
+#                   commands pass through (including past 62).
+#   At 0: close commands pass through harmlessly (no movement).
+#
+# Required external entities (define these in your config):
+#   cover.master_city_blinds                     - the real physical cover.
+#   binary_sensor.guarded_blinds_control_enabled - the hard-block gate. Returns
+#                                                  on when the cover may move,
+#                                                  off when something blocks it
+#                                                  (disable helper, door open,
+#                                                  security mode, etc).
+#   binary_sensor.master_city_window_open        - the window state. Off means
+#                                                  closed. Anything else (on,
+#                                                  unavailable, unknown) is
+#                                                  treated as not safely closed.
+#   script.do_nothing                            - empty sequence script. Acts
+#                                                  as the no-op target for
+#                                                  blocked commands.
+#
+# Changelog:
+#   2.1.0 - Migrated from legacy "cover: - platform: template" syntax to the
+#           modern "template:" integration syntax (introduced in Home Assistant
+#           2021.6). The legacy syntax cannot express conditional service
+#           routing cleanly and has been deprecated in favor of the modern
+#           syntax. Modern syntax uses if/then/else blocks for each service
+#           handler, which makes the tiered guard logic more readable and
+#           aligns with the production package this example tracks.
+#           Also added Tier 3 floor clamp logic. When the window is open, the
+#           effective floor is min(current_position, 62). Commands below the
+#           floor clamp to the floor. Commands at or above the floor pass
+#           through unchanged. Replaces the prior implicit pass-through
+#           behavior, which left the pattern vulnerable to a clamp side-effect
+#           bug where a shade at 15 percent could be raised to 62 percent
+#           during a sensor cascade.
+#           Required entity list now includes a window sensor for the floor
+#           clamp logic.
+#   1.0.0 - Initial release. Legacy "cover: - platform: template" syntax.
+#           Gate-based guard pattern with two paths: commands pass through
+#           when the guard sensor is on, route to script.do_nothing when off.
+#           No floor clamp.
 # -------------------------------------------------------------------------------------
-
-- platform: template
-  covers:
-    master_city_blinds_guarded: 
-      friendly_name: "Master City Blinds Guarded"
+template:
+  - cover:
+    - name: "Master City Blinds Guarded"
       unique_id: "master_city_blinds_guarded"
-      value_template: >-
-        {% set state = states('cover.master_city_blinds') %}
-        {% if state in ['opening', 'open', 'closing', 'closed'] %}
-          {{ state }}
+      device_class: shade
+      state: >-
+        {% set source_state = states('cover.master_city_blinds') %}
+        {% if source_state in ['opening', 'open', 'closing', 'closed'] %}
+          {{ source_state }}
         {% else %}
           closed
         {% endif %}
-      icon_template: >-
+      icon: >-
         {% if is_state('cover.master_city_blinds', 'open') %}
           mdi:blinds-open
         {% else %}
           mdi:blinds
         {% endif %}
-      device_class: shade
+      availability: "{{ has_value('cover.master_city_blinds') }}"
+      position: "{{ state_attr('cover.master_city_blinds', 'current_position') }}"
       open_cover:
-        service: >
-          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
-            cover.open_cover
-          {% else %}
-            script.do_nothing
-          {% endif %}
-        target:
-          entity_id: cover.master_city_blinds
+        - if:
+            - condition: state
+              entity_id: binary_sensor.guarded_blinds_control_enabled
+              state: 'off'
+          then:
+            - action: script.do_nothing
+          else:
+            - action: cover.open_cover
+              target:
+                entity_id: cover.master_city_blinds
       close_cover:
-        service: >
-          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
-            cover.close_cover
-          {% else %}
-            script.do_nothing
-          {% endif %}
-        target:
-          entity_id: cover.master_city_blinds
+        - if:
+            - condition: state
+              entity_id: binary_sensor.guarded_blinds_control_enabled
+              state: 'off'
+          then:
+            - action: script.do_nothing
+          else:
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ not is_state('binary_sensor.master_city_window_open', 'off')
+                    and ([state_attr('cover.master_city_blinds', 'current_position') | int(0), 62] | min) > 0 }}
+              then:
+                - action: cover.set_cover_position
+                  target:
+                    entity_id: cover.master_city_blinds
+                  data:
+                    position: "{{ [state_attr('cover.master_city_blinds', 'current_position') | int(0), 62] | min }}"
+              else:
+                - action: cover.close_cover
+                  target:
+                    entity_id: cover.master_city_blinds
       stop_cover:
-        service: >
-          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
-            cover.stop_cover
-          {% else %}
-            script.do_nothing
-          {% endif %}
-        target:
-          entity_id: cover.master_city_blinds
+        - if:
+            - condition: state
+              entity_id: binary_sensor.guarded_blinds_control_enabled
+              state: 'off'
+          then:
+            - action: script.do_nothing
+          else:
+            - action: cover.stop_cover
+              target:
+                entity_id: cover.master_city_blinds
       set_cover_position:
-        service: >
-          {% if is_state('binary_sensor.guarded_blinds_control_enabled', 'on') %}
-            cover.set_cover_position
-          {% else %}
-            script.do_nothing
-          {% endif %}
-        target:
-          entity_id: cover.master_city_blinds
-        data:
-          position: "{{ position }}"
+        - if:
+            - condition: state
+              entity_id: binary_sensor.guarded_blinds_control_enabled
+              state: 'off'
+          then:
+            - action: script.do_nothing
+          else:
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ not is_state('binary_sensor.master_city_window_open', 'off')
+                    and position | int(100) < ([state_attr('cover.master_city_blinds', 'current_position') | int(0), 62] | min) }}
+              then:
+                - action: cover.set_cover_position
+                  target:
+                    entity_id: cover.master_city_blinds
+                  data:
+                    position: "{{ [state_attr('cover.master_city_blinds', 'current_position') | int(0), 62] | min }}"
+              else:
+                - action: cover.set_cover_position
+                  target:
+                    entity_id: cover.master_city_blinds
+                  data:
+                    position: "{{ position }}"

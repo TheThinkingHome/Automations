@@ -62,6 +62,8 @@ blueprint:
     Creates a binary sensor that adds up the weight of every signal currently agreeing, divides by the weight of every signal currently in play, and turns on when that share reaches your threshold. Each signal in your list names an entity, a weight, and a rule for what counts as agreement; the rule can be a text match, a numeric comparison, or a range. A `required` flag promotes any signal to a hard gate that vetoes the result when it does not agree.
 
     Time-based conditions live in the signals you feed in, not in this blueprint. For "the door has been shut for ten minutes," point a Recently Active sensor at the door and hand its result in as a signal here.
+
+    **Version: 1.0.0**
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/weighted_confidence.yaml
   homeassistant:

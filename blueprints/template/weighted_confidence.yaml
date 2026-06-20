@@ -2,38 +2,37 @@
 # Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
 # See the LICENSE file for the full text.
 #
-# Weighted Confidence (Beta) - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
-# Work in progress. The signal format may still change between beta releases.
+# Weighted Confidence - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
 # Full write-up, worked examples, and directions:
 # https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/
 #
 # Changelog:
-#   1.1.1-beta - Two bug fixes for silent failure modes.
-#                (1) The equals and not_equals operators now match numeric
-#                lists correctly. Previously, `state: [1, 2, 3]` (unquoted in
-#                YAML) parsed as a list of integers, and the string state
-#                returned by states() never matched. The blueprint now coerces
-#                list members to strings before the membership check, so
-#                `state: [1, 2, 3]` and `state: ["1", "2", "3"]` are
-#                equivalent.
-#                (2) The above, below, and between operators now require their
-#                bound fields (value, low, high) to be defined. Previously a
-#                missing or misspelled field defaulted to 0 via Jinja's float
-#                fallback, producing arbitrary match behavior. The fix makes
-#                a misconfigured signal silently disagree instead, which shows
-#                up cleanly in the not_met attribute.
-#   1.1.0-beta - A required signal set to unavailable: disagree now vetoes while
-#                it is unavailable, so a required signal whose state cannot be
-#                confirmed forces the result off instead of silently dropping
-#                out. Non-required disagree is unchanged, counting against the
-#                score only.
-#   1.0.0-beta - Public preview. Percentage-of-available-weight scoring with
-#                per-signal weight, operators (equals, not_equals, above, below,
-#                between), a per-signal unavailable policy (drop, agree,
-#                disagree), an optional required hard gate, and a configurable
-#                agreement state that may be a single value or a list. Exposes
-#                confidence, score, threshold, contributing, not_met, and
-#                unavailable attributes.
+#   1.0.0 - Initial stable release. The sensor adds up the weight of every
+#           signal currently agreeing, divides by the weight of every signal
+#           currently in play, and turns on when that share reaches the
+#           configured threshold. Five operators determine how each signal
+#           is judged: equals and not_equals against a single value or list
+#           of values (text comparison); above, below, and between against
+#           a number (numeric comparison). A per-signal unavailable policy
+#           controls what happens when an entity goes missing: drop
+#           (default; signal steps aside, lowering the bar to clear), agree
+#           (counts as agreeing, useful for devices that drop offline when
+#           off), or disagree (counts against the score). The required flag
+#           promotes any signal to a hard gate that vetoes the result when
+#           it does not agree; required paired with unavailable: disagree
+#           extends the veto to cover entities whose state cannot be
+#           confirmed, so a gate fails closed rather than dropping out.
+#           Exposes six attributes for tuning: confidence (agreeing share
+#           as a percentage), score (raw agree-over-total tally), threshold
+#           (the input echoed back), contributing (names of agreeing
+#           signals), not_met (names of available-but-not-agreeing signals),
+#           and unavailable (entities currently missing). Verified across
+#           the original home it was written for and through beta-cycle bug
+#           fixes that closed two silent failure modes: string coercion for
+#           numeric list matching under equals and not_equals, and required
+#           bound-field validation for above, below, and between operators.
+#           Beta-cycle history (1.0.0-beta through 1.1.1-beta) archived in
+#           the project document.
 #
 # DEVELOPER NOTE: The signal evaluation logic in this blueprint is replicated
 # five times -- once in the binary_sensor state, and once each in the
@@ -45,10 +44,10 @@
 # The unavailable attribute is the one exception; it only lists entities, so
 # its loop is much simpler.
 blueprint:
-  name: Weighted Confidence (Beta)
+  name: Weighted Confidence
   author: James Lander (xeazy.com)
   description: |
-    # Weighted Confidence (Beta)
+    # Weighted Confidence
 
     *Infers a fuzzy state from many signals at once, each carrying its own weight, and turns on when enough of them agree.*
 
@@ -63,12 +62,8 @@ blueprint:
     Creates a binary sensor that adds up the weight of every signal currently agreeing, divides by the weight of every signal currently in play, and turns on when that share reaches your threshold. Each signal in your list names an entity, a weight, and a rule for what counts as agreement; the rule can be a text match, a numeric comparison, or a range. A `required` flag promotes any signal to a hard gate that vetoes the result when it does not agree.
 
     Time-based conditions live in the signals you feed in, not in this blueprint. For "the door has been shut for ten minutes," point a Recently Active sensor at the door and hand its result in as a signal here.
-
-    **Work in progress.** This is a public preview, and the signal format may still change between beta releases. Feedback is welcome on the forum.
-
-    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
   domain: template
-  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/weighted_confidence_beta.yaml
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/weighted_confidence.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
@@ -153,115 +148,96 @@ binary_sensor:
   name: !input sensor_name
   unique_id: !input unique_id
   device_class: !input device_class
-  state: >-
-    {% set ns = namespace(total=0, agree=0, veto=false) %}
-    {% for s in signals %}
-    {% set cur = states(s.entity) %}
-    {% set w = s.weight | int(1) %}
-    {% if cur in ['unavailable', 'unknown'] %}
-    {% set policy = s.unavailable | default('drop') %}
-    {% if policy == 'agree' %}{% set ns.total = ns.total + w %}{% set ns.agree = ns.agree + w %}{% elif policy == 'disagree' %}{% set ns.total = ns.total + w %}{% if s.required | default(false) %}{% set ns.veto = true %}{% endif %}{% endif %}
-    {% else %}
-    {% set op = s.operator | default('equals') %}
-    {% set match = s.state | default('on') %}
-    {% set num = cur | float(none) %}
-    {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
-    {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
-    {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
-    {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-    {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
-    {% set ns.total = ns.total + w %}
-    {% if met %}{% set ns.agree = ns.agree + w %}{% endif %}
-    {% if (s.required | default(false)) and not met %}{% set ns.veto = true %}{% endif %}
-    {% endif %}
-    {% endfor %}
-    {{ false if ns.veto else (ns.agree >= (ns.total * (threshold_percent | float / 100)) if ns.total > 0 else false) }}
+  state: '{% set ns = namespace(total=0, agree=0, veto=false) %} {% for s in signals
+    %} {% set cur = states(s.entity) %} {% set w = s.weight | int(1) %} {% if cur
+    in [''unavailable'', ''unknown''] %} {% set policy = s.unavailable | default(''drop'')
+    %} {% if policy == ''agree'' %}{% set ns.total = ns.total + w %}{% set ns.agree
+    = ns.agree + w %}{% elif policy == ''disagree'' %}{% set ns.total = ns.total +
+    w %}{% if s.required | default(false) %}{% set ns.veto = true %}{% endif %}{%
+    endif %} {% else %} {% set op = s.operator | default(''equals'') %} {% set match
+    = s.state | default(''on'') %} {% set num = cur | float(none) %} {% if op == ''not_equals''
+    %}{% set met = (cur not in (match | map(''string'') | list)) if (match is iterable
+    and match is not string) else (cur != match | string) %} {% elif op == ''above''
+    %}{% set met = s.value is defined and num is not none and num > (s.value | float(0))
+    %} {% elif op == ''below'' %}{% set met = s.value is defined and num is not none
+    and num < (s.value | float(0)) %} {% elif op == ''between'' %}{% set met = s.low
+    is defined and s.high is defined and num is not none and num >= (s.low | float(0))
+    and num <= (s.high | float(0)) %} {% else %}{% set met = (cur in (match | map(''string'')
+    | list)) if (match is iterable and match is not string) else (cur == match | string)
+    %}{% endif %} {% set ns.total = ns.total + w %} {% if met %}{% set ns.agree =
+    ns.agree + w %}{% endif %} {% if (s.required | default(false)) and not met %}{%
+    set ns.veto = true %}{% endif %} {% endif %} {% endfor %} {{ false if ns.veto
+    else (ns.agree >= (ns.total * (threshold_percent | float / 100)) if ns.total >
+    0 else false) }}'
   attributes:
-    confidence: >-
-      {% set ns = namespace(total=0, agree=0) %}
-      {% for s in signals %}
-      {% set cur = states(s.entity) %}
-      {% set w = s.weight | int(1) %}
-      {% if cur in ['unavailable', 'unknown'] %}
-      {% set policy = s.unavailable | default('drop') %}
-      {% if policy == 'agree' %}{% set ns.total = ns.total + w %}{% set ns.agree = ns.agree + w %}{% elif policy == 'disagree' %}{% set ns.total = ns.total + w %}{% endif %}
-      {% else %}
-      {% set op = s.operator | default('equals') %}
-      {% set match = s.state | default('on') %}
-      {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
-      {% set ns.total = ns.total + w %}
-      {% if met %}{% set ns.agree = ns.agree + w %}{% endif %}
-      {% endif %}
-      {% endfor %}
-      {{ (ns.agree / ns.total * 100) | round(1) if ns.total > 0 else 0 }}
-    score: >-
-      {% set ns = namespace(total=0, agree=0) %}
-      {% for s in signals %}
-      {% set cur = states(s.entity) %}
-      {% set w = s.weight | int(1) %}
-      {% if cur in ['unavailable', 'unknown'] %}
-      {% set policy = s.unavailable | default('drop') %}
-      {% if policy == 'agree' %}{% set ns.total = ns.total + w %}{% set ns.agree = ns.agree + w %}{% elif policy == 'disagree' %}{% set ns.total = ns.total + w %}{% endif %}
-      {% else %}
-      {% set op = s.operator | default('equals') %}
-      {% set match = s.state | default('on') %}
-      {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
-      {% set ns.total = ns.total + w %}
-      {% if met %}{% set ns.agree = ns.agree + w %}{% endif %}
-      {% endif %}
-      {% endfor %}
-      {{ ns.agree ~ ' / ' ~ ns.total }}
-    threshold: >-
-      {{ threshold_percent }}%
-    contributing: >-
-      {% set ns = namespace(items=[]) %}
-      {% for s in signals %}
-      {% set cur = states(s.entity) %}
-      {% if cur not in ['unavailable', 'unknown'] %}
-      {% set op = s.operator | default('equals') %}
-      {% set match = s.state | default('on') %}
-      {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
-      {% if met %}{% set ns.items = ns.items + [s.name | default(s.entity)] %}{% endif %}
-      {% endif %}
-      {% endfor %}
-      {{ ns.items }}
-    not_met: >-
-      {% set ns = namespace(items=[]) %}
-      {% for s in signals %}
-      {% set cur = states(s.entity) %}
-      {% if cur not in ['unavailable', 'unknown'] %}
-      {% set op = s.operator | default('equals') %}
-      {% set match = s.state | default('on') %}
-      {% set num = cur | float(none) %}
-      {% if op == 'not_equals' %}{% set met = (cur not in (match | map('string') | list)) if (match is iterable and match is not string) else (cur != match | string) %}
-      {% elif op == 'above' %}{% set met = s.value is defined and num is not none and num > (s.value | float(0)) %}
-      {% elif op == 'below' %}{% set met = s.value is defined and num is not none and num < (s.value | float(0)) %}
-      {% elif op == 'between' %}{% set met = s.low is defined and s.high is defined and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0)) %}
-      {% else %}{% set met = (cur in (match | map('string') | list)) if (match is iterable and match is not string) else (cur == match | string) %}{% endif %}
-      {% if not met %}{% set ns.items = ns.items + [s.name | default(s.entity)] %}{% endif %}
-      {% endif %}
-      {% endfor %}
-      {{ ns.items }}
-    unavailable: >-
-      {% set ns = namespace(items=[]) %}
-      {% for s in signals %}
-      {% if states(s.entity) in ['unavailable', 'unknown'] %}
-      {% set ns.items = ns.items + [s.entity] %}
-      {% endif %}
-      {% endfor %}
-      {{ ns.items }}
+    confidence: '{% set ns = namespace(total=0, agree=0) %} {% for s in signals %}
+      {% set cur = states(s.entity) %} {% set w = s.weight | int(1) %} {% if cur in
+      [''unavailable'', ''unknown''] %} {% set policy = s.unavailable | default(''drop'')
+      %} {% if policy == ''agree'' %}{% set ns.total = ns.total + w %}{% set ns.agree
+      = ns.agree + w %}{% elif policy == ''disagree'' %}{% set ns.total = ns.total
+      + w %}{% endif %} {% else %} {% set op = s.operator | default(''equals'') %}
+      {% set match = s.state | default(''on'') %} {% set num = cur | float(none) %}
+      {% if op == ''not_equals'' %}{% set met = (cur not in (match | map(''string'')
+      | list)) if (match is iterable and match is not string) else (cur != match |
+      string) %} {% elif op == ''above'' %}{% set met = s.value is defined and num
+      is not none and num > (s.value | float(0)) %} {% elif op == ''below'' %}{% set
+      met = s.value is defined and num is not none and num < (s.value | float(0))
+      %} {% elif op == ''between'' %}{% set met = s.low is defined and s.high is defined
+      and num is not none and num >= (s.low | float(0)) and num <= (s.high | float(0))
+      %} {% else %}{% set met = (cur in (match | map(''string'') | list)) if (match
+      is iterable and match is not string) else (cur == match | string) %}{% endif
+      %} {% set ns.total = ns.total + w %} {% if met %}{% set ns.agree = ns.agree
+      + w %}{% endif %} {% endif %} {% endfor %} {{ (ns.agree / ns.total * 100) |
+      round(1) if ns.total > 0 else 0 }}'
+    score: '{% set ns = namespace(total=0, agree=0) %} {% for s in signals %} {% set
+      cur = states(s.entity) %} {% set w = s.weight | int(1) %} {% if cur in [''unavailable'',
+      ''unknown''] %} {% set policy = s.unavailable | default(''drop'') %} {% if policy
+      == ''agree'' %}{% set ns.total = ns.total + w %}{% set ns.agree = ns.agree +
+      w %}{% elif policy == ''disagree'' %}{% set ns.total = ns.total + w %}{% endif
+      %} {% else %} {% set op = s.operator | default(''equals'') %} {% set match =
+      s.state | default(''on'') %} {% set num = cur | float(none) %} {% if op == ''not_equals''
+      %}{% set met = (cur not in (match | map(''string'') | list)) if (match is iterable
+      and match is not string) else (cur != match | string) %} {% elif op == ''above''
+      %}{% set met = s.value is defined and num is not none and num > (s.value | float(0))
+      %} {% elif op == ''below'' %}{% set met = s.value is defined and num is not
+      none and num < (s.value | float(0)) %} {% elif op == ''between'' %}{% set met
+      = s.low is defined and s.high is defined and num is not none and num >= (s.low
+      | float(0)) and num <= (s.high | float(0)) %} {% else %}{% set met = (cur in
+      (match | map(''string'') | list)) if (match is iterable and match is not string)
+      else (cur == match | string) %}{% endif %} {% set ns.total = ns.total + w %}
+      {% if met %}{% set ns.agree = ns.agree + w %}{% endif %} {% endif %} {% endfor
+      %} {{ ns.agree ~ '' / '' ~ ns.total }}'
+    threshold: '{{ threshold_percent }}%'
+    contributing: '{% set ns = namespace(items=[]) %} {% for s in signals %} {% set
+      cur = states(s.entity) %} {% if cur not in [''unavailable'', ''unknown''] %}
+      {% set op = s.operator | default(''equals'') %} {% set match = s.state | default(''on'')
+      %} {% set num = cur | float(none) %} {% if op == ''not_equals'' %}{% set met
+      = (cur not in (match | map(''string'') | list)) if (match is iterable and match
+      is not string) else (cur != match | string) %} {% elif op == ''above'' %}{%
+      set met = s.value is defined and num is not none and num > (s.value | float(0))
+      %} {% elif op == ''below'' %}{% set met = s.value is defined and num is not
+      none and num < (s.value | float(0)) %} {% elif op == ''between'' %}{% set met
+      = s.low is defined and s.high is defined and num is not none and num >= (s.low
+      | float(0)) and num <= (s.high | float(0)) %} {% else %}{% set met = (cur in
+      (match | map(''string'') | list)) if (match is iterable and match is not string)
+      else (cur == match | string) %}{% endif %} {% if met %}{% set ns.items = ns.items
+      + [s.name | default(s.entity)] %}{% endif %} {% endif %} {% endfor %} {{ ns.items
+      }}'
+    not_met: '{% set ns = namespace(items=[]) %} {% for s in signals %} {% set cur
+      = states(s.entity) %} {% if cur not in [''unavailable'', ''unknown''] %} {%
+      set op = s.operator | default(''equals'') %} {% set match = s.state | default(''on'')
+      %} {% set num = cur | float(none) %} {% if op == ''not_equals'' %}{% set met
+      = (cur not in (match | map(''string'') | list)) if (match is iterable and match
+      is not string) else (cur != match | string) %} {% elif op == ''above'' %}{%
+      set met = s.value is defined and num is not none and num > (s.value | float(0))
+      %} {% elif op == ''below'' %}{% set met = s.value is defined and num is not
+      none and num < (s.value | float(0)) %} {% elif op == ''between'' %}{% set met
+      = s.low is defined and s.high is defined and num is not none and num >= (s.low
+      | float(0)) and num <= (s.high | float(0)) %} {% else %}{% set met = (cur in
+      (match | map(''string'') | list)) if (match is iterable and match is not string)
+      else (cur == match | string) %}{% endif %} {% if not met %}{% set ns.items =
+      ns.items + [s.name | default(s.entity)] %}{% endif %} {% endif %} {% endfor
+      %} {{ ns.items }}'
+    unavailable: '{% set ns = namespace(items=[]) %} {% for s in signals %} {% if
+      states(s.entity) in [''unavailable'', ''unknown''] %} {% set ns.items = ns.items
+      + [s.entity] %} {% endif %} {% endfor %} {{ ns.items }}'

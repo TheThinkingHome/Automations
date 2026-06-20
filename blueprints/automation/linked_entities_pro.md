@@ -64,8 +64,8 @@ After import, the blueprint appears on the Blueprints page with a Create Automat
 Click Create Automation on the imported blueprint. Home Assistant opens the automation editor with the blueprint's inputs grouped into four sections.
 
 - **📦 Linked Entities**: pick the entities you want to keep in sync, and optionally designate one as the authority.
+- **⏱ Sync Delay**: set the pause between trigger and dispatched actions.
 - **🔄 Reconciliation**: turn the Home Assistant start reconcile on or off, optionally point at a bridge sensor (Zigbee2MQTT users want `binary_sensor.zigbee2mqtt_running`), and optionally enable the HA-startup peer-sync block via the Uptime integration.
-- **⚙️ Behavior Tuning**: set the sync delay between dispatched actions.
 - **🛠 Advanced**: toggle debug logging while you confirm the setup.
 
 Give the automation a name, save it, and the sync is live.

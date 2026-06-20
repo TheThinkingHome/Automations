@@ -1,10 +1,8 @@
-# Weighted Confidence (Beta)
+# Weighted Confidence
 
 A Home Assistant template blueprint that infers a fuzzy state from many signals at once, each carrying its own weight, and turns on when enough of them agree.
 
 Some states are not one sensor's job. "Is the house at bedtime" is not a single switch, it is the door having been shut a while, the TV off, a phone on its charger, the room dark, nobody moving about. Any one of those can be wrong on a given night without changing the answer. Weighted Confidence takes a list of signals like that, gives each a weight, and turns on when the agreeing weight crosses a line you set. It pairs naturally with the Recently Active blueprint: anything time-based, such as "the door has been shut for ten minutes," becomes one of the signals you feed in.
-
-This one is a beta. It is tested and it works, but the way you describe a signal may still change between beta releases, so treat a config you build today as something you might revisit when a new version lands.
 
 Full write-up and worked examples: https://xeazy.com/weighted-confidence-a-home-assistant-weighted-sensor-now-a-blueprint/
 Questions and discussion: https://xeazy.com/logbook/d/37-a-home-assistant-weighted-sensor-now-a-blueprint
@@ -33,7 +31,7 @@ Home Assistant 2026.5.4 or newer. That is the version it is verified on.
 
 The quick way, one click:
 
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Ftemplate%2Fweighted_confidence_beta.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Ftemplate%2Fweighted_confidence.yaml)
 
 Or by hand:
 
@@ -41,11 +39,11 @@ Or by hand:
 2. Click Import Blueprint at the bottom right.
 3. Paste this URL and click Preview:
    ```
-   https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/weighted_confidence_beta.yaml
+   https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/weighted_confidence.yaml
    ```
 4. Confirm and import.
 
-Importing only registers the blueprint. It does not create a sensor yet. After import, the file lands at `config/blueprints/template/<author>/weighted_confidence_beta.yaml`, typically `TheThinkingHome/weighted_confidence_beta.yaml`. Open that folder and note the exact `<author>` subfolder name Home Assistant assigned, because you need it in the next step.
+Importing only registers the blueprint. It does not create a sensor yet. After import, the file lands at `config/blueprints/template/<author>/weighted_confidence.yaml`, typically `TheThinkingHome/weighted_confidence.yaml`. Open that folder and note the exact `<author>` subfolder name Home Assistant assigned, because you need it in the next step.
 
 ## Step 2: The catch with template blueprints
 
@@ -53,7 +51,7 @@ Automation blueprints get a friendly "Create automation" button right on the Blu
 
 ```yaml
 use_blueprint:
-  path: TheThinkingHome/weighted_confidence_beta.yaml
+  path: TheThinkingHome/weighted_confidence.yaml
   input:
     unique_id: house_at_bedtime
     sensor_name: House At Bedtime
@@ -96,7 +94,7 @@ Now make a package file, for example `packages/house_at_bedtime.yaml`, and put y
 ```yaml
 template:
   - use_blueprint:
-      path: TheThinkingHome/weighted_confidence_beta.yaml
+      path: TheThinkingHome/weighted_confidence.yaml
       input:
         unique_id: house_at_bedtime
         sensor_name: House At Bedtime
@@ -221,7 +219,7 @@ Then the weighted sensor that reads it:
 
 ```yaml
   - use_blueprint:
-      path: TheThinkingHome/weighted_confidence_beta.yaml
+      path: TheThinkingHome/weighted_confidence.yaml
       input:
         unique_id: house_at_bedtime
         sensor_name: House At Bedtime
@@ -275,6 +273,4 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 |---|---|
-| 1.1.1-beta | Two bug fixes for silent failure modes. The `equals` and `not_equals` operators now match numeric lists correctly: previously, `state: [1, 2, 3]` (unquoted in YAML) parsed as a list of integers and the string state returned by `states()` never matched. The `above`, `below`, and `between` operators now require their bound fields (`value`, `low`, `high`) to be defined: previously a missing or misspelled field defaulted to 0 via Jinja's float fallback, producing arbitrary match behavior. The fix makes a misconfigured signal silently disagree instead, which shows up cleanly in the `not_met` attribute. |
-| 1.1.0-beta | A required signal set to `unavailable: disagree` now vetoes while it is unavailable, so a required signal whose state cannot be confirmed forces the result off instead of silently dropping out. Non-required `disagree` is unchanged, counting against the score only. |
-| 1.0.0-beta | Public preview. Percentage-of-available-weight scoring with per-signal weight, operators (`equals`, `not_equals`, `above`, `below`, `between`), a per-signal unavailable policy (`drop`, `agree`, `disagree`), an optional `required` hard gate, and a configurable agreement state that may be a single value or a list. Exposes `confidence`, `score`, `threshold`, `contributing`, `not_met`, and `unavailable` attributes. |
+| 1.0.0 | Initial stable release. The sensor adds up the weight of every signal currently agreeing, divides by the weight of every signal currently in play, and turns on when that share reaches the threshold. Five operators determine how each signal is judged: `equals` and `not_equals` against text, `above`, `below`, and `between` against numbers. A per-signal `unavailable` policy controls what happens when an entity goes missing: `drop` (default, signal steps aside), `agree` (counts as agreeing), or `disagree` (counts against). The `required` flag promotes any signal to a hard gate that vetoes the result when it does not agree; paired with `unavailable: disagree`, the veto extends to entities whose state cannot be confirmed, so a gate fails closed rather than dropping out. Exposes six attributes for tuning: `confidence`, `score`, `threshold`, `contributing`, `not_met`, and `unavailable`. Beta-cycle bug fixes (1.0.0-beta through 1.1.1-beta) closed two silent failure modes: string coercion for numeric list matching under `equals` and `not_equals`, and required bound-field validation for the numeric operators. Beta-cycle history archived in the project document. |

@@ -1,3 +1,74 @@
+# Copyright (C) 2026 James Lander, The Thinking Home (https://xeazy.com)
+# Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+# See the LICENSE file for the full text.
+#
+# Linked Entities Pro - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
+# Full write-up, worked examples, and directions:
+# https://xeazy.com/linked-entity-pro/
+#
+# Changelog:
+#   1.0.3-beta - Three structural changes from 1.0.0-beta. (1) Gate template
+#                for the HA-start block window rewritten to handle timestamp-
+#                mode sensor.uptime. The earlier template did
+#                states(uptime_sensor) | float(99999) and a unit_of_measurement
+#                lookup, which worked only when the Uptime integration was in
+#                numeric duration mode. The modern config-flow Uptime
+#                integration in HA 2026.6+ produces only timestamp mode (an
+#                ISO8601 datetime), where float() failed and fell back to the
+#                sentinel 99999. The comparison 99999 < ha_start_block_seconds
+#                was always false, so the gate was silently inert and the HA-
+#                start block never engaged. New template computes
+#                (now() - as_datetime(states(uptime_sensor))).total_seconds().
+#                The reconcile branches and post-restart branches were
+#                unaffected because they use the input directly as a delay,
+#                not through the gate. (2) Per-target availability filter on
+#                the peer-sync action. Before dispatching homeassistant.turn_*,
+#                the target list is filtered to exclude any linked entity
+#                currently in unavailable or unknown state. Stops HA from
+#                logging "Referenced entities X are missing or not currently
+#                available" service warnings when an upstream component
+#                (router, Z2M coordinator) restarts and entities flap to
+#                unavailable while HA itself remains up. Targets that come
+#                back will sync on their next state change. (3) Filename
+#                renamed from linked_entities_pro_beta.yaml to
+#                linked_entities_pro.yaml. The path no longer changes at
+#                graduation. source_url in the YAML and import links in the
+#                README updated accordingly. Breaking: users on the previous
+#                file path will need to re-import via the new URL on next
+#                blueprint refresh; existing imports continue to work without
+#                action.
+#   1.0.2-beta - Promoted sync_delay_ms to its own top-level input section,
+#                placed between Linked Entities and Reconciliation. The
+#                section makes the parameter visible and signals that it is
+#                a key tuning input that should be considered for every
+#                setup. The empty Behavior Tuning section was removed. No
+#                functional changes from 1.0.1-beta.
+#   1.0.1-beta - suppress_during replaced with an optional HA-startup peer-
+#                sync block, gated on the built-in Uptime integration. Three
+#                new inputs: use_uptime_sensor (boolean), uptime_sensor
+#                (entity, default sensor.uptime), ha_start_block_seconds
+#                (number, default 120). Box unchecked or sensor unavailable:
+#                no block, blueprint behaves the same as before for peer
+#                sync. Box checked and sensor reading: peer sync suppressed
+#                while uptime is below the threshold, with unit conversion
+#                for seconds, minutes, hours, or days based on the sensor's
+#                unit_of_measurement attribute. Reconcile branches are not
+#                blocked, because they are the intended response to boot
+#                drift. Breaking: users who had suppress_during pointed at
+#                an uptime sensor should enable use_uptime_sensor with a
+#                comparable ha_start_block_seconds value (120 to 180 is
+#                typical). Users who used suppress_during for maintenance
+#                windows or manual override modes lose that capability in
+#                this version.
+#   1.0.0-beta - Initial beta release. On/off sync only. Authority-on-
+#                reconcile model. Cross-domain entity selector (switches,
+#                lights, input_booleans, fans, groups). State equality
+#                breaks sync loops, so changes from physical presses,
+#                dashboards, automations, scenes, and voice all propagate.
+#                Mode restart so rapid toggles resolve to the latest state.
+#                HA start and optional reconcile-trigger-sensor branches
+#                for restart and bridge-reconnect drift recovery. Suppress-
+#                during gate. Debug logging.
 blueprint:
   name: Linked Entities Pro (Beta)
   description: "# Linked Entities Pro (Beta)\n\n*Keep two or more entities perfectly

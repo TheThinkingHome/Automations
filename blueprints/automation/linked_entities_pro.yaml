@@ -7,85 +7,61 @@
 # https://xeazy.com/linked-entity-pro/
 #
 # Changelog:
-#   1.0.3-beta - Three structural changes from 1.0.0-beta. (1) Gate template
-#                for the HA-start block window rewritten to handle timestamp-
-#                mode sensor.uptime. The earlier template did
-#                states(uptime_sensor) | float(99999) and a unit_of_measurement
-#                lookup, which worked only when the Uptime integration was in
-#                numeric duration mode. The modern config-flow Uptime
-#                integration in HA 2026.6+ produces only timestamp mode (an
-#                ISO8601 datetime), where float() failed and fell back to the
-#                sentinel 99999. The comparison 99999 < ha_start_block_seconds
-#                was always false, so the gate was silently inert and the HA-
-#                start block never engaged. New template computes
-#                (now() - as_datetime(states(uptime_sensor))).total_seconds().
-#                The reconcile branches and post-restart branches were
-#                unaffected because they use the input directly as a delay,
-#                not through the gate. (2) Per-target availability filter on
-#                the peer-sync action. Before dispatching homeassistant.turn_*,
-#                the target list is filtered to exclude any linked entity
-#                currently in unavailable or unknown state. Stops HA from
-#                logging "Referenced entities X are missing or not currently
-#                available" service warnings when an upstream component
-#                (router, Z2M coordinator) restarts and entities flap to
-#                unavailable while HA itself remains up. Targets that come
-#                back will sync on their next state change. (3) Filename
-#                renamed from linked_entities_pro_beta.yaml to
-#                linked_entities_pro.yaml. The path no longer changes at
-#                graduation. source_url in the YAML and import links in the
-#                README updated accordingly. Breaking: users on the previous
-#                file path will need to re-import via the new URL on next
-#                blueprint refresh; existing imports continue to work without
-#                action.
-#   1.0.2-beta - Promoted sync_delay_ms to its own top-level input section,
-#                placed between Linked Entities and Reconciliation. The
-#                section makes the parameter visible and signals that it is
-#                a key tuning input that should be considered for every
-#                setup. The empty Behavior Tuning section was removed. No
-#                functional changes from 1.0.1-beta.
-#   1.0.1-beta - suppress_during replaced with an optional HA-startup peer-
-#                sync block, gated on the built-in Uptime integration. Three
-#                new inputs: use_uptime_sensor (boolean), uptime_sensor
-#                (entity, default sensor.uptime), ha_start_block_seconds
-#                (number, default 120). Box unchecked or sensor unavailable:
-#                no block, blueprint behaves the same as before for peer
-#                sync. Box checked and sensor reading: peer sync suppressed
-#                while uptime is below the threshold, with unit conversion
-#                for seconds, minutes, hours, or days based on the sensor's
-#                unit_of_measurement attribute. Reconcile branches are not
-#                blocked, because they are the intended response to boot
-#                drift. Breaking: users who had suppress_during pointed at
-#                an uptime sensor should enable use_uptime_sensor with a
-#                comparable ha_start_block_seconds value (120 to 180 is
-#                typical). Users who used suppress_during for maintenance
-#                windows or manual override modes lose that capability in
-#                this version.
-#   1.0.0-beta - Initial beta release. On/off sync only. Authority-on-
-#                reconcile model. Cross-domain entity selector (switches,
-#                lights, input_booleans, fans, groups). State equality
-#                breaks sync loops, so changes from physical presses,
-#                dashboards, automations, scenes, and voice all propagate.
-#                Mode restart so rapid toggles resolve to the latest state.
-#                HA start and optional reconcile-trigger-sensor branches
-#                for restart and bridge-reconnect drift recovery. Suppress-
-#                during gate. Debug logging.
+#   1.0.0 - Initial stable release. State-equality gate keeps two or more
+#           linked entities in sync without ping-pong loops. Before any
+#           dispatch, the blueprint checks whether the other linked entities
+#           already match the source's new state; if they do, the run stops.
+#           If they do not, it dispatches homeassistant.turn_* commands to
+#           the others, filtered to exclude any entity currently in
+#           unavailable or unknown state (so HA does not log "Referenced
+#           entities X are missing" warnings during upstream restarts).
+#           Cross-domain support: switches, lights, input_booleans, fans, and
+#           groups can mix freely in the same linked group. The state-
+#           equality gate makes the design context-blind: physical presses,
+#           dashboard toggles, scene automations, and voice commands all
+#           propagate through the same path. mode: restart cancels in-flight
+#           runs when a new trigger arrives, so rapid opposite presses
+#           resolve to the latest state. A reconcile branch handles boot
+#           drift and Zigbee2MQTT bridge republish cascades: it runs on the
+#           homeassistant: start event and on the off-to-on transition of an
+#           optional bridge-online sensor (binary_sensor.zigbee2mqtt_running
+#           for Z2M users), waits up to 30 seconds for a designated authority
+#           entity to enter a known state, and aligns every other linked
+#           entity to it. An optional HA-startup peer-sync block, gated on
+#           Home Assistant's built-in Uptime integration, suppresses peer
+#           sync for a configurable window after HA starts, so republished
+#           stale states do not propagate through the gate before the
+#           reconcile has caught up. The block reads the Uptime sensor as an
+#           ISO8601 timestamp and computes elapsed seconds via
+#           (now() - as_datetime(states(uptime_sensor))).total_seconds().
+#           A sync_delay_ms input (default 200 ms) sits between the trigger
+#           and the dispatch, doubling as the cancellation window for rapid
+#           opposite presses and as the throttle that absorbs response
+#           cascades on larger groups. Verified at home on two production
+#           pairs (Zigbee wall switch + Tasmota relay; two Z2M switches)
+#           plus thirty simulator scenarios at group sizes 2 through 10 with
+#           variable device latencies. Beta-cycle history (1.0.0-beta
+#           through 1.0.3-beta) archived in the project document.
 blueprint:
-  name: Linked Entities Pro (Beta)
-  description: "# Linked Entities Pro (Beta)\n\n*Keep two or more entities perfectly
-    in sync, with a tiebreaker that wins on restart.*\n\nA free blueprint from **The
-    Thinking Home** at [xeazy.com](https://xeazy.com).\n\n- \U0001F4D6 [Read the article](https://xeazy.com/linked-entity-pro/)
-    - the design and how it differs from other sync blueprints.\n- \U0001F4AC [Discuss
-    in the community](https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint)
-    - the forum thread for this blueprint.\n- ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations)
-    - on GitHub.\n\n---\n\nSwitches, lights, fans, input_booleans, and groups can
-    mix freely in the same linked group. A change on any entity propagates to the
-    others. On Home Assistant restart or when an optional bridge sensor reconnects,
-    a designated authority entity acts as the tiebreaker to resolve drift.\n\nOriginally
-    built to keep a Zigbee wall switch and a Tasmota relay in lockstep, but generalized
-    to N entities and any mix of integrations.\n\n**Work in progress.** This is a
-    public preview. Feedback is welcome on the forum. Once an external tester confirms
-    it works in their environment, the blueprint graduates from beta.\n\n**Version:
-    1.0.3-beta**\n"
+  name: Linked Entities Pro
+  description: |
+    # Linked Entities Pro
+
+    *Keep two or more entities perfectly in sync, with a tiebreaker that wins on restart.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/linked-entity-pro/) - the design and how it differs from other sync blueprints.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/d/38-linked-entities-pro-blueprint) - the forum thread for this blueprint.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Switches, lights, fans, input_booleans, and groups can mix freely in the same linked group. A change on any entity propagates to the others. On Home Assistant restart or when an optional bridge sensor reconnects, a designated authority entity acts as the tiebreaker to resolve drift.
+
+    Originally built to keep a Zigbee wall switch and a Tasmota relay in lockstep, but generalized to N entities and any mix of integrations.
+
+    **Version: 1.0.0**
   domain: automation
   author: James Lander (xeazy.com)
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro.yaml
@@ -199,9 +175,9 @@ blueprint:
           name: Uptime Sensor
           description: The Uptime integration's sensor entity. Only consulted when
             the box above is checked. Default is sensor.uptime, which is the conventional
-            name. Any sensor whose state represents elapsed time since HA started
-            works; the blueprint reads the sensor's unit_of_measurement attribute
-            (s, min, h, or d) and converts automatically.
+            name. The blueprint reads the sensor's state as an ISO8601 timestamp and
+            computes elapsed seconds. The modern config-flow Uptime integration produces
+            this format by default; no extra setup needed.
           default: sensor.uptime
           selector:
             entity:
@@ -256,8 +232,8 @@ triggers:
   to: 'on'
   id: reconcile_sensor
 variables:
-  _version: 1.0.3-beta
-  _caller_prefix: '[Linked Entities Pro Beta v1.0.3-beta]'
+  _version: 1.0.0
+  _caller_prefix: '[Linked Entities Pro v1.0.0]'
   linked_entities_var: !input linked_entities
   authority_entity_input: !input authority_entity
   authority_entity_resolved: "{% set auth = authority_entity_input %} {% if auth and
@@ -286,12 +262,10 @@ actions:
     id: linked_entity_changed
   - alias: Uptime sensor configured and within block window
     condition: template
-    value_template: >-
-      {% set dt = states(uptime_sensor) | as_datetime(default=none) %}
-      {{ use_uptime_sensor
-         and uptime_sensor not in ['', none]
-         and dt is not none
-         and (now() - dt).total_seconds() < (ha_start_block_seconds_var | int(0)) }}
+    value_template: "{% set dt = states(uptime_sensor) | as_datetime(default=none)
+      %} {{ use_uptime_sensor\n   and uptime_sensor not in ['', none]\n   and dt is
+      not none\n   and (now() - dt).total_seconds() < (ha_start_block_seconds_var
+      | int(0)) }}"
   then:
   - alias: Debug Log Blocked
     if:
@@ -355,13 +329,9 @@ actions:
       action: homeassistant.turn_{{ trigger.to_state.state }}
       continue_on_error: true
       target:
-        entity_id: >-
-          {{ linked_entities_var
-             | reject('eq', trigger.entity_id)
-             | reject('in', states
-                 | selectattr('state', 'in', ['unavailable', 'unknown'])
-                 | map(attribute='entity_id') | list)
-             | list }}
+        entity_id: "{{ linked_entities_var\n   | reject('eq', trigger.entity_id)\n
+          \  | reject('in', states\n       | selectattr('state', 'in', ['unavailable',
+          'unknown'])\n       | map(attribute='entity_id') | list)\n   | list }}"
   - alias: Reconcile (HA Start or Reconcile Sensor)
     conditions:
     - condition: trigger

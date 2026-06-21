@@ -7,41 +7,13 @@
 # https://xeazy.com/linked-entity-pro/
 #
 # Changelog:
-#   1.0.0 - Initial stable release. State-equality gate keeps two or more
-#           linked entities in sync without ping-pong loops. Before any
-#           dispatch, the blueprint checks whether the other linked entities
-#           already match the source's new state; if they do, the run stops.
-#           If they do not, it dispatches homeassistant.turn_* commands to
-#           the others, filtered to exclude any entity currently in
-#           unavailable or unknown state (so HA does not log "Referenced
-#           entities X are missing" warnings during upstream restarts).
-#           Cross-domain support: switches, lights, input_booleans, fans, and
-#           groups can mix freely in the same linked group. The state-
-#           equality gate makes the design context-blind: physical presses,
-#           dashboard toggles, scene automations, and voice commands all
-#           propagate through the same path. mode: restart cancels in-flight
-#           runs when a new trigger arrives, so rapid opposite presses
-#           resolve to the latest state. A reconcile branch handles boot
-#           drift and Zigbee2MQTT bridge republish cascades: it runs on the
-#           homeassistant: start event and on the off-to-on transition of an
-#           optional bridge-online sensor (binary_sensor.zigbee2mqtt_running
-#           for Z2M users), waits up to 30 seconds for a designated authority
-#           entity to enter a known state, and aligns every other linked
-#           entity to it. An optional HA-startup peer-sync block, gated on
-#           Home Assistant's built-in Uptime integration, suppresses peer
-#           sync for a configurable window after HA starts, so republished
-#           stale states do not propagate through the gate before the
-#           reconcile has caught up. The block reads the Uptime sensor as an
-#           ISO8601 timestamp and computes elapsed seconds via
-#           (now() - as_datetime(states(uptime_sensor))).total_seconds().
-#           A sync_delay_ms input (default 200 ms) sits between the trigger
-#           and the dispatch, doubling as the cancellation window for rapid
-#           opposite presses and as the throttle that absorbs response
-#           cascades on larger groups. Verified at home on two production
-#           pairs (Zigbee wall switch + Tasmota relay; two Z2M switches)
-#           plus thirty simulator scenarios at group sizes 2 through 10 with
-#           variable device latencies. Beta-cycle history (1.0.0-beta
-#           through 1.0.3-beta) archived in the project document.
+#   1.0.0 - Initial stable release. State-equality gate two-way sync across any number of 
+#           entities and any mix of supported domains (switch, light, input_boolean, fan, group). 
+#           Reconcile branch on HA start and on an optional reconcile trigger sensor, with a 
+#           designated authority entity as the tiebreaker. Optional HA-startup peer-sync block 
+#           via the Uptime integration. Tunable sync_delay_ms (default 200 ms). Verified on two 
+#           production pairs and thirty simulator scenarios at group sizes 2 through 10. Beta 
+#           history (1.0.0-beta through 1.0.3-beta) archived in the project document.
 blueprint:
   name: Linked Entities Pro
   description: |

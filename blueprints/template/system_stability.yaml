@@ -7,6 +7,15 @@
 # https://xeazy.com/system-stability-template-blueprint/
 #
 # Changelog:
+#   1.1.1 - Collapsed the last_shutdown_at and last_stable_at attribute
+#           templates from multi-line if/else folded blocks to single-line
+#           ternary expressions. The folded form rendered each timestamp with
+#           surrounding whitespace, and the preserve branch re-wrapped the
+#           stored value on every shutdown-start cycle, so the whitespace
+#           accumulated over time. The single-line form renders each attribute
+#           to exactly the timestamp with nothing around it. Behavior is
+#           otherwise identical, including the None first-run case before
+#           either trigger has fired.
 #   1.1.0 - Two-trigger rewrite. Trigger-based template binary_sensor now
 #           fires from two HA events: homeassistant: shutdown (sets state
 #           to off) and homeassistant: start (sets state to true, with
@@ -112,15 +121,5 @@ binary_sensor:
     attributes:
       stability_delay_seconds: !input stability_delay_seconds
       triggered_by: "{{ trigger.id }}"
-      last_shutdown_at: >-
-        {% if trigger.id == 'shutdown' %}
-          {{ now().isoformat() }}
-        {% else %}
-          {{ this.attributes.last_shutdown_at | default(None) }}
-        {% endif %}
-      last_stable_at: >-
-        {% if trigger.id == 'start' %}
-          {{ (now() + timedelta(seconds=delay_seconds)).isoformat() }}
-        {% else %}
-          {{ this.attributes.last_stable_at | default(None) }}
-        {% endif %}
+      last_shutdown_at: "{{ now().isoformat() if trigger.id == 'shutdown' else this.attributes.last_shutdown_at | default(None) }}"
+      last_stable_at: "{{ (now() + timedelta(seconds=delay_seconds)).isoformat() if trigger.id == 'start' else this.attributes.last_stable_at | default(None) }}"

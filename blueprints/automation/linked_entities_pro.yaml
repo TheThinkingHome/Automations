@@ -7,12 +7,12 @@
 # https://xeazy.com/linked-entity-pro/
 #
 # Changelog:
-#   1.0.0 - Initial stable release. State-equality gate two-way sync across any number of 
-#           entities and any mix of supported domains (switch, light, input_boolean, fan, group). 
-#           Reconcile branch on HA start and on an optional reconcile trigger sensor, with a 
-#           designated authority entity as the tiebreaker. Optional HA-startup peer-sync block 
-#           via the Uptime integration. Tunable sync_delay_ms (default 200 ms). Verified on two 
-#           production pairs and thirty simulator scenarios at group sizes 2 through 10. Beta 
+#   1.0.0 - Initial stable release. State-equality gate two-way sync across any number of
+#           entities and any mix of supported domains (switch, light, input_boolean, fan, group).
+#           Reconcile branch on HA start and on an optional reconcile trigger sensor, with a
+#           designated authority entity as the tiebreaker. Optional HA-startup peer-sync block
+#           via the Uptime integration. Tunable sync_delay_ms (default 200 ms). Verified on two
+#           production pairs and thirty simulator scenarios at group sizes 2 through 10. Beta
 #           history (1.0.0-beta through 1.0.3-beta) archived in the project document.
 blueprint:
   name: Linked Entities Pro
@@ -208,9 +208,9 @@ variables:
   _caller_prefix: '[Linked Entities Pro v1.0.0]'
   linked_entities_var: !input linked_entities
   authority_entity_input: !input authority_entity
-  authority_entity_resolved: "{% set auth = authority_entity_input %} {% if auth and
-    auth != '' %}\n  {{ auth }}\n{% else %}\n  {{ linked_entities_var[0] }}\n{% endif
-    %}"
+  authority_entity_resolved: >-
+    {{ authority_entity_input if authority_entity_input not in ['', none]
+    else linked_entities_var[0] }}
   reconcile_on_ha_start: !input reconcile_on_ha_start
   reconcile_trigger_sensor: !input reconcile_trigger_sensor
   sync_delay_ms: !input sync_delay_ms
@@ -234,10 +234,12 @@ actions:
     id: linked_entity_changed
   - alias: Uptime sensor configured and within block window
     condition: template
-    value_template: "{% set dt = states(uptime_sensor) | as_datetime(default=none)
-      %} {{ use_uptime_sensor\n   and uptime_sensor not in ['', none]\n   and dt is
-      not none\n   and (now() - dt).total_seconds() < (ha_start_block_seconds_var
-      | int(0)) }}"
+    value_template: >-
+      {% set dt = states(uptime_sensor) | as_datetime(default=none) %}
+      {{ use_uptime_sensor
+      and uptime_sensor not in ['', none]
+      and dt is not none
+      and (now() - dt).total_seconds() < (ha_start_block_seconds_var | int(0)) }}
   then:
   - alias: Debug Log Blocked
     if:
@@ -259,9 +261,11 @@ actions:
     id: linked_entity_changed
   - alias: All followers already match the source's new state
     condition: template
-    value_template: "{{ linked_entities_var\n   | reject('eq', trigger.entity_id)
-      | list\n   | map('states') | reject('eq', trigger.to_state.state) | list | length
-      == 0 }}"
+    value_template: >-
+      {{ linked_entities_var
+      | reject('eq', trigger.entity_id) | list
+      | map('states') | reject('eq', trigger.to_state.state) | list
+      | length == 0 }}
   then:
   - alias: Debug Log Skip
     if:
@@ -301,9 +305,13 @@ actions:
       action: homeassistant.turn_{{ trigger.to_state.state }}
       continue_on_error: true
       target:
-        entity_id: "{{ linked_entities_var\n   | reject('eq', trigger.entity_id)\n
-          \  | reject('in', states\n       | selectattr('state', 'in', ['unavailable',
-          'unknown'])\n       | map(attribute='entity_id') | list)\n   | list }}"
+        entity_id: >-
+          {{ linked_entities_var
+          | reject('eq', trigger.entity_id)
+          | reject('in', states
+          | selectattr('state', 'in', ['unavailable', 'unknown'])
+          | map(attribute='entity_id') | list)
+          | list }}
   - alias: Reconcile (HA Start or Reconcile Sensor)
     conditions:
     - condition: trigger

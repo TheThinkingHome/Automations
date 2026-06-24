@@ -4,6 +4,15 @@
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.2 - Judge liveness by the device, not the battery entity. A
+#           battery reading is sticky and may report only when the percentage
+#           changes, which on an efficient sensor can be once a week, so the
+#           old check false-flagged healthy devices as not reporting. Now, for
+#           each monitored battery entity, the freshest last_reported across all
+#           of that device's entities is the heartbeat: a live device always has
+#           something fresh (link quality, motion, temperature), a dead one has
+#           everything stale. Falls back to the battery entity's own
+#           last_reported when the entity has no device behind it.
 #   1.0.0-alpha - Initial build. Split from the combined Battery Sentinel
 #           blueprint into a single-purpose stopped-reporting sensor, so the
 #           entity carries only its own attributes with no cross-mode noise.
@@ -57,7 +66,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha
+    1.0.0-alpha.2
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_not_reporting.yaml
@@ -254,16 +263,32 @@ variables:
     {%- set sns = namespace(items=[]) -%}
     {%- if do_check -%}
       {%- for eid in monitored -%}
-        {%- set sobj = states[eid] if states[eid] is not none else none -%}
-        {%- if sobj is not none and sobj.last_reported is not none -%}
-          {%- set age_h = (now() - sobj.last_reported).total_seconds() / 3600 -%}
+        {%- set did = device_id(eid) -%}
+        {%- set heartbeat = namespace(latest=none) -%}
+        {%- if did is not none -%}
+          {%- for de in device_entities(did) -%}
+            {%- set deo = states[de] if states[de] is not none else none -%}
+            {%- if deo is not none and deo.last_reported is not none -%}
+              {%- if heartbeat.latest is none or deo.last_reported > heartbeat.latest -%}
+                {%- set heartbeat.latest = deo.last_reported -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- else -%}
+          {%- set sobj = states[eid] if states[eid] is not none else none -%}
+          {%- if sobj is not none and sobj.last_reported is not none -%}
+            {%- set heartbeat.latest = sobj.last_reported -%}
+          {%- endif -%}
+        {%- endif -%}
+        {%- if heartbeat.latest is not none -%}
+          {%- set age_h = (now() - heartbeat.latest).total_seconds() / 3600 -%}
           {%- if age_h > lookback -%}
             {%- set sns.items = sns.items + [{
-              'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+              'name': (device_attr(did, 'name') or state_attr(eid, 'friendly_name') or eid),
               'entity_id': eid,
               'area': (area_name(eid) or 'Unassigned'),
-              'last_seen': sobj.last_reported.isoformat(),
-              'age': relative_time(sobj.last_reported),
+              'last_seen': heartbeat.latest.isoformat(),
+              'age': relative_time(heartbeat.latest),
               'battery_type': (state_attr(eid, 'battery_type') or '')
             }] -%}
           {%- endif -%}

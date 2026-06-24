@@ -1,1 +1,322 @@
+# Copyright (C) 2026 James Lander, The Thinking Home
+# Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
+# Battery Sentinel - Not Reporting - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+#   Article: https://xeazy.com/battery-sentinel-blueprint/
+#
+# Changelog:
+#   1.0.0-alpha - Initial build. Split from the combined Battery Sentinel
+#           blueprint into a single-purpose stopped-reporting sensor, so the
+#           entity carries only its own attributes with no cross-mode noise.
+#           Creates one trigger-based template sensor whose state is the count
+#           of battery devices that have not reported within a lookback window,
+#           judged once a day at a configured hour and latched until the next
+#           daily boundary. This spares devices that legitimately report only
+#           once a day, and it catches the device that freezes at its last
+#           value without ever going unavailable, which a plain unavailable
+#           check misses. Include and exclude accept entities, areas, devices,
+#           or labels, with exclude winning; an empty include watches every
+#           battery device-class entity. Carries the proven native-dict output
+#           (no tojson/from_json) and the optional debug log line. The daily
+#           latch is held in the sensor's own devices and eval_date attributes,
+#           read back each render.
+#           Test cadence: scan_interval feeds the time_pattern minutes field
+#           during the shakedown (/2 is every 2 minutes). Reverts to the hours
+#           field for production before graduation.
 
+blueprint:
+  name: Battery Sentinel - Not Reporting (Alpha)
+  description: |
+    # Battery Sentinel - Not Reporting (Alpha)
+
+    *One sensor that counts every battery device that stopped reporting, including the one frozen at its last value.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/battery-sentinel-blueprint/) - the design and worked examples.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) - import instructions, parameters, and attribute reference.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Creates one trigger-based template sensor whose state is the count of battery devices that have stopped reporting. The flagged devices are listed in the `devices` attribute, each with its name, area, last-seen time, and battery type, for any automation, dashboard, or notification to read.
+
+    ## How it works
+
+    A device counts as not reporting when it has not sent an update within a lookback window, whatever value it is still showing. That is the point: a device frozen at eighty percent still reads 80, and a plain unavailable check sails right past it. Asking instead whether the device reported at all catches both the unavailable device and the silently-frozen one.
+
+    The check is judged once a day at a chosen hour against the lookback window, not continuously, so a device that legitimately reports only once a day is not flagged for the hours it is quiet. The verdict is held until the next daily check, so it does not flap between scans.
+
+    Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. The sensor re-evaluates on a set cadence.
+
+    Its companion, **Battery Sentinel - Low**, counts the batteries running low. Build both for full coverage.
+
+    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
+
+    This is an alpha, under active testing on a live system.
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+
+    1.0.0-alpha
+  author: James Lander (xeazy.com)
+  domain: template
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_not_reporting.yaml
+  homeassistant:
+    min_version: 2026.5.4
+  input:
+    reporting_settings:
+      name: Not-reporting detection
+      icon: mdi:battery-off-outline
+      input:
+        report_hour:
+          name: Daily check hour
+          description: 'The hour of day the check is judged, 0 to 23. It is evaluated
+            once per day at this hour rather than continuously, so a device that
+            reports once a day is not flagged for the hours it is quiet.
+
+            '
+          default: 8
+          selector:
+            number:
+              min: 0.0
+              max: 23.0
+              step: 1.0
+              mode: slider
+        lookback_hours:
+          name: Lookback window
+          description: 'How many hours back from the daily check hour a device must
+            have reported to count as alive. A once-a-day reporter needs a window
+            wide enough to absorb timing drift. Raise this if normal daily reporters
+            keep getting flagged.
+
+            '
+          default: 28
+          selector:
+            number:
+              min: 1.0
+              max: 168.0
+              step: 1.0
+              unit_of_measurement: hours
+              mode: box
+    scope_settings:
+      name: Which devices to watch
+      icon: mdi:select-group
+      input:
+        include_target:
+          name: Include
+          description: 'Devices, areas, entities, or labels to watch. Leave empty
+            to watch every entity with a battery device class automatically. Set a
+            label here to watch only the devices you tag.
+
+            '
+          default: {}
+          selector:
+            target: {}
+        exclude_target:
+          name: Exclude
+          description: 'Devices, areas, entities, or labels to leave out. Exclude
+            always wins over include. Use it to drop phones, tablets, or a device
+            you are letting run down on purpose.
+
+            '
+          default: {}
+          selector:
+            target: {}
+    cadence_settings:
+      name: Evaluation cadence
+      icon: mdi:timer-sync-outline
+      input:
+        scan_interval:
+          name: Re-evaluation interval
+          description: 'How often the sensor re-scans. During testing this is in
+            minutes (/2 is every 2 minutes). It reverts to hours for production.
+            The once-a-day check runs independently of this; the cadence only sets
+            how often the sensor wakes to look.
+
+            '
+          default: /2
+          selector:
+            select:
+              options:
+              - label: Every 1
+                value: /1
+              - label: Every 2
+                value: /2
+              - label: Every 3
+                value: /3
+              - label: Every 5
+                value: /5
+              - label: Every 10
+                value: /10
+              - label: Every 15
+                value: /15
+              - label: Every 30
+                value: /30
+              sort: false
+              custom_value: false
+              multiple: false
+    naming_settings:
+      name: Sensor identity
+      icon: mdi:tag-outline
+      input:
+        sensor_name:
+          name: Sensor name
+          description: The name for the sensor this blueprint creates.
+          default: Battery Sentinel Not Reporting
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        unique_id:
+          name: Unique ID
+          description: 'A unique id so the sensor is registered and you can rename
+            it or place it in an area from the interface. Make it distinct for every
+            sensor you build, for example battery_sentinel_not_reporting.
+
+            '
+          selector:
+            text:
+              multiple: false
+              multiline: false
+    debug_settings:
+      name: Debugging
+      icon: mdi:bug-outline
+      input:
+        debug_enabled:
+          name: Write a debug line to the log
+          description: 'When on, the sensor writes one summary line to the system
+            log each time it evaluates, covering the daily-check timing and naming
+            the flagged devices. Useful while setting the sensor up. Leave off for
+            normal use so the log stays quiet.
+
+            '
+          default: false
+          selector:
+            boolean: {}
+variables:
+  report_hour: !input report_hour
+  lookback_hours: !input lookback_hours
+  include_target: !input include_target
+  exclude_target: !input exclude_target
+  debug_enabled: !input debug_enabled
+  result: |
+    {%- set lookback = lookback_hours | float(28) -%}
+    {%- set rpt_hour = report_hour | int(8) -%}
+    {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
+    {%- set inc = include_target -%}
+    {%- set ns = namespace(ents=[]) -%}
+    {%- if inc is mapping and (inc.entity_id is defined or inc.device_id is defined or inc.area_id is defined or inc.label_id is defined) -%}
+      {%- if inc.entity_id is defined -%}
+        {%- set elist = inc.entity_id if (inc.entity_id is iterable and inc.entity_id is not string) else [inc.entity_id] -%}
+        {%- set ns.ents = ns.ents + elist -%}
+      {%- endif -%}
+      {%- if inc.device_id is defined -%}
+        {%- set dlist = inc.device_id if (inc.device_id is iterable and inc.device_id is not string) else [inc.device_id] -%}
+        {%- for d in dlist -%}{%- set ns.ents = ns.ents + device_entities(d) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if inc.area_id is defined -%}
+        {%- set alist = inc.area_id if (inc.area_id is iterable and inc.area_id is not string) else [inc.area_id] -%}
+        {%- for a in alist -%}{%- set ns.ents = ns.ents + area_entities(a) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if inc.label_id is defined -%}
+        {%- set llist = inc.label_id if (inc.label_id is iterable and inc.label_id is not string) else [inc.label_id] -%}
+        {%- for l in llist -%}{%- set ns.ents = ns.ents + label_entities(l) -%}{%- endfor -%}
+      {%- endif -%}
+    {%- else -%}
+      {%- set ns.ents = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
+                      + (states.binary_sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list) -%}
+    {%- endif -%}
+    {%- set exc = exclude_target -%}
+    {%- set xns = namespace(ents=[]) -%}
+    {%- if exc is mapping -%}
+      {%- if exc.entity_id is defined -%}
+        {%- set elist = exc.entity_id if (exc.entity_id is iterable and exc.entity_id is not string) else [exc.entity_id] -%}
+        {%- set xns.ents = xns.ents + elist -%}
+      {%- endif -%}
+      {%- if exc.device_id is defined -%}
+        {%- set dlist = exc.device_id if (exc.device_id is iterable and exc.device_id is not string) else [exc.device_id] -%}
+        {%- for d in dlist -%}{%- set xns.ents = xns.ents + device_entities(d) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.area_id is defined -%}
+        {%- set alist = exc.area_id if (exc.area_id is iterable and exc.area_id is not string) else [exc.area_id] -%}
+        {%- for a in alist -%}{%- set xns.ents = xns.ents + area_entities(a) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.label_id is defined -%}
+        {%- set llist = exc.label_id if (exc.label_id is iterable and exc.label_id is not string) else [exc.label_id] -%}
+        {%- for l in llist -%}{%- set xns.ents = xns.ents + label_entities(l) -%}{%- endfor -%}
+      {%- endif -%}
+    {%- endif -%}
+    {%- set monitored = ns.ents | unique | reject('in', xns.ents) | list -%}
+    {%- set today_str = now().strftime('%Y-%m-%d') -%}
+    {%- set boundary = now().replace(hour=rpt_hour, minute=0, second=0, microsecond=0) -%}
+    {%- set prev_eval_date = prev.get('eval_date', '') -%}
+    {%- set do_check = (now() >= boundary) and (prev_eval_date != today_str) -%}
+    {%- set sns = namespace(items=[]) -%}
+    {%- if do_check -%}
+      {%- for eid in monitored -%}
+        {%- set sobj = states[eid] if states[eid] is not none else none -%}
+        {%- if sobj is not none and sobj.last_reported is not none -%}
+          {%- set age_h = (now() - sobj.last_reported).total_seconds() / 3600 -%}
+          {%- if age_h > lookback -%}
+            {%- set sns.items = sns.items + [{
+              'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+              'entity_id': eid,
+              'area': (area_name(eid) or 'Unassigned'),
+              'last_seen': sobj.last_reported.isoformat(),
+              'age': relative_time(sobj.last_reported),
+              'battery_type': (state_attr(eid, 'battery_type') or '')
+            }] -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- set devices = sns.items -%}
+      {%- set eval_date = today_str -%}
+    {%- else -%}
+      {%- set devices = prev.get('devices', []) -%}
+      {%- set eval_date = prev_eval_date -%}
+    {%- endif -%}
+    {{
+      {
+        'state': devices | length,
+        'total_monitored': monitored | length,
+        'devices': devices,
+        'eval_date': eval_date,
+        'last_evaluated': now().isoformat(),
+        'ran': do_check,
+        'boundary': boundary.isoformat(),
+        'lookback': lookback,
+        'report_hour': rpt_hour
+      }
+    }}
+trigger:
+- trigger: time_pattern
+  hours: '*'
+  minutes: !input scan_interval
+- trigger: homeassistant
+  event: start
+action:
+- if:
+  - condition: template
+    value_template: '{{ debug_enabled }}'
+  then:
+  - action: system_log.write
+    data:
+      level: info
+      logger: battery_sentinel_not_reporting
+      message: >-
+        Battery Sentinel Not Reporting @ {{ result.last_evaluated }} | monitored:
+        {{ result.total_monitored }} | ran={{ result.ran }} boundary={{
+        result.boundary }} lookback={{ result.lookback | round(0) }}h report_hour={{
+        result.report_hour }} eval_date={{ result.eval_date }} | not reporting: {{
+        result.state }}{% for d in result.devices %} | {{ d.name }} (last seen {{
+        d.age }}, {{ d.last_seen }}) [{{ d.entity_id }}]{% endfor %}
+sensor:
+- name: !input sensor_name
+  unique_id: !input unique_id
+  state: '{{ result.state }}'
+  icon: '{{ ''mdi:battery-off-outline'' if result.state | int(0) > 0 else ''mdi:battery-check'' }}'
+  attributes:
+    total_monitored: '{{ result.total_monitored }}'
+    devices: '{{ result.devices }}'
+    eval_date: '{{ result.eval_date }}'
+    last_evaluated: '{{ result.last_evaluated }}'

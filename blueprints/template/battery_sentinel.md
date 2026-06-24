@@ -143,18 +143,6 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a sensor named after each `sensor_name`. Watch them in Developer Tools, States. The state is the count, and the `devices` attribute lists the flagged devices.
 
-# Battery Sentinel - Low Battery
-
-Counts the batteries at or below a threshold and lists them, with the percentage, area, and battery type for each. It creates a `sensor` whose state is the number of low batteries, with the offenders listed in a `devices` attribute.
-
-- **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. A binary low battery sensor has no number to report, so its `level` comes through as `null`.
-- **Hysteresis so it does not flap.** A value-hysteresis band keeps a device hovering at the threshold from bouncing in and out of the list. 
-- **Structured output.** The `devices` list holds objects carrying the device name, area, percentage level, and battery type if available. Every consumer can now format them in its own way.
-
-## Scoping: Choosing What Each Sensor Watches
-
-Both sensors decide which battery devices to watch through two inputs, `include_target` and `exclude_target`. Each accepts entities, areas, devices, or labels, and you can mix them. This section covers every way to scope a sensor, because it is the part most worth getting right, and the one place the behavior is not obvious.
-
 ### The Default: Watch Everything
 
 Leave `include_target` out entirely and the sensor watches every battery device-class entity in your system. This is the widest scope and a fine place to start:
@@ -225,6 +213,19 @@ with the `battery_watch` label applied to `sensor.motion_master_battery`, `senso
 Not this: applying `battery_watch` to the Motion Master *device*. A device holds many entities, and the label on it is not seen by the sensor. That device is silently skipped, with no error and no warning.
 
 The symptom to recognize: if a label-scoped sensor's `total_monitored` count looks lower than the number of devices you tagged, you almost certainly labeled devices instead of their battery entities. Move the label to the entity and the count corrects itself.
+
+# Battery Sentinel - Low Battery
+
+Counts the batteries at or below a threshold and lists them, with the percentage, area, and battery type for each. It creates a `sensor` whose state is the number of low batteries, with the offenders listed in a `devices` attribute.
+
+- **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. A binary low battery sensor has no number to report, so its `level` comes through as `null`.
+- **Hysteresis so it does not flap.** A value-hysteresis band keeps a device hovering at the threshold from bouncing in and out of the list. 
+- **Structured output.** The `devices` list holds objects carrying the device name, area, percentage level, and battery type if available. Every consumer can now format them in its own way.
+
+## Scoping: Choosing What Each Sensor Watches
+
+Both sensors decide which battery devices to watch through two inputs, `include_target` and `exclude_target`. Each accepts entities, areas, devices, or labels, and you can mix them. This section covers every way to scope a sensor, because it is the part most worth getting right, and the one place the behavior is not obvious.
+
 
 ## What the Sensor Looks Like
 

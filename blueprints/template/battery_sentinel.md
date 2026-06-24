@@ -1,46 +1,46 @@
 # Battery Sentinel (Alpha)
 
-Two Home Assistant template blueprints that watch every battery device in the house and report, as sensors, which ones are running low and which ones have quietly stopped reporting.
+Two Home Assistant template blueprints (Battery Sentinel - Low Battery, and Battery Sentinel - Not Reporting) that watch every battery device in the house and report those that are running low and those that quietly stopped reporting.
 
-Battery monitoring in Home Assistant has looked the same for years. The common blueprints are automation blueprints: they check a percentage on a schedule and push a message. The notification is the entire product. You get a one-time alert, and nothing else in your system can read the result, because there is no result to read, only an action that already fired.
+Battery monitoring in Home Assistant has looked the same for years. The common blueprints check each device's battery percentage on a schedule and push a notification to your phone. The notification is the entire product. You get a one-time alert and nothing else in your system can read the result.
 
-That corner of the ecosystem has stalled. Little has moved in a long time. The forums carry a steady run of feature requests, list the actual battery type so the alert tells you what to buy, catch the sensor that died without going unavailable, put the low devices on a shopping list, send the alert somewhere other than one phone, and most of them go unanswered. They are not hard requests. They are simply out of reach for an automation whose only output is a notification, because a notification has nowhere to put a list, a history, or a second reader.
+Battery monitoring in Home Assistant has stalled. The forums carry a steady run of feature requests: list the actual battery type so the alert tells you what to buy, catch the sensor that died without going unavailable, filter selected battery devices with a battery_watch label, send the alert somewhere other than a phone, and most of them go unanswered. These are not hard requests. They are simply out of reach for a blueprint whose only output is a notification.
 
-Battery Sentinel is a fresh approach, written from scratch. It is not a fork or a patch of anything. The starting point is different: instead of building down from the notification, it builds up from the sensor.
+**Battery Sentinel** is a fresh approach, written from scratch. It is not a fork or a patch of anything. The starting point is different: instead of building down from a notification, it builds up from a sensor.
 
 ## Why a Sensor Instead of an Automation
 
-These are template blueprints, so each one produces a `sensor`, not a one-time action. That single change is what unlocks everything the notification-only model cannot reach. A sensor has a state and attributes that persist, and anything in Home Assistant can read it. One sensor, many listeners:
+We built a pair of template blueprints, so each one produces a `sensor`, not a one-time action. This single change is what unlocks everything the notification-only model cannot reach. A sensor has a state and attributes that persist, and anything in Home Assistant can read it. One sensor, many listeners:
 
 - **A notification**, the obvious one. A companion automation blueprint for this is planned, so you get the polished alert without hand-writing the Jinja yourself.
 - **A dashboard card** that lists the low devices with area and battery type, so a glance tells you what to grab from the drawer.
-- **A to-do or shopping list**, each low cell dropped onto a list so the right battery is on hand before you make the swap.
+- **A to-do or shopping list**, each low cell dropped onto a list so the right battery can be purchased if not already on hand.
 - **A voice summary** through Assist, asking which batteries need attention before you head out.
-- **A gate on another automation**, logic that only runs when the list is empty or non-empty, for example holding back a routine that leans on a sensor that has gone quiet.
+- **A gate on another automation**, logic that only runs when the list is empty or non-empty, for example holding back an automation that leans on a sensor that has gone quiet.
 
-The notification is the least of what the signal can drive. It is just the first reader people reach for.
+The notification is the least of what the signal can drive. It is just the first most people reach for.
 
 ## What It Does
 
-Battery Sentinel splits the job across two single-purpose sensors so each one reports cleanly, with no attributes from the other muddying the output:
+Battery Sentinel splits the job across two single-purpose sensors so each one reports cleanly:
 
-- **Battery Sentinel - Low** counts the batteries at or below a threshold.
+- **Battery Sentinel - Low** counts the batteries at or below a threshold and creates a detailed list in the attributes of any below the threshold.
 - **Battery Sentinel - Not Reporting** counts the batteries that stopped reporting, including the one frozen at a healthy-looking value that a percentage check can never see.
 
-Neither notifies on its own. Each is a signal: the state is a count, the flagged devices are listed in a `devices` attribute, and you decide what reads it. Build the pair for full coverage, or just the one you want.
+Each is a signal: the state is a count, the flagged devices are listed in a `devices` attribute, and you decide what reads it. Build the pair for full coverage, or just the one you want.
 
 **Delivering now:**
 
-- Two single-purpose sensors, the state as a count, the offenders in a structured `devices` attribute carrying name, area, level or last-seen time, and battery type.
-- Low handles both percentage and binary battery sensors, with a value-hysteresis band so a cell sitting at the threshold does not flap in and out of the list.
-- Not Reporting judges liveness by the device, not the sticky battery reading, and judges it once a day so an honest daily reporter is not flagged for the hours it is quiet. The daily verdict is latched between runs.
-- Scope by label, area, device, or entity, with include and exclude, and exclude always winning.
+- Two single-purpose sensors, the state as a count, the offenders in a structured `devices` attribute carrying name, area, level or last-seen time, and if the device reports it, battery type.
+- _Battery Low_ handles both percentage and binary battery sensors, with a value-hysteresis band so a cell sitting at the threshold does not flap in and out of the list.
+- _Not Reporting_ judges liveness by the device, not the sticky battery reading, and judges it once a day so an honest daily reporter is not flagged for the hours it is quiet. The daily verdict is latched between runs.
+- Scope by label, area, device, or entity, with include and exclude, and exclude always wins.
 - Area and device scopes are filtered to real battery entities; labels and explicit entity lists are trusted as you curated them.
-- Optional debug log line, and each sensor registered with a `unique_id` so you can rename it or place it in an area from the interface.
+- Optional debug log line, and each sensor registered with a `unique_id` so you can rename it or place it in an area from the UI.
 
 **Envisioned:**
 
-- A companion notification automation blueprint, so the alert is a guided setup rather than hand-written templates.
+- A companion notification automation blueprint so the alert is a guided setup rather requiring to be hand-written.
 - Voltage-reporting devices supported alongside percentage and binary.
 - Actionable notifications, tap to drop the dead cell straight onto a to-do list.
 - A combined health view that reads both sensors as a single signal.
@@ -53,7 +53,7 @@ Full write-up and worked examples: <https://xeazy.com/battery-sentinel-blueprint
 
 Each blueprint imports on its own. Use both for full coverage, or import only the one you want. They are separate entities and do not depend on each other.
 
-### Battery Sentinel - Low
+### Battery Sentinel - Low Battery
 
 The low-battery counter. Import this one for the at-or-below-threshold list.
 
@@ -135,17 +135,7 @@ template:
         unique_id: battery_sentinel_not_reporting
 ```
 
-Note that the Not Reporting block has no `scan_interval`. It does not scan on an interval; it evaluates once a day at `report_hour` and on Home Assistant start. The Low block does take `scan_interval`. To narrow either sensor, add an `include_target` with a label, area, device, or entity, and an `exclude_target` for anything to drop. If you already keep template entities in your `configuration.yaml` under a `template:` key, you can drop the `use_blueprint` blocks into that list instead. The package is simply the cleaner home once you have a few.
-
-### A Note on Scoping
-
-Both sensors scope the same way, through `include_target` and `exclude_target`, and both accept entities, areas, devices, or labels. There is one behavioral difference worth knowing, because it decides what a scope actually watches.
-
-An explicit entity list and a label are **trusted**. You hand-picked those, so the blueprint watches exactly what you named, without second-guessing it. That also means a label is only as clean as you keep it: tag a non-battery entity into the label and the blueprint will read it as though it were a battery.
-
-An area or a device is **filtered to battery entities**. An area holds everything assigned to it, signal strength readings, connectivity sensors, blinds positions, and so on, and a device exposes many entities beyond its battery. Watching those raw would read a signal strength of -56 as if it were a battery at -56 percent. So when you scope by area or device, the blueprint keeps only the `device_class: battery` entities and drops the rest.
-
-In short: name entities or a label and you get exactly that list; point at an area or device and you get the batteries within it. Exclude always wins over include, which is how you drop a phone, a tablet, or a device you are deliberately running down.
+Note that the _Not Reporting_ block is evaluates once a day at `report_hour` and on Home Assistant start. The _Low_ block requires `scan_interval` set to minutes. To narrow either sensor, add an `include_target` with a label, area, device, or entity, and an `exclude_target` for anything to drop. If you already keep template entities in your `configuration.yaml` under a `template:` key, you can drop the `use_blueprint` blocks into that list instead. The package is simply the cleaner home once you have a few.
 
 ### Load It
 
@@ -153,17 +143,13 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a sensor named after each `sensor_name`. Watch them in Developer Tools, States. The state is the count, and the `devices` attribute lists the flagged devices.
 
-# Battery Sentinel - Low
+# Battery Sentinel - Low Battery
 
-Counts the batteries at or below a threshold and lists them, with the percentage, area, and battery type for each.
+Counts the batteries at or below a threshold and lists them, with the percentage, area, and battery type for each. it creates a `sensor` whose state is the number of low batteries, with the offenders listed in a `devices` attribute.
 
-## What You Get
-
-A `sensor` whose state is the number of low batteries, with the offenders listed in a `devices` attribute.
-
-- **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. A binary low sensor has no number to report, so its `level` comes through as `null`.
-- **Hysteresis so it does not flap.** A value-hysteresis band keeps a device hovering at the threshold from bouncing in and out of the list. It stays low until it climbs above the threshold plus a margin, which for a battery only happens when a fresh cell is fitted.
-- **Structured output.** The `devices` list holds objects carrying the device name, area, percentage level, and battery type, so every consumer formats them its own way.
+- **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. A binary low battery sensor has no number to report, so its `level` comes through as `null`.
+- **Hysteresis so it does not flap.** A value-hysteresis band keeps a device hovering at the threshold from bouncing in and out of the list. 
+- **Structured output.** The `devices` list holds objects carrying the device name, area, percentage level, and battery type if available. Every consumer can now format them in its own way.
 
 ## What the Sensor Looks Like
 
@@ -203,11 +189,7 @@ The state is the single number you badge or trigger on. The `devices` list is th
 | `sensor_name` | No | `Battery Sentinel - Low` | any text | The friendly name, and what the entity id is built from. |
 | `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, naming the flagged devices. |
 
-## A Note on Hysteresis
-
-A battery hovering right at the threshold reports noise: 20.1, 19.9, 20.1. Without a guard, that flaps a device in and out of the low list. Battery Sentinel - Low puts a deadband in the value. A device enters the list when it drops below the threshold, and clears only when it climbs above the threshold plus the margin. Because a battery does not recover on its own, the only thing that pushes a flagged device past the clear point is a fresh cell, which is exactly when you want it to clear.
-
-## Changelog: Battery Sentinel - Low
+## Changelog: Battery Sentinel - Low Battery
 
 | Version | Notes |
 | --- | --- |
@@ -216,16 +198,12 @@ A battery hovering right at the threshold reports noise: 20.1, 19.9, 20.1. Witho
 
 # Battery Sentinel - Not Reporting
 
-Counts the batteries that have stopped reporting, including the device frozen at a healthy-looking value, and lists each with how long it has been quiet.
+Counts the batteries that have stopped reporting or become unavailable, including the device frozen at a healthy-looking value, and lists each with how long it has been quiet. It creates a `sensor` whose state is the number of devices that have gone quiet, with the offenders listed in a `devices` attribute.
 
-## What You Get
-
-A `sensor` whose state is the number of devices that have gone quiet, with the offenders listed in a `devices` attribute.
-
-- **Judged by the device, not the battery reading.** A battery percentage is sticky: many devices only send a new value when the percentage actually changes, which on an efficient sensor can be once a week. Asking whether the battery entity reported recently would flag healthy devices constantly. Instead, the sensor takes the most recent report across all of the device's entities as the heartbeat. A live device always has something fresh, link quality, motion, temperature, even when its battery number has not moved in days. A genuinely dead device has everything stale.
-- **Catches the silent failure.** "Not reporting" does not mean the literal `unavailable` state. It means nothing on the device has updated within the lookback window, whatever value it is still showing. A device frozen at eighty percent still reads `80`, and an `unavailable` check sails right past it. Asking whether the device reported at all catches both the explicitly-unavailable device and the silently-frozen one in a single test.
-- **Judged once a day, then held.** The check runs once a day at an hour you choose, not continuously, so a water leak sensor that legitimately reports once a day is not flagged for the hours it is quiet. The verdict is latched in the sensor's own attributes and held until the next daily check, so it does not flap between evaluations.
-- **Structured output.** The `devices` list carries the device name, area, last-seen time, a human-readable age, and battery type.
+- **Judged by the device, not the battery reading.** The sensor takes the most recent report across all of the device's entities as the heartbeat. A live device always has something fresh, link quality, motion, temperature, even when its battery number has not moved in days. In a genuinely dead device, everything is stale.
+- **Catches the silent failure.** "Not reporting" does not mean the literal `unavailable` state. It means nothing on the device has updated within the lookback window, whatever value it is still showing. Asking whether the device recently reported catches both the explicitly-unavailable device and the silently-frozen one in a single test.
+- **Judged once a day, then held.** The check runs once a day at an hour you choose, not continuously, so a water leak sensor that legitimately reports once a day is not flagged for the hours it is quiet. The verdict is latched in the sensor's own attributes and held until the next daily check.
+- **Structured output.** The `devices` list carries the device name, area, last-seen time, a human-readable age, and battery type when available.
 
 ## What the Sensor Looks Like
 
@@ -263,11 +241,11 @@ The state is the number you badge or trigger on. `eval_date` records the day the
 
 ## A Note on What "Not Reporting" Means
 
-The phrase is doing real work, so it is worth pinning down. It is not the `unavailable` state, and it is not the battery percentage. It is whether the device behind the battery has sent any update, on any of its entities, within the lookback window.
+It is not the `unavailable` state, and it is not the battery percentage. It is whether the device behind the battery has sent any updates, on any of its entities, within the lookback window.
 
-That framing is what catches the failure people actually get stranded by. The device that froze at eighty percent still reads `80`, looks healthy on every dashboard, and is dead. A percentage check believes the `80`. An `unavailable` check believes the device is fine because Home Assistant never marked it unavailable. Asking instead "has anything on this device reported lately" sees through both, because a dead device goes silent across every entity it owns, not just its battery.
+That framing is what catches the failure people actually get stranded by. The device that froze at eighty percent still reads `80`, looks healthy on every dashboard, but is secretly dead. A percentage check believes the `80`. An `unavailable` check believes the device is fine because Home Assistant never marked it unavailable. Asking instead "has anything on this device reported lately" sees through both, because a dead device goes silent across every entity it owns, not just its battery.
 
-The once-a-day judging is the other half. A rolling twenty-four hour window would flag an honest once-a-day reporter every day it ran a little late. Judging once a day, against a lookback you can widen to twenty-eight hours or more, lets the daily reporter pass while a genuinely dead device is caught the next morning.
+The once-a-day judging is the other half. A rolling twenty-four hour window would flag an honest once-a-day reporter every day it ran a little late. Judging once a day, against a lookback you can widen to any number of hours greater than 24, lets the daily reporter pass while a genuinely dead device is caught the next morning.
 
 ## Changelog: Battery Sentinel - Not Reporting
 
@@ -328,7 +306,7 @@ action:
             item: "{{ repeat.item.name }} battery ({{ repeat.item.battery_type }})"
 ```
 
-The Not Reporting sensor earns its place with a case the others miss: a water leak detector reports once a day and then, one week, simply stops. Its last reading still shows a full battery, so a percentage check says all is well while the sensor that is supposed to catch a flood is dead. Battery Sentinel - Not Reporting flags it the next morning, and the leak sensor gets a fresh cell before it is ever needed.
+The _Not Reporting_ sensor earns its place with a case the others miss: a water leak detector reports once a day and then, one week, simply stops. Its last reading still shows a full battery, so a percentage check says all is well while the sensor that is supposed to catch a flood is dead. **Battery Sentinel - Not Reporting** flags it the next morning, and the leak sensor gets a fresh cell before it is ever needed.
 
 For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-sentinel-blueprint/>
 

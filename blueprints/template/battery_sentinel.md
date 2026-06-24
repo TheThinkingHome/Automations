@@ -1,10 +1,10 @@
-# Battery Sentinel (ALPHA)
+# Battery Sentinel (Alpha)
 
 *One sensor that watches every battery device in the house, for the ones running low and the ones that quietly stopped reporting.*
 
 A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-This is an alpha build under active testing. It is not yet versioned and the design may still change. Do not rely on it for anything load-bearing until it graduates.
+This is the 1.0.0-alpha build under active testing. The design may still change. Do not rely on it for anything load-bearing until it graduates.
 
 ---
 
@@ -139,7 +139,7 @@ These are the things still in flight. They are listed honestly because this is a
 
 ## Changelog
 
-- **ALPHA (unversioned).** Initial build. Low and silent detection in one sensor. Value hysteresis on the low check, so a device hovering at the threshold does not flap. Once-a-day silent check that spares legitimate daily reporters. Include and exclude accepting entities, areas, devices, or labels, with exclude winning. Low, silent, and both monitor modes. Percentage and binary battery sensors supported. Voltage staged for a later build. This alpha changelog stays as is until the blueprint runs complete on a live system, at which point it increments to beta.
+- **1.0.0-alpha.** Initial build. Low and silent detection in one sensor. Value hysteresis on the low check, so a device hovering at the threshold does not flap. Once-a-day silent check that spares legitimate daily reporters. Include and exclude accepting entities, areas, devices, or labels, with exclude winning. Low, silent, and both monitor modes. Percentage and binary battery sensors supported. Voltage staged for a later build. Increments to 1.0.0-beta, then 1.0.0, once it runs complete on a live system.
 
 ## License
 

@@ -7,6 +7,11 @@
 # https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.3 - Testing build. Moved scan_interval onto the time_pattern
+#           minutes field so the cadence is in minutes during the shakedown
+#           (/2 is every 2 minutes, /5 every 5). This is temporary for fast
+#           test loops; it reverts to the hours field for production before
+#           graduation.
 #   1.0.0-alpha.2 - Fixed the sensor reading unavailable on every render. The
 #           result variable was serialized with tojson, but Home Assistant
 #           native-renders variables and parsed the JSON-looking string back
@@ -82,7 +87,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.2
+    1.0.0-alpha.3
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -415,8 +420,8 @@ variables:
     }}
 trigger:
 - trigger: time_pattern
-  hours: !input scan_interval
-  minutes: '0'
+  hours: '*'
+  minutes: !input scan_interval
 - trigger: homeassistant
   event: start
 action:

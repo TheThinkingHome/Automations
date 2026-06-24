@@ -7,6 +7,22 @@
 # https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.2 - Fixed the sensor reading unavailable on every render. The
+#           result variable was serialized with tojson, but Home Assistant
+#           native-renders variables and parsed the JSON-looking string back
+#           into a dict, so the downstream from_json call received a dict and
+#           errored, forcing the entity unavailable. Removed tojson and from_json
+#           and the sensor now reads the native dict directly (result.state and
+#           so on). This also removes a data-dependent landmine where an empty
+#           list serialized to valid Python and converted, while a binary-low
+#           device emitting null did not, so the sensor would work or fail by
+#           content. Added an optional debug_enabled input, off by default, that
+#           writes one verbose diagnostic line to the system log on each
+#           evaluation, covering scope resolution, the low and silent device
+#           detail, and the silent-check timing, for use during setup. Added
+#           matching diagnostic keys (included_count, excluded_count, silent_ran,
+#           silent_boundary, lookback_hours, report_hour) to the sensor
+#           attributes so the pipeline is visible without the log.
 #   1.0.0-alpha - Initial build. Under active testing on a live system;
 #           increments to 1.0.0-beta, then 1.0.0, once it runs complete in
 #           place.
@@ -50,8 +66,6 @@ blueprint:
 
     ---
 
-    1.0.0-alpha build. Under active testing on a live system.
-
     Creates one trigger-based template sensor whose state is a count of battery devices needing attention. It classifies every monitored battery device into low, silent, or ok, and exposes the problem devices as structured attributes other automations, dashboards, and notifications can read.
 
     ## How it works
@@ -60,13 +74,15 @@ blueprint:
 
     Silent means a device that has not reported within a lookback window, judged once a day at a chosen hour rather than continuously, so devices that legitimately report only once a day are not flagged every day. Silent catches the device that freezes at its last value without ever going unavailable, which a plain unavailable check misses.
 
-    The monitor mode chooses what the state counts: low only, silent only, or both. Because this is a template blueprint, build it more than once, one sensor per purpose.
+    The monitor mode chooses what the state counts: low only, silent only, or both. Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. Percentage and binary battery sensors are supported. The sensor re-evaluates on an hour-based cadence. Because this is a template blueprint, build it more than once, one sensor per purpose.
 
-    ## Companion blueprint
+    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
 
-    A companion automation blueprint, **Battery Sentinel Companion**, is coming. It reads this sensor and turns it into notifications and to-do entries for anyone who wants a turnkey consumer rather than writing their own.
+    This is an alpha, under active testing on a live system.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+
+    1.0.0-alpha.2
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -240,6 +256,20 @@ blueprint:
             text:
               multiple: false
               multiline: false
+    debug_settings:
+      name: Debugging
+      icon: mdi:bug-outline
+      input:
+        debug_enabled:
+          name: Write a debug line to the log
+          description: 'When on, the sensor writes one summary line to the system
+            log each time it evaluates, naming the flagged devices. Useful while
+            setting the sensor up. Leave off for normal use so the log stays quiet.
+
+            '
+          default: false
+          selector:
+            boolean: {}
 variables:
   monitor_mode: !input monitor_mode
   low_threshold: !input low_threshold
@@ -248,6 +278,7 @@ variables:
   silent_lookback_hours: !input silent_lookback_hours
   include_target: !input include_target
   exclude_target: !input exclude_target
+  debug_enabled: !input debug_enabled
   result: |
     {%- set mode = monitor_mode -%}
     {%- set thr = low_threshold | float(20) -%}
@@ -298,7 +329,10 @@ variables:
         {%- for l in llist -%}{%- set xns.ents = xns.ents + label_entities(l) -%}{%- endfor -%}
       {%- endif -%}
     {%- endif -%}
-    {%- set monitored = ns.ents | unique | reject('in', xns.ents) | list -%}
+    {%- set included = ns.ents | unique | list -%}
+    {%- set monitored = included | reject('in', xns.ents) | list -%}
+    {%- set included_count = included | length -%}
+    {%- set excluded_count = included_count - (monitored | length) -%}
     {%- set prev_low_ids = (prev.get('low', []) | map(attribute='entity_id') | list) if prev else [] -%}
     {%- set low_ns = namespace(items=[]) -%}
     {%- if mode in ['low', 'both'] -%}
@@ -370,8 +404,14 @@ variables:
         'silent_count': silent_count,
         'low': low_list,
         'silent': silent_list,
-        'silent_eval_date': silent_date
-      } | tojson
+        'silent_eval_date': silent_date,
+        'included_count': included_count,
+        'excluded_count': excluded_count,
+        'silent_ran': do_silent,
+        'silent_boundary': boundary.isoformat(),
+        'lookback_hours': lookback,
+        'report_hour': rpt_hour
+      }
     }}
 trigger:
 - trigger: time_pattern
@@ -379,17 +419,45 @@ trigger:
   minutes: '0'
 - trigger: homeassistant
   event: start
+action:
+- if:
+  - condition: template
+    value_template: '{{ debug_enabled }}'
+  then:
+  - action: system_log.write
+    data:
+      level: info
+      logger: battery_sentinel
+      message: >-
+        Battery Sentinel [{{ result.mode }}] @ {{ result.last_evaluated }}
+        | scope: {{ result.total_monitored }} monitored (included {{
+        result.included_count }}, excluded {{ result.excluded_count }})
+        | low: {{ result.low_count }}{% for d in result.low %} | {{ d.name }}
+        {{ ('(' ~ d.level | round(0) ~ '%)') if d.level is not none else '(binary on)' }}
+        [{{ d.entity_id }}]{% endfor %}
+        | silent: ran={{ result.silent_ran }} boundary={{ result.silent_boundary }}
+        lookback={{ result.lookback_hours | round(0) }}h report_hour={{ result.report_hour }}
+        eval_date={{ result.silent_eval_date }} count={{ result.silent_count }}{%
+        for d in result.silent %} | {{ d.name }} (last seen {{ d.age }}, {{
+        d.last_seen }}) [{{ d.entity_id }}]{% endfor %}
+        | state: {{ result.state }}
 sensor:
 - name: !input sensor_name
   unique_id: !input unique_id
-  state: '{{ (result | from_json).state }}'
-  icon: '{{ ''mdi:battery-alert'' if (result | from_json).state | int(0) > 0 else ''mdi:battery-check'' }}'
+  state: '{{ result.state }}'
+  icon: '{{ ''mdi:battery-alert'' if result.state | int(0) > 0 else ''mdi:battery-check'' }}'
   attributes:
-    monitor_mode: '{{ (result | from_json).mode }}'
-    total_monitored: '{{ (result | from_json).total_monitored }}'
-    last_evaluated: '{{ (result | from_json).last_evaluated }}'
-    low_count: '{{ (result | from_json).low_count }}'
-    silent_count: '{{ (result | from_json).silent_count }}'
-    low: '{{ (result | from_json).low }}'
-    silent: '{{ (result | from_json).silent }}'
-    silent_eval_date: '{{ (result | from_json).silent_eval_date }}'
+    monitor_mode: '{{ result.mode }}'
+    total_monitored: '{{ result.total_monitored }}'
+    last_evaluated: '{{ result.last_evaluated }}'
+    low_count: '{{ result.low_count }}'
+    silent_count: '{{ result.silent_count }}'
+    low: '{{ result.low }}'
+    silent: '{{ result.silent }}'
+    silent_eval_date: '{{ result.silent_eval_date }}'
+    included_count: '{{ result.included_count }}'
+    excluded_count: '{{ result.excluded_count }}'
+    silent_ran: '{{ result.silent_ran }}'
+    silent_boundary: '{{ result.silent_boundary }}'
+    lookback_hours: '{{ result.lookback_hours }}'
+    report_hour: '{{ result.report_hour }}'

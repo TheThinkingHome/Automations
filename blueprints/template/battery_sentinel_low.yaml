@@ -4,6 +4,13 @@
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.2 - Area and device scopes are now re-filtered to
+#           device_class: battery. Pointing the sensor at an area pulled in
+#           every entity there (signal strength, connectivity, blinds
+#           position) and read their numbers as battery levels. Explicit
+#           entity lists and labels stay trusted and unfiltered, since the
+#           user curates those; area and device are swept, so they get the
+#           battery-class filter.
 #   1.0.0-alpha - Initial build. Split from the combined Battery Sentinel
 #           blueprint into a single-purpose low-battery sensor, so the entity
 #           carries only low attributes with no cross-mode noise. Creates one
@@ -52,7 +59,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha
+    1.0.0-alpha.2
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_low.yaml
@@ -195,6 +202,8 @@ variables:
     {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
     {%- set inc = include_target -%}
     {%- set ns = namespace(ents=[]) -%}
+    {%- set batt = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
+                 + (states.binary_sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list) -%}
     {%- if inc is mapping and (inc.entity_id is defined or inc.device_id is defined or inc.area_id is defined or inc.label_id is defined) -%}
       {%- if inc.entity_id is defined -%}
         {%- set elist = inc.entity_id if (inc.entity_id is iterable and inc.entity_id is not string) else [inc.entity_id] -%}
@@ -202,19 +211,18 @@ variables:
       {%- endif -%}
       {%- if inc.device_id is defined -%}
         {%- set dlist = inc.device_id if (inc.device_id is iterable and inc.device_id is not string) else [inc.device_id] -%}
-        {%- for d in dlist -%}{%- set ns.ents = ns.ents + device_entities(d) -%}{%- endfor -%}
+        {%- for d in dlist -%}{%- set ns.ents = ns.ents + (device_entities(d) | select('in', batt) | list) -%}{%- endfor -%}
       {%- endif -%}
       {%- if inc.area_id is defined -%}
         {%- set alist = inc.area_id if (inc.area_id is iterable and inc.area_id is not string) else [inc.area_id] -%}
-        {%- for a in alist -%}{%- set ns.ents = ns.ents + area_entities(a) -%}{%- endfor -%}
+        {%- for a in alist -%}{%- set ns.ents = ns.ents + (area_entities(a) | select('in', batt) | list) -%}{%- endfor -%}
       {%- endif -%}
       {%- if inc.label_id is defined -%}
         {%- set llist = inc.label_id if (inc.label_id is iterable and inc.label_id is not string) else [inc.label_id] -%}
         {%- for l in llist -%}{%- set ns.ents = ns.ents + label_entities(l) -%}{%- endfor -%}
       {%- endif -%}
     {%- else -%}
-      {%- set ns.ents = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
-                      + (states.binary_sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list) -%}
+      {%- set ns.ents = batt -%}
     {%- endif -%}
     {%- set exc = exclude_target -%}
     {%- set xns = namespace(ents=[]) -%}

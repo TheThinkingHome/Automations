@@ -1,1 +1,305 @@
+# Copyright (C) 2026 James Lander, The Thinking Home
+# Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
+# Battery Sentinel - Low - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+#   Article: https://xeazy.com/battery-sentinel-blueprint/
+#
+# Changelog:
+#   1.0.0-alpha - Initial build. Split from the combined Battery Sentinel
+#           blueprint into a single-purpose low-battery sensor, so the entity
+#           carries only low attributes with no cross-mode noise. Creates one
+#           trigger-based template sensor whose state is the count of battery
+#           devices at or below a threshold. A value-hysteresis band holds a
+#           flagged device low until it climbs above the threshold plus a
+#           margin, so a cell hovering at the line does not flap. Percentage
+#           and binary battery sensors supported; voltage staged for a later
+#           build. Include and exclude accept entities, areas, devices, or
+#           labels, with exclude winning; an empty include watches every
+#           battery device-class entity. Carries the proven native-dict output
+#           (no tojson/from_json) and the optional debug log line.
+#           Test cadence: scan_interval feeds the time_pattern minutes field
+#           during the shakedown (/2 is every 2 minutes). Reverts to the hours
+#           field for production before graduation.
 
+blueprint:
+  name: Battery Sentinel - Low (Alpha)
+  description: |
+    # Battery Sentinel - Low (Alpha)
+
+    *One sensor that counts every battery device running low.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/battery-sentinel-blueprint/) - the design and worked examples.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) - import instructions, parameters, and attribute reference.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Creates one trigger-based template sensor whose state is the count of battery devices at or below a threshold. The flagged devices are listed in the `devices` attribute, each with its name, area, level, and battery type, for any automation, dashboard, or notification to read.
+
+    ## How it works
+
+    A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads on. A value-hysteresis band keeps a device that hovers at the threshold from flapping in and out of the list: a flagged device stays low until it climbs above the threshold plus a margin, which for a battery only happens when a fresh cell is fitted.
+
+    Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. Percentage and binary battery sensors are supported. The sensor re-evaluates on a set cadence.
+
+    Its companion, **Battery Sentinel - Not Reporting**, catches the device that stopped reporting or froze at its last value. Build both for full coverage.
+
+    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
+
+    This is an alpha, under active testing on a live system.
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+
+    1.0.0-alpha
+  author: James Lander (xeazy.com)
+  domain: template
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_low.yaml
+  homeassistant:
+    min_version: 2026.5.4
+  input:
+    low_settings:
+      name: Low battery detection
+      icon: mdi:battery-low
+      input:
+        low_threshold:
+          name: Low battery threshold
+          description: A battery percentage at or below this counts as low. Binary
+            battery sensors reading on always count as low regardless of this value.
+          default: 20
+          selector:
+            number:
+              min: 1.0
+              max: 100.0
+              step: 1.0
+              unit_of_measurement: '%'
+              mode: slider
+        low_clear_margin:
+          name: Hysteresis clear margin
+          description: 'A device already flagged low stays low until it climbs above
+            the threshold plus this margin. Stops devices hovering at the threshold
+            from flapping. Batteries do not recover on their own, so a flagged device
+            clears only when a fresh cell pushes it well past the threshold.
+
+            '
+          default: 2
+          selector:
+            number:
+              min: 0.0
+              max: 25.0
+              step: 1.0
+              unit_of_measurement: '%'
+              mode: slider
+    scope_settings:
+      name: Which devices to watch
+      icon: mdi:select-group
+      input:
+        include_target:
+          name: Include
+          description: 'Devices, areas, entities, or labels to watch. Leave empty
+            to watch every entity with a battery device class automatically. Set a
+            label here to watch only the devices you tag.
+
+            '
+          default: {}
+          selector:
+            target: {}
+        exclude_target:
+          name: Exclude
+          description: 'Devices, areas, entities, or labels to leave out. Exclude
+            always wins over include. Use it to drop phones, tablets, or a device
+            you are letting run down on purpose.
+
+            '
+          default: {}
+          selector:
+            target: {}
+    cadence_settings:
+      name: Evaluation cadence
+      icon: mdi:timer-sync-outline
+      input:
+        scan_interval:
+          name: Re-evaluation interval
+          description: 'How often the sensor re-scans. During testing this is in
+            minutes (/2 is every 2 minutes). It reverts to hours for production.
+
+            '
+          default: /2
+          selector:
+            select:
+              options:
+              - label: Every 1
+                value: /1
+              - label: Every 2
+                value: /2
+              - label: Every 3
+                value: /3
+              - label: Every 5
+                value: /5
+              - label: Every 10
+                value: /10
+              - label: Every 15
+                value: /15
+              - label: Every 30
+                value: /30
+              sort: false
+              custom_value: false
+              multiple: false
+    naming_settings:
+      name: Sensor identity
+      icon: mdi:tag-outline
+      input:
+        sensor_name:
+          name: Sensor name
+          description: The name for the sensor this blueprint creates.
+          default: Battery Sentinel Low
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        unique_id:
+          name: Unique ID
+          description: 'A unique id so the sensor is registered and you can rename
+            it or place it in an area from the interface. Make it distinct for every
+            sensor you build, for example battery_sentinel_low.
+
+            '
+          selector:
+            text:
+              multiple: false
+              multiline: false
+    debug_settings:
+      name: Debugging
+      icon: mdi:bug-outline
+      input:
+        debug_enabled:
+          name: Write a debug line to the log
+          description: 'When on, the sensor writes one summary line to the system
+            log each time it evaluates, naming the flagged devices. Useful while
+            setting the sensor up. Leave off for normal use so the log stays quiet.
+
+            '
+          default: false
+          selector:
+            boolean: {}
+variables:
+  low_threshold: !input low_threshold
+  low_clear_margin: !input low_clear_margin
+  include_target: !input include_target
+  exclude_target: !input exclude_target
+  debug_enabled: !input debug_enabled
+  result: |
+    {%- set thr = low_threshold | float(20) -%}
+    {%- set margin = low_clear_margin | float(2) -%}
+    {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
+    {%- set inc = include_target -%}
+    {%- set ns = namespace(ents=[]) -%}
+    {%- if inc is mapping and (inc.entity_id is defined or inc.device_id is defined or inc.area_id is defined or inc.label_id is defined) -%}
+      {%- if inc.entity_id is defined -%}
+        {%- set elist = inc.entity_id if (inc.entity_id is iterable and inc.entity_id is not string) else [inc.entity_id] -%}
+        {%- set ns.ents = ns.ents + elist -%}
+      {%- endif -%}
+      {%- if inc.device_id is defined -%}
+        {%- set dlist = inc.device_id if (inc.device_id is iterable and inc.device_id is not string) else [inc.device_id] -%}
+        {%- for d in dlist -%}{%- set ns.ents = ns.ents + device_entities(d) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if inc.area_id is defined -%}
+        {%- set alist = inc.area_id if (inc.area_id is iterable and inc.area_id is not string) else [inc.area_id] -%}
+        {%- for a in alist -%}{%- set ns.ents = ns.ents + area_entities(a) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if inc.label_id is defined -%}
+        {%- set llist = inc.label_id if (inc.label_id is iterable and inc.label_id is not string) else [inc.label_id] -%}
+        {%- for l in llist -%}{%- set ns.ents = ns.ents + label_entities(l) -%}{%- endfor -%}
+      {%- endif -%}
+    {%- else -%}
+      {%- set ns.ents = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
+                      + (states.binary_sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list) -%}
+    {%- endif -%}
+    {%- set exc = exclude_target -%}
+    {%- set xns = namespace(ents=[]) -%}
+    {%- if exc is mapping -%}
+      {%- if exc.entity_id is defined -%}
+        {%- set elist = exc.entity_id if (exc.entity_id is iterable and exc.entity_id is not string) else [exc.entity_id] -%}
+        {%- set xns.ents = xns.ents + elist -%}
+      {%- endif -%}
+      {%- if exc.device_id is defined -%}
+        {%- set dlist = exc.device_id if (exc.device_id is iterable and exc.device_id is not string) else [exc.device_id] -%}
+        {%- for d in dlist -%}{%- set xns.ents = xns.ents + device_entities(d) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.area_id is defined -%}
+        {%- set alist = exc.area_id if (exc.area_id is iterable and exc.area_id is not string) else [exc.area_id] -%}
+        {%- for a in alist -%}{%- set xns.ents = xns.ents + area_entities(a) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.label_id is defined -%}
+        {%- set llist = exc.label_id if (exc.label_id is iterable and exc.label_id is not string) else [exc.label_id] -%}
+        {%- for l in llist -%}{%- set xns.ents = xns.ents + label_entities(l) -%}{%- endfor -%}
+      {%- endif -%}
+    {%- endif -%}
+    {%- set monitored = ns.ents | unique | reject('in', xns.ents) | list -%}
+    {%- set prev_ids = (prev.get('devices', []) | map(attribute='entity_id') | list) if prev else [] -%}
+    {%- set low_ns = namespace(items=[]) -%}
+    {%- for eid in monitored -%}
+      {%- set st = states(eid) -%}
+      {%- if eid.startswith('binary_sensor.') and st == 'on' -%}
+        {%- set low_ns.items = low_ns.items + [{
+          'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+          'entity_id': eid,
+          'area': (area_name(eid) or 'Unassigned'),
+          'level': none,
+          'battery_type': (state_attr(eid, 'battery_type') or '')
+        }] -%}
+      {%- elif st is not none and st not in ['unavailable', 'unknown', 'none'] and st | is_number -%}
+        {%- set val = st | float -%}
+        {%- set was_low = eid in prev_ids -%}
+        {%- set is_low = (val < (thr + margin)) if was_low else (val <= thr) -%}
+        {%- if is_low -%}
+          {%- set low_ns.items = low_ns.items + [{
+            'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+            'entity_id': eid,
+            'area': (area_name(eid) or 'Unassigned'),
+            'level': val,
+            'battery_type': (state_attr(eid, 'battery_type') or '')
+          }] -%}
+        {%- endif -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set devices = low_ns.items -%}
+    {{
+      {
+        'state': devices | length,
+        'total_monitored': monitored | length,
+        'devices': devices,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+trigger:
+- trigger: time_pattern
+  hours: '*'
+  minutes: !input scan_interval
+- trigger: homeassistant
+  event: start
+action:
+- if:
+  - condition: template
+    value_template: '{{ debug_enabled }}'
+  then:
+  - action: system_log.write
+    data:
+      level: info
+      logger: battery_sentinel_low
+      message: >-
+        Battery Sentinel Low @ {{ result.last_evaluated }} | monitored: {{
+        result.total_monitored }} | low: {{ result.state }}{% for d in
+        result.devices %} | {{ d.name }} {{ ('(' ~ d.level | round(0) ~ '%)')
+        if d.level is not none else '(binary on)' }} [{{ d.entity_id }}]{%
+        endfor %}
+sensor:
+- name: !input sensor_name
+  unique_id: !input unique_id
+  state: '{{ result.state }}'
+  icon: '{{ ''mdi:battery-alert'' if result.state | int(0) > 0 else ''mdi:battery-check'' }}'
+  attributes:
+    total_monitored: '{{ result.total_monitored }}'
+    devices: '{{ result.devices }}'
+    last_evaluated: '{{ result.last_evaluated }}'

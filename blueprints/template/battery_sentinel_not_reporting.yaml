@@ -4,6 +4,12 @@
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.3 - Removed the scan_interval input. The sensor now fires once
+#           a day at report_hour (via a time_pattern pinned to that hour) plus
+#           on Home Assistant start, instead of waking on a minute interval and
+#           doing nothing on most wakes. The daily latch still guards against
+#           redundant runs and lets a restart after the report hour catch up.
+#           Nothing is lost: the check ran once a day regardless.
 #   1.0.0-alpha.2 - Judge liveness by the device, not the battery entity. A
 #           battery reading is sticky and may report only when the percentage
 #           changes, which on an efficient sensor can be once a week, so the
@@ -28,9 +34,6 @@
 #           (no tojson/from_json) and the optional debug log line. The daily
 #           latch is held in the sensor's own devices and eval_date attributes,
 #           read back each render.
-#           Test cadence: scan_interval feeds the time_pattern minutes field
-#           during the shakedown (/2 is every 2 minutes). Reverts to the hours
-#           field for production before graduation.
 
 blueprint:
   name: Battery Sentinel - Not Reporting (Alpha)
@@ -56,7 +59,7 @@ blueprint:
 
     The check is judged once a day at a chosen hour against the lookback window, not continuously, so a device that legitimately reports only once a day is not flagged for the hours it is quiet. The verdict is held until the next daily check, so it does not flap between scans.
 
-    Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. The sensor re-evaluates on a set cadence.
+    Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. The sensor evaluates once a day at the report hour, and on Home Assistant start.
 
     Its companion, **Battery Sentinel - Low**, counts the batteries running low. Build both for full coverage.
 
@@ -66,7 +69,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.2
+    1.0.0-alpha.3
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_not_reporting.yaml
@@ -131,39 +134,6 @@ blueprint:
           default: {}
           selector:
             target: {}
-    cadence_settings:
-      name: Evaluation cadence
-      icon: mdi:timer-sync-outline
-      input:
-        scan_interval:
-          name: Re-evaluation interval
-          description: 'How often the sensor re-scans. During testing this is in
-            minutes (/2 is every 2 minutes). It reverts to hours for production.
-            The once-a-day check runs independently of this; the cadence only sets
-            how often the sensor wakes to look.
-
-            '
-          default: /2
-          selector:
-            select:
-              options:
-              - label: Every 1
-                value: /1
-              - label: Every 2
-                value: /2
-              - label: Every 3
-                value: /3
-              - label: Every 5
-                value: /5
-              - label: Every 10
-                value: /10
-              - label: Every 15
-                value: /15
-              - label: Every 30
-                value: /30
-              sort: false
-              custom_value: false
-              multiple: false
     naming_settings:
       name: Sensor identity
       icon: mdi:tag-outline
@@ -315,8 +285,8 @@ variables:
     }}
 trigger:
 - trigger: time_pattern
-  hours: '*'
-  minutes: !input scan_interval
+  hours: !input report_hour
+  minutes: '0'
 - trigger: homeassistant
   event: start
 action:

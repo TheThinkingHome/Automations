@@ -248,7 +248,7 @@ variables:
   silent_lookback_hours: !input silent_lookback_hours
   include_target: !input include_target
   exclude_target: !input exclude_target
-  result: >-
+  result: |
     {%- set mode = monitor_mode -%}
     {%- set thr = low_threshold | float(20) -%}
     {%- set margin = low_clear_margin | float(2) -%}

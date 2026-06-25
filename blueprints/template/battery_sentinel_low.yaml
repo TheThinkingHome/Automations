@@ -10,7 +10,13 @@
 #           fleet-wide unavailable list while the mesh is still repopulating.
 #           The wait applies only to the Home Assistant start trigger; the
 #           normal re-evaluation cadence is unaffected. During the wait the
-#           sensor holds its previous value.
+#           sensor holds its previous value. Also added an optional refresh_button
+#           input: press the named input_button to force an immediate re-evaluation
+#           (for example after changing a battery). It re-scans; it does not force
+#           a device to report. Defaults to a non-firing placeholder when unused.
+#           Fixed: a scoped entity with no device (for example a typo'd or removed
+#           entity id) no longer raises a device_attr render error; its name falls
+#           back to the friendly name or the entity id.
 #   1.0.0-alpha.3 - Added unavailable_count and unavailable_entities attributes.
 #           Any in-scope entity sitting at unavailable, unknown, or with no
 #           state is now listed in unavailable_entities (with name, entity_id,
@@ -186,6 +192,24 @@ blueprint:
               step: 10.0
               unit_of_measurement: seconds
               mode: box
+        refresh_button:
+          name: Manual refresh button (optional)
+          description: 'An optional input_button. Press it to make the sensor re-evaluate
+            immediately, for example right after changing a battery instead of waiting
+            for the next cadence tick. The press forces the sensor to re-scan; it does
+            not force a device to report a fresh reading, so a just-replaced battery
+            still shows its old or unavailable value until the device next reports.
+            Point several Sentinel sensors at the same button to refresh them all with
+            one press. Leave blank to disable.
+
+            '
+          default: input_button.none
+          selector:
+            entity:
+              filter:
+              - domain:
+                - input_button
+              multiple: false
     naming_settings:
       name: Sensor identity
       icon: mdi:tag-outline
@@ -286,14 +310,14 @@ variables:
       {%- set st = states(eid) -%}
       {%- if st is none or st in ['unavailable', 'unknown', 'none'] -%}
         {%- set un_ns.items = un_ns.items + [{
-          'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+          'name': ((device_attr(device_id(eid), 'name') if device_id(eid) else none) or state_attr(eid, 'friendly_name') or eid),
           'entity_id': eid,
           'area': (area_name(eid) or 'Unassigned'),
           'state': (st if st is not none else 'missing')
         }] -%}
       {%- elif eid.startswith('binary_sensor.') and st == 'on' -%}
         {%- set low_ns.items = low_ns.items + [{
-          'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+          'name': ((device_attr(device_id(eid), 'name') if device_id(eid) else none) or state_attr(eid, 'friendly_name') or eid),
           'entity_id': eid,
           'area': (area_name(eid) or 'Unassigned'),
           'level': none,
@@ -305,7 +329,7 @@ variables:
         {%- set is_low = (val < (thr + margin)) if was_low else (val <= thr) -%}
         {%- if is_low -%}
           {%- set low_ns.items = low_ns.items + [{
-            'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+            'name': ((device_attr(device_id(eid), 'name') if device_id(eid) else none) or state_attr(eid, 'friendly_name') or eid),
             'entity_id': eid,
             'area': (area_name(eid) or 'Unassigned'),
             'level': val,
@@ -333,6 +357,9 @@ trigger:
 - trigger: homeassistant
   event: start
   id: ha_start
+- trigger: state
+  entity_id: !input refresh_button
+  id: manual_refresh
 action:
 - alias: Hold for the startup grace period after Home Assistant starts
   if:

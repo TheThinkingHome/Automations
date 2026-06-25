@@ -4,6 +4,13 @@
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.4 - Added a startup grace period. After Home Assistant starts,
+#           the sensor waits startup_grace_seconds (default 120) before its
+#           first evaluation, so a momentary restart no longer reports a false
+#           fleet-wide unavailable list while the mesh is still repopulating.
+#           The wait applies only to the Home Assistant start trigger; the
+#           normal re-evaluation cadence is unaffected. During the wait the
+#           sensor holds its previous value.
 #   1.0.0-alpha.3 - Added unavailable_count and unavailable_entities attributes.
 #           Any in-scope entity sitting at unavailable, unknown, or with no
 #           state is now listed in unavailable_entities (with name, entity_id,
@@ -67,7 +74,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.3
+    1.0.0-alpha.4
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_low.yaml
@@ -161,6 +168,24 @@ blueprint:
               sort: false
               custom_value: false
               multiple: false
+        startup_grace_seconds:
+          name: Startup grace period (seconds)
+          description: 'After Home Assistant starts, the sensor waits this long before
+            its first evaluation, giving the Zigbee mesh and other integrations time
+            to settle. Without it, a momentary restart would briefly read most devices
+            as unavailable and report a false fleet-wide outage. During the wait the
+            sensor holds its previous value. 120 seconds suits a fast system; raise
+            it if your mesh is slow to repopulate after a restart.
+
+            '
+          default: 120
+          selector:
+            number:
+              min: 0.0
+              max: 900.0
+              step: 10.0
+              unit_of_measurement: seconds
+              mode: box
     naming_settings:
       name: Sensor identity
       icon: mdi:tag-outline
@@ -203,6 +228,7 @@ variables:
   low_clear_margin: !input low_clear_margin
   include_target: !input include_target
   exclude_target: !input exclude_target
+  startup_grace_seconds: !input startup_grace_seconds
   debug_enabled: !input debug_enabled
   result: |
     {%- set thr = low_threshold | float(20) -%}
@@ -306,7 +332,15 @@ trigger:
   minutes: !input scan_interval
 - trigger: homeassistant
   event: start
+  id: ha_start
 action:
+- alias: Hold for the startup grace period after Home Assistant starts
+  if:
+  - condition: template
+    value_template: '{{ trigger.id == ''ha_start'' and (startup_grace_seconds | int(0)) > 0 }}'
+  then:
+  - delay:
+      seconds: '{{ startup_grace_seconds | int(0) }}'
 - if:
   - condition: template
     value_template: '{{ debug_enabled }}'

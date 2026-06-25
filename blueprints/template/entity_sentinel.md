@@ -35,7 +35,7 @@ The two run together, picked per entity with no configuration. Unavailable alway
 
 This is an alpha, under active testing on a live system. The design may still change. Do not rely on it for anything load-bearing until it graduates.
 
-Full write-up and worked examples: <https://xeazy.com/battery-sentinel-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
+Full write-up and worked examples: <https://xeazy.com/battery-entity-sentinel-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
 
 ## How It Decides
 
@@ -265,7 +265,7 @@ condition:
           | map(attribute='entity_id') | list) }}
 ```
 
-For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-sentinel-blueprint/>
+For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
 
 ## License
 

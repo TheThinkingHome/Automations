@@ -143,77 +143,6 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a sensor named after each `sensor_name`. Watch them in Developer Tools, States. The state is the count, and the `devices` attribute lists the flagged devices.
 
-### The Default: Watch Everything
-
-Leave `include_target` out entirely and the sensor watches every battery device-class entity in your system. This is the widest scope and a fine place to start:
-
-```yaml
-template:
-  - use_blueprint:
-      path: TheThinkingHome/battery_sentinel_low.yaml
-      input:
-        sensor_name: Battery Sentinel - Low
-        unique_id: battery_sentinel_low
-```
-
-On most systems this also catches phones, tablets, and watches, which carry battery entities through the companion app. Those charge nightly and are rarely what you want in a low-battery list, which is what `exclude_target` is for, below.
-
-### Include by Entity
-
-Name the exact entities you want, and the sensor watches precisely those. An explicit entity list is trusted: the blueprint watches what you named and does not second-guess it.
-
-```yaml
-        include_target:
-          entity_id:
-            - sensor.motion_master_battery
-            - sensor.leak_kitchen_sink_battery
-            - binary_sensor.door_garage_battery_low
-```
-
-### Exclude, and Exclude Always Wins
-
-`exclude_target` takes the same kinds of targets and removes them from whatever the include produced. Exclude beats include every time, so it is how you drop the always-charged devices from a wide scope:
-
-```yaml
-        exclude_target:
-          entity_id:
-            - sensor.phone_james_battery_level
-            - sensor.tablet_kitchen_battery_level
-```
-
-### Filter by Area or Device
-
-Point the scope at an area or a device, and the sensor watches the battery entities within it. Areas and devices are **swept**: an area holds every entity assigned to it, and a device exposes many entities beyond its battery, so the blueprint keeps only the `device_class: battery` entities and drops the rest (signal strength, connectivity, blinds position, and so on). You get the batteries in that area or device, nothing else.
-
-```yaml
-        include_target:
-          area_id:
-            - master
-            - master_bath
-```
-
-### Filter by Label
-
-A label lets you tag the exact devices you care about and watch only those, for example a `battery_watch` label on your critical infrastructure. There is one rule that decides whether this works at all:
-
-**The label must live on the battery entity, not on the device.**
-
-Home Assistant lets you apply a label to an entity, a device, or an area, and these are separate attachment points. This blueprint reads labels at the entity level. A label on a battery entity is found and watched. A label on a device is not, because the label sits on the device, not on the entities inside it, and the blueprint does not go looking for it there.
-
-Do this, label the battery entity itself:
-
-```yaml
-        include_target:
-          label_id:
-            - battery_watch
-```
-
-with the `battery_watch` label applied to `sensor.motion_master_battery`, `sensor.leak_kitchen_sink_battery`, and so on, the battery entities.
-
-Not this: applying `battery_watch` to the Motion Master *device*. A device holds many entities, and the label on it is not seen by the sensor. That device is silently skipped, with no error and no warning.
-
-The symptom to recognize: if a label-scoped sensor's `total_monitored` count looks lower than the number of devices you tagged, you almost certainly labeled devices instead of their battery entities. Move the label to the entity and the count corrects itself.
-
 # Battery Sentinel - Low Battery
 
 Counts the batteries at or below a threshold and lists them, with the percentage, area, and battery type for each. It creates a `sensor` whose state is the number of low batteries, with the offenders listed in a `devices` attribute.
@@ -221,11 +150,9 @@ Counts the batteries at or below a threshold and lists them, with the percentage
 - **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. A binary low battery sensor has no number to report, so its `level` comes through as `null`.
 - **Hysteresis so it does not flap.** A value-hysteresis band keeps a device hovering at the threshold from bouncing in and out of the list. 
 - **Structured output.** The `devices` list holds objects carrying the device name, area, percentage level, and battery type if available. Every consumer can now format them in its own way.
-
-## Scoping: Choosing What Each Sensor Watches
-
-Both sensors decide which battery devices to watch through two inputs, `include_target` and `exclude_target`. Each accepts entities, areas, devices, or labels, and you can mix them. This section covers every way to scope a sensor, because it is the part most worth getting right, and the one place the behavior is not obvious.
-
+- **Offline batteries surfaced separately.** Any in-scope battery sitting at `unavailable` or `unknown`, an offline device, an integration that dropped an entity, a typo'd entity id, is not a low battery, so it never lands in the low list. Instead it is reported in its own `unavailable_entities` attribute, with a count in `unavailable_count`. The low state stays clean while you still get a window onto what is currently offline.
+- **A grace period after a restart.** A momentary restart briefly reads most of the mesh as `unavailable` while it repopulates. For a short window after Home Assistant starts (`startup_grace_seconds`, default 120), the unavailable list is held empty so a restart never reports a false fleet-wide outage. The low count is never held; it evaluates live the whole time.
+- **A manual refresh button.** Point an optional `input_button` at the sensor and a press re-evaluates it on the spot, handy right after you change a battery instead of waiting for the next scan. It re-scans; it cannot make a device report a fresh reading it has not sent yet.
 
 ## What the Sensor Looks Like
 
@@ -236,6 +163,12 @@ sensor.battery_sentinel_low
 State: 2
 
 total_monitored: 27
+unavailable_count: 1
+unavailable_entities:
+  - name: Hall Motion
+    entity_id: sensor.hall_motion_battery
+    area: Hall
+    state: unavailable
 last_evaluated: '2026-06-24T10:15:00-05:00'
 devices:
   - name: Master Bath Motion
@@ -250,7 +183,7 @@ devices:
     battery_type: ''
 ```
 
-The state is the single number you badge or trigger on. The `devices` list is there for any consumer that wants the detail. `total_monitored` reports how many battery entities fell within the scope. A binary device shows `level: null`, since "on" carries no percentage.
+The state is the single number you badge or trigger on. The `devices` list is there for any consumer that wants the detail. `total_monitored` reports how many battery entities fell within the scope. A binary device shows `level: null`, since "on" carries no percentage. `unavailable_entities` is a separate list of in-scope batteries currently `unavailable` or `unknown`, each with its raw `state` (`unavailable`, `unknown`, or `missing` for an entity id that resolves to nothing), and `unavailable_count` is its length. These never affect the low state; they are a parallel view of what is offline.
 
 ## Parameters
 
@@ -262,6 +195,8 @@ The state is the single number you badge or trigger on. The `devices` list is th
 | `include_target` | No | empty | entities, areas, devices, or labels | Which devices to watch. Empty watches every battery device-class entity. Areas and devices are filtered to batteries; labels and entity lists are trusted. |
 | `exclude_target` | No | empty | entities, areas, devices, or labels | Which to leave out. Exclude always wins over include. |
 | `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/5`, `/10`, `/15`, `/30` | How often the sensor re-scans. In the alpha this is in minutes for fast testing; it reverts to hours for production. |
+| `startup_grace_seconds` | No | `120` | 0 to 900 seconds | After Home Assistant starts, how long to hold the `unavailable_entities` list empty while the mesh repopulates, so a momentary restart does not report a false outage. The low count is never held. Set to 0 to disable. |
+| `refresh_button` | No | none | an `input_button` entity | Optional. Press the named button to re-evaluate the sensor immediately, for example after changing a battery. It re-scans; it does not force a device to report. Several sensors can share one button. Leave unset to disable. |
 | `sensor_name` | No | `Battery Sentinel - Low` | any text | The friendly name, and what the entity id is built from. |
 | `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, naming the flagged devices. |
 
@@ -269,6 +204,8 @@ The state is the single number you badge or trigger on. The `devices` list is th
 
 | Version | Notes |
 | --- | --- |
+| 1.0.0-alpha.4 | Added a startup grace period for the offline list and an optional manual refresh button. For `startup_grace_seconds` after Home Assistant starts, `unavailable_entities` is held empty so a momentary restart no longer reports a false fleet-wide outage while the mesh repopulates; the low count is never held. The window is started only by the Home Assistant start event, never restarted by a scan or a button press. The `refresh_button` input re-evaluates the sensor on demand. Also fixed: an in-scope entity with no device (a typo'd or removed entity id) no longer raises a render error and instead appears in the offline list. |
+| 1.0.0-alpha.3 | Added the `unavailable_count` and `unavailable_entities` attributes. Any in-scope entity at `unavailable`, `unknown`, or resolving to nothing is now listed separately, with its raw state, rather than silently dropped. The sensor state still counts only low batteries; an offline battery is a not-reporting problem, not a low one, so it is reported here instead of in the low list. |
 | 1.0.0-alpha.2 | Area and device scopes are re-filtered to `device_class: battery`. Pointing the sensor at an area previously pulled in every entity there (signal strength, connectivity, blinds position) and read their numbers as battery levels. Explicit entity lists and labels stay trusted and unfiltered, since the user curates those. |
 | 1.0.0-alpha | Initial build. Single-purpose low-battery sensor split from the combined Battery Sentinel blueprint, so the entity carries only low attributes. Value-hysteresis band so a device at the threshold does not flap. Include and exclude by entity, area, device, or label, with exclude winning. Percentage and binary battery sensors; voltage staged for later. Optional debug log line. Under active testing on a live system. |
 
@@ -301,7 +238,7 @@ devices:
     battery_type: CR2032
 ```
 
-The state is the number you badge or trigger on. `eval_date` records the day the last check ran; the sensor reads it back to hold the once-a-day verdict between scans. `last_seen` is the freshest report found across the whole device, and `age` is that gap in plain language.
+The state is the number you badge or trigger on. `eval_date` records the day the last check ran; the sensor reads it back to hold the once-a-day verdict between scans. `last_seen` is the freshest report found across the whole device, and `age` is that gap in plain language. A device that has no timestamp anywhere, one that has never reported, including a typo'd or phantom entity id, is still listed, with `last_seen: null` and `age: never reported`, so it surfaces rather than vanishing.
 
 ## Parameters
 
@@ -327,6 +264,7 @@ The once-a-day judging is the other half. A rolling twenty-four hour window woul
 
 | Version | Notes |
 | --- | --- |
+| 1.0.0-alpha.5 | A device with no `last_reported` timestamp anywhere, one that has never reported, is now flagged rather than skipped, carrying `last_seen: null` and `age: never reported`. A device that has never reported is the strongest not-reporting case there is, and this also surfaces a typo'd or phantom entity id instead of silently ignoring it. |
 | 1.0.0-alpha.4 | Area and device scopes are re-filtered to `device_class: battery`, matching the Low blueprint. An area sweeps in every entity it holds; without the filter, non-battery entities were treated as monitored. Explicit entity lists and labels stay trusted. |
 | 1.0.0-alpha.3 | Removed the `scan_interval` input. The sensor now fires once a day at `report_hour` plus on Home Assistant start, instead of waking on a minute interval and doing nothing on most wakes. The daily latch still guards against redundant runs and lets a restart after the report hour catch up. |
 | 1.0.0-alpha.2 | Judge liveness by the device, not the battery entity. A battery reading is sticky and may report only when the percentage changes, so the old per-entity check false-flagged healthy devices. Now the freshest report across all of a device's entities is the heartbeat, with a fallback to the battery entity when it has no device behind it. |

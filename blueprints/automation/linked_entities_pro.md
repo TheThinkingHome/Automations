@@ -144,4 +144,5 @@ This blueprint is free software: you may use, modify, and redistribute it under 
 
 | Version | Notes |
 | --- | --- |
+| 1.0.1 | Bug fix. The Reconcile Trigger Sensor input defaulted to an empty string, which Home Assistant rejected as a malformed entity_id when the field was left blank, blocking save. Changed the default to an empty list so a blank field loads an inert trigger that watches nothing and never fires. ZHA, Z-Wave, and WiFi users can leave the Reconcile Trigger Sensor blank as the documentation describes.
 | 1.0.0 | Initial stable release. State-equality gate two-way sync across any number of entities and any mix of supported domains (switch, light, input_boolean, fan, group). Reconcile branch on HA start and on an optional reconcile trigger sensor, with a designated authority entity as the tiebreaker. Optional HA-startup peer-sync block via the Uptime integration. Tunable `sync_delay_ms` (default 200 ms). Verified on two production pairs and thirty simulator scenarios at group sizes 2 through 10. Beta history (1.0.0-beta through 1.0.3-beta) archived in the project document. |

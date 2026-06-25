@@ -2,7 +2,7 @@
 
 A Home Assistant template blueprint that watches your critical entities and reports any that have gone quiet, the device that dropped offline and the one frozen at its last value, as a sensor anything in your system can read.
 
-> **Status.** Entity Sentinel is being generalized from a battery not-reporting sensor into a full entity liveness monitor. This document describes that target design: watch any entity, catch both unavailable and freeze. The version you can import today still runs the previous battery not-reporting engine (it watches battery devices and uses the `report_hour` and `lookback_hours` inputs). The import link and setup mechanics below are correct now. The two-mode behavior and the parameter schema described here are in active development and land in a later version. Until then, treat the design sections as the roadmap and the import as the interim engine.
+> **Status.** Entity Sentinel is in alpha, under active testing on a live system. The two-mode engine described here is the engine you import today.
 
 A device going quiet is rarely announced. A Zigbee sensor drops off the mesh, an integration stops serving one entity, a device hangs and freezes at its last value while still showing a healthy state. None of these throws an error, and a value check sails right past the frozen one because the value still looks fine. Entity Sentinel asks the question that catches all of them: has this entity actually reported lately, and is it still present?
 
@@ -33,7 +33,7 @@ The two run together, picked per entity with no configuration. Unavailable alway
 - **A grace period after a restart.** A restart briefly reads much of the mesh as `unavailable` while it repopulates. For a short window after Home Assistant starts (`startup_grace_seconds`), flagging is held back so a restart never reports a false fleet-wide outage.
 - **Scope by entity, label, area, or device**, with include and exclude, and exclude always wins.
 
-This is an alpha, under active testing on a live system. The design may still change. Do not rely on it for anything load-bearing until it graduates.
+This is an alpha, under active testing on a live system. Do not rely on it for anything load-bearing until it graduates.
 
 Full write-up and worked examples: <https://xeazy.com/battery-entity-sentinel-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
 
@@ -102,8 +102,10 @@ template:
       input:
         sensor_name: Entity Sentinel
         unique_id: entity_sentinel
-        freeze_lookback: "06:00:00"
-        unavailable_debounce: "00:03:00"
+        freeze_lookback:
+          hours: 6
+        unavailable_debounce:
+          minutes: 3
         scan_interval: "/2"
         include_target:
           label_id:
@@ -185,19 +187,46 @@ devices:
     age: 6 hours
 ```
 
-The state is the number you badge or trigger on. Each entry carries its `reason` (`unavailable`, `unknown`, or `frozen`), `since` (when it first went bad), and `last_seen` with a human-readable `age`. A consumer can tell newly-offline from still-offline by comparing `since` to the previous evaluation, no separate list needed. `total_monitored` reports how many entities fell within the scope.
+The state is the count of flagged entities, the number you badge or trigger on. Everything else lives in the attributes, so an automation, a dashboard card, or a notification can read the detail.
+
+**What each field means:**
+
+- **`state`** the number of entities currently flagged. Zero means everything in scope is reporting normally.
+- **`total_monitored`** how many entities fell within the scope after include, exclude, and the per-device representative sweep. A scope problem (a mistyped label, a device with nothing to watch) shows up here as a count lower than you expect.
+- **`unavailable_count`** how many of the flagged entities failed the entity-level check (`unavailable`, `unknown`, or `missing`).
+- **`frozen_count`** how many failed the device-level freeze check. These two counts always sum to the state.
+- **`devices`** the list of flagged entities, each with the fields below.
+- **`boot_time`** when the startup grace window last began, used internally to gate flagging after a restart.
+- **`last_evaluated`** the timestamp of the most recent evaluation, so you can confirm the sensor is still ticking.
+
+**Each flagged entity in `devices` carries:**
+
+- **`name`** the entity's friendly name, or its device name, or the entity id, whichever is found first.
+- **`entity_id`** the entity that was flagged.
+- **`area`** its area, or `Unassigned` if it has none.
+- **`reason`** why it was flagged. One of four values (see below).
+- **`since`** when it first entered the bad state, read live from the entity's `last_changed` for the unavailable check, or the freshest device report for freeze. `null` for a missing or never-reported entity.
+- **`last_seen`** the last time the entity or its device reported. `null` if it has never reported or does not exist.
+- **`age`** a human-readable form of `last_seen`, for example `13 minutes` or `6 hours`. Reads `never reported` for a device with no report on record, and `unknown` for a missing entity.
+
+**The `reason` values:**
+
+- **`unavailable`** the entity exists and its own state is `unavailable`. The device dropped off the network, or the integration marked it unavailable. Flagged after the debounce.
+- **`unknown`** the entity exists and its state is `unknown`. It is registered and present but has no usable value right now, often a sensor that has not reported since startup.
+- **`missing`** the entity does not exist at all. A deleted device, a renamed entity, or a typo in the scope. This is how a stale reference in your configuration surfaces instead of failing silently.
+- **`frozen`** the entity is present with a normal value, but its device has not reported anything within the freeze lookback. The device locked up while still looking healthy, the case a plain value check sails right past. A device that has never reported at all is also flagged `frozen`, with `last_seen` null and `age` reading `never reported`.
+
+The first three come from the entity-level check and add into `unavailable_count`; `frozen` comes from the device-level check and is `frozen_count`. A consumer can tell a newly-offline entity from a long-dead one by comparing `since` to the previous evaluation, no separate list needed.
 
 ## Parameters
-
-The parameter schema below is the target for the liveness engine and is being finalized during the build. Input names and defaults may settle as the engine is written.
 
 | Input | Required | Default | Accepted values | What it does |
 | --- | --- | --- | --- | --- |
 | `unique_id` | Yes | none | any short text id, distinct per sensor | Registers the entity so you can rename it or place it in an area. Reusing one collides two sensors. |
 | `include_target` | Yes | empty | entities, labels, areas, or devices | Which entities to watch. Explicit entities and labels are watched precisely for both checks; areas and devices are swept, one representative entity per device, tuned for freeze. |
 | `exclude_target` | No | empty | entities, labels, areas, or devices | Which to leave out. Exclude always wins over include. |
-| `freeze_lookback` | No | `06:00:00` | a duration | How long a device may go without reporting anything before it counts as frozen. Set it to a little longer than the entity's normal reporting interval: minutes for an active sensor, hours or days for a quiet one. |
-| `unavailable_debounce` | No | `00:03:00` | a duration | How long an entity must stay `unavailable` or `unknown` before it is flagged. Absorbs brief blips on flaky WiFi or cloud devices. |
+| `freeze_lookback` | No | `{hours: 6}` | a duration | How long a device may go without reporting anything before it counts as frozen. Set it to a little longer than the entity's normal reporting interval: minutes for an active sensor, hours or days for a quiet one. |
+| `unavailable_debounce` | No | `{minutes: 3}` | a duration | How long an entity must stay `unavailable` or `unknown` before it is flagged. Absorbs brief blips on flaky WiFi or cloud devices. |
 | `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/5`, `/10`, `/15`, `/30` | How often the sensor re-evaluates, in minutes. This is the only latency knob: an entity is caught within one tick. A short cadence keeps detection prompt. |
 | `startup_grace_seconds` | No | `120` | 0 to 900 seconds | After Home Assistant starts, how long to hold flagging back while the mesh repopulates, so a restart does not report a false outage. Set to 0 to disable. |
 | `sensor_name` | No | `Entity Sentinel` | any text | The friendly name, and what the entity id is built from. |
@@ -217,7 +246,10 @@ Three ways to handle it, in order of preference:
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0-alpha.6 | Renamed from Battery Sentinel - Not Reporting to Entity Sentinel, ahead of the engine work, so the file, name, logger, and docs are settled before the two-mode liveness rewrite. Scaffolding rename only: the importable engine is still the battery not-reporting logic from alpha.5. The liveness behavior described in this document is in development. |
+| 1.0.0-alpha.7.2 | Fixed missing-entity detection. Home Assistant's `states(eid)` returns the string `unknown` for an entity that does not exist, never `None`, so a deleted or mistyped entity was being labeled `unknown` instead of `missing`. The engine now keys on the state object (`states[eid]`), which is `None` only when the entity truly does not exist: absent reports `missing`, present-but-unknown reports `unknown`. Caught by a live test with fictitious entities. |
+| 1.0.0-alpha.7.1 | Restored never-reported flagging. An entity or device with no report on record is flagged `frozen` with `last_seen: null` and `age: never reported`, held during the startup grace window. Added trigger aliases. |
+| 1.0.0-alpha.7 | Rewrote the engine into the two-mode liveness monitor: entity-level unavailable with a duration debounce read live from `last_changed`, device-level freeze against the freshest `last_reported` over a duration lookback, automatic per-entity routing, representative-per-device sweeping for area and device scopes by a `device_class` priority order, trusted-entity precedence with dedupe, the startup grace gate (unavailable only, by design), and an optional refresh button. The battery `device_class` filter is gone; any entity can be watched. Replaced `report_hour` and `lookback_hours` with `scan_interval`, `freeze_lookback`, and `unavailable_debounce`. |
+| 1.0.0-alpha.6 | Renamed from Battery Sentinel - Not Reporting to Entity Sentinel, ahead of the engine work, so the file, name, logger, and docs are settled before the two-mode liveness rewrite. Scaffolding rename only: the importable engine is still the battery not-reporting logic from alpha.5. |
 | 1.0.0-alpha.5 | A device with no report timestamp anywhere, one that has never reported, is now flagged rather than skipped, carrying `last_seen: null` and `age: never reported`. A device that has never reported is the strongest not-reporting case there is, and this also surfaces a typo'd or phantom entity id instead of silently ignoring it. |
 | 1.0.0-alpha.4 | Area and device scopes re-filtered to `device_class: battery`, matching Battery Sentinel. An area sweeps in every entity it holds; without the filter, non-battery entities were treated as monitored. Explicit entity lists and labels stay trusted. |
 | 1.0.0-alpha.3 | Removed the `scan_interval` input from the battery engine. The sensor fired once a day at `report_hour` plus on Home Assistant start, instead of waking on a minute interval and doing nothing on most wakes. |

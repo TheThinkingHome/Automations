@@ -4,6 +4,14 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.6 - Fixed missing-entity detection. Home Assistant's states(eid)
+#           returns the string 'unknown' for an entity that does not exist, never
+#           None, so a deleted or mistyped entity in the scope was listed with
+#           state 'unknown' instead of 'missing'. Now keys on the state object
+#           (states[eid]), which is None only when the entity truly does not
+#           exist: absent -> state 'missing', present but unknown -> state
+#           'unknown'. Behaviour otherwise unchanged. Found by an adversarial
+#           simulation pass during beta evaluation.
 #   1.0.0-alpha.5 - Renamed from Battery Sentinel - Low to Battery Sentinel. The
 #           companion blueprint generalizes from battery not-reporting into a
 #           general entity liveness monitor (Entity Sentinel), so the "Low"
@@ -96,7 +104,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.5
+    1.0.0-alpha.6
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -329,12 +337,13 @@ variables:
     {%- set un_ns = namespace(items=[]) -%}
     {%- for eid in monitored -%}
       {%- set st = states(eid) -%}
-      {%- if st is none or st in ['unavailable', 'unknown', 'none'] -%}
+      {%- set sobj = states[eid] -%}
+      {%- if sobj is none or st in ['unavailable', 'unknown', 'none'] -%}
         {%- set un_ns.items = un_ns.items + [{
           'name': ((device_attr(device_id(eid), 'name') if device_id(eid) else none) or state_attr(eid, 'friendly_name') or eid),
           'entity_id': eid,
           'area': (area_name(eid) or 'Unassigned'),
-          'state': (st if st is not none else 'missing')
+          'state': ('missing' if sobj is none else st)
         }] -%}
       {%- elif eid.startswith('binary_sensor.') and st == 'on' -%}
         {%- set low_ns.items = low_ns.items + [{
@@ -373,6 +382,7 @@ variables:
         'last_evaluated': now().isoformat()
       }
     }}
+
 trigger:
 - trigger: time_pattern
   hours: '*'

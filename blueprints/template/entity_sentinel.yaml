@@ -1,9 +1,27 @@
 # Copyright (C) 2026 James Lander, The Thinking Home
 # Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
-# Battery Sentinel - Not Reporting - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+# Entity Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
+# NOTE: This is a scaffolding rename. The engine in this file is still the
+#   battery not-reporting logic from Battery Sentinel - Not Reporting alpha.5,
+#   unchanged. The rename to Entity Sentinel is in place ahead of the engine
+#   work so the file, name, logger, and docs are settled before the two-mode
+#   liveness rewrite. Entity Sentinel behaviour (entity-level unavailable with
+#   debounce, device-level freeze, representative-per-device area/device scope,
+#   reason/since output, short cadence, startup grace) is not yet built. Until
+#   it is, this watches battery devices for not-reporting exactly as alpha.5 did.
+#
 # Changelog:
+#   1.0.0-alpha.6 - Renamed from Battery Sentinel - Not Reporting to Entity
+#           Sentinel (file battery_sentinel_not_reporting.yaml becomes
+#           entity_sentinel.yaml, sensor_name default becomes Entity Sentinel,
+#           debug logger becomes entity_sentinel). Scaffolding rename only: the
+#           detection engine is unchanged from alpha.5. The blueprint is being
+#           generalized from battery not-reporting into a general entity
+#           liveness monitor (unavailable plus freeze, any entity, not just
+#           batteries); this rename lands first so the engine rewrite happens
+#           under the final name. No behaviour change in this version.
 #   1.0.0-alpha.5 - A device with no last_reported anywhere (no timestamp on
 #           any of its entities) is now flagged as not reporting instead of
 #           skipped. A device that has never reported is the strongest
@@ -46,20 +64,22 @@
 #           read back each render.
 
 blueprint:
-  name: Battery Sentinel - Not Reporting (Alpha)
+  name: Entity Sentinel (Alpha)
   description: |
-    # Battery Sentinel - Not Reporting (Alpha)
+    # Entity Sentinel (Alpha)
 
     *One sensor that counts every battery device that stopped reporting, including the one frozen at its last value.*
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
     - 📖 [Read the article](https://xeazy.com/battery-sentinel-blueprint/) - the design and worked examples.
-    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) - import instructions, parameters, and attribute reference.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) - import instructions, parameters, and attribute reference.
     - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
 
     ---
+
+    **Scaffolding release.** The name is now Entity Sentinel, ahead of the engine work. The detection logic in this version is still the battery not-reporting engine from the previous build, unchanged: it watches battery devices and counts those that have stopped reporting. The generalization to a full entity liveness monitor (any entity, unavailable plus freeze) is in progress and will land in a later version.
 
     Creates one trigger-based template sensor whose state is the count of battery devices that have stopped reporting. The flagged devices are listed in the `devices` attribute, each with its name, area, last-seen time, and battery type, for any automation, dashboard, or notification to read.
 
@@ -71,7 +91,7 @@ blueprint:
 
     Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. The sensor evaluates once a day at the report hour, and on Home Assistant start.
 
-    Its companion, **Battery Sentinel - Low**, counts the batteries running low. Build both for full coverage.
+    Its companion, **Battery Sentinel**, counts the batteries running low. Build both for full coverage.
 
     An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
 
@@ -79,10 +99,10 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.5
+    1.0.0-alpha.6
   author: James Lander (xeazy.com)
   domain: template
-  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_not_reporting.yaml
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
@@ -151,7 +171,7 @@ blueprint:
         sensor_name:
           name: Sensor name
           description: The name for the sensor this blueprint creates.
-          default: Battery Sentinel Not Reporting
+          default: Entity Sentinel
           selector:
             text:
               multiple: false
@@ -160,7 +180,7 @@ blueprint:
           name: Unique ID
           description: 'A unique id so the sensor is registered and you can rename
             it or place it in an area from the interface. Make it distinct for every
-            sensor you build, for example battery_sentinel_not_reporting.
+            sensor you build, for example entity_sentinel.
 
             '
           selector:
@@ -317,9 +337,9 @@ action:
   - action: system_log.write
     data:
       level: info
-      logger: battery_sentinel_not_reporting
+      logger: entity_sentinel
       message: >-
-        Battery Sentinel Not Reporting @ {{ result.last_evaluated }} | monitored:
+        Entity Sentinel @ {{ result.last_evaluated }} | monitored:
         {{ result.total_monitored }} | ran={{ result.ran }} boundary={{
         result.boundary }} lookback={{ result.lookback | round(0) }}h report_hour={{
         result.report_hour }} eval_date={{ result.eval_date }} | not reporting: {{

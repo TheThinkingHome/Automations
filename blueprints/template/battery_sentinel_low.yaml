@@ -4,6 +4,14 @@
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.3 - Added unavailable_count and unavailable_entities attributes.
+#           Any in-scope entity sitting at unavailable, unknown, or with no
+#           state is now listed in unavailable_entities (with name, entity_id,
+#           area, and the raw state), and counted in unavailable_count. The
+#           sensor state still reports only the LOW count; this is additional
+#           reporting, not a change to what counts as low. An offline battery
+#           is a not-reporting problem, not a low one, so it belongs here
+#           rather than in the low list.
 #   1.0.0-alpha.2 - Area and device scopes are now re-filtered to
 #           device_class: battery. Pointing the sensor at an area pulled in
 #           every entity there (signal strength, connectivity, blinds
@@ -59,7 +67,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.2
+    1.0.0-alpha.3
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_low.yaml
@@ -247,9 +255,17 @@ variables:
     {%- set monitored = ns.ents | unique | reject('in', xns.ents) | list -%}
     {%- set prev_ids = (prev.get('devices', []) | map(attribute='entity_id') | list) if prev else [] -%}
     {%- set low_ns = namespace(items=[]) -%}
+    {%- set un_ns = namespace(items=[]) -%}
     {%- for eid in monitored -%}
       {%- set st = states(eid) -%}
-      {%- if eid.startswith('binary_sensor.') and st == 'on' -%}
+      {%- if st is none or st in ['unavailable', 'unknown', 'none'] -%}
+        {%- set un_ns.items = un_ns.items + [{
+          'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
+          'entity_id': eid,
+          'area': (area_name(eid) or 'Unassigned'),
+          'state': (st if st is not none else 'missing')
+        }] -%}
+      {%- elif eid.startswith('binary_sensor.') and st == 'on' -%}
         {%- set low_ns.items = low_ns.items + [{
           'name': (device_attr(device_id(eid), 'name') or state_attr(eid, 'friendly_name') or eid),
           'entity_id': eid,
@@ -273,11 +289,14 @@ variables:
       {%- endif -%}
     {%- endfor -%}
     {%- set devices = low_ns.items -%}
+    {%- set unavailable = un_ns.items -%}
     {{
       {
         'state': devices | length,
         'total_monitored': monitored | length,
         'devices': devices,
+        'unavailable_count': unavailable | length,
+        'unavailable_entities': unavailable,
         'last_evaluated': now().isoformat()
       }
     }}
@@ -310,4 +329,6 @@ sensor:
   attributes:
     total_monitored: '{{ result.total_monitored }}'
     devices: '{{ result.devices }}'
+    unavailable_count: '{{ result.unavailable_count }}'
+    unavailable_entities: '{{ result.unavailable_entities }}'
     last_evaluated: '{{ result.last_evaluated }}'

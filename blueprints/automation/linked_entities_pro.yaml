@@ -7,6 +7,13 @@
 # https://xeazy.com/linked-entity-pro/
 #
 # Changelog:
+#   1.0.1 - Bug fix. The Reconcile Trigger Sensor input defaulted to an empty string,
+#           which Home Assistant rejected as a malformed entity_id when the field was
+#           left blank, blocking save with "Entity is neither a valid entity ID nor a
+#           valid UUID for dictionary value @ data['entity_id']." Changed the default
+#           to an empty list so a blank field loads an inert trigger that watches
+#           nothing and never fires. Restores the documented behavior that ZHA, Z-Wave,
+#           and WiFi users can leave the Reconcile Trigger Sensor blank.
 #   1.0.0 - Initial stable release. State-equality gate two-way sync across any number of
 #           entities and any mix of supported domains (switch, light, input_boolean, fan, group).
 #           Reconcile branch on HA start and on an optional reconcile trigger sensor, with a
@@ -33,7 +40,7 @@ blueprint:
 
     Originally built to keep a Zigbee wall switch and a Tasmota relay in lockstep, but generalized to N entities and any mix of integrations.
 
-    **Version: 1.0.0**
+    **Version: 1.0.1**
   domain: automation
   author: James Lander (xeazy.com)
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/linked_entities_pro.yaml
@@ -122,7 +129,7 @@ blueprint:
             reconnect. Zigbee2MQTT users should point this at binary_sensor.zigbee2mqtt_running.
             ZHA, Z-Wave, and WiFi users can usually leave this blank - the Home Assistant
             start reconcile above is sufficient for them.
-          default: ''
+          default: []
           selector:
             entity:
               filter:
@@ -204,8 +211,8 @@ triggers:
   to: 'on'
   id: reconcile_sensor
 variables:
-  _version: 1.0.0
-  _caller_prefix: '[Linked Entities Pro v1.0.0]'
+  _version: 1.0.1
+  _caller_prefix: '[Linked Entities Pro v1.0.1]'
   linked_entities_var: !input linked_entities
   authority_entity_input: !input authority_entity
   authority_entity_resolved: >-

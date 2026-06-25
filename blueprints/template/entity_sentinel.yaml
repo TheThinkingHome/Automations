@@ -3,72 +3,75 @@
 # Entity Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
-# NOTE: This is a scaffolding rename. The engine in this file is still the
-#   battery not-reporting logic from Battery Sentinel - Not Reporting alpha.5,
-#   unchanged. The rename to Entity Sentinel is in place ahead of the engine
-#   work so the file, name, logger, and docs are settled before the two-mode
-#   liveness rewrite. Entity Sentinel behaviour (entity-level unavailable with
-#   debounce, device-level freeze, representative-per-device area/device scope,
-#   reason/since output, short cadence, startup grace) is not yet built. Until
-#   it is, this watches battery devices for not-reporting exactly as alpha.5 did.
+# Entity Sentinel watches the entities you name and flags any that have gone quiet,
+# by either of two checks, chosen automatically per entity:
+#
+#   UNAVAILABLE (entity level). The named entity's own state is unavailable or
+#       unknown, held past a debounce. Universal; the only signal for devices with
+#       no advancing timestamp. The "since" time is the entity's last_changed (when
+#       it entered the bad state), read live, so no stored state is needed and a
+#       restart cannot lose it. Debounce is arithmetic on last_changed.
+#   FREEZE (device level). The device behind the named entity has not reported
+#       anything within the lookback window. Judged by the freshest last_reported
+#       across ALL of the device's entities, so a sticky entity in a quiet room is
+#       vouched for by its livelier siblings. Reads last_reported (sent anything),
+#       not last_changed (value moved), so a steady-but-live reporter is not flagged.
+#
+# Scope: include and exclude by entity, label, area, or device.
+#   - Explicit entities and labels-on-entities are TRUSTED: watched exactly as
+#     given, for both checks.
+#   - Areas, devices, and labels-on-devices/areas are SWEPT: one representative
+#     entity per device is chosen by a device_class priority order
+#     (occupancy/motion, then door/window/opening/garage/lock, then
+#     moisture/smoke/gas/carbon_monoxide, then temperature/humidity, then
+#     connectivity, then battery as last resort). A device with no entity in that
+#     order is skipped. Swept scopes give correct freeze but APPROXIMATE
+#     unavailable (only the representative is watched); for precise unavailable,
+#     name the entity or label it directly.
+#   - A trusted entity always wins over its swept representative (deduped), so a
+#     device that arrives by both paths is not double counted.
+#   - Exclude is applied last and always wins.
+#
+# Triggering: a pure time_pattern on a short cadence, plus a Home Assistant start
+# trigger that only latches the startup grace boot time. Both checks are caught at
+# the next tick; cadence is the only latency knob.
+#
+# DESIGN CHOICE (startup grace): the grace window suppresses the UNAVAILABLE list
+# only, NOT freeze. Rationale: a restart briefly reads the mesh as unavailable
+# (a false outage the grace exists to hide), but last_reported repopulates fresh
+# on restore, so freeze cannot false-fire at startup; gating it would only delay a
+# true signal. If a future edge case shows freeze false-firing right after a
+# restart (for example an integration that restores entities with a stale
+# last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
-#   1.0.0-alpha.6 - Renamed from Battery Sentinel - Not Reporting to Entity
-#           Sentinel (file battery_sentinel_not_reporting.yaml becomes
-#           entity_sentinel.yaml, sensor_name default becomes Entity Sentinel,
-#           debug logger becomes entity_sentinel). Scaffolding rename only: the
-#           detection engine is unchanged from alpha.5. The blueprint is being
-#           generalized from battery not-reporting into a general entity
-#           liveness monitor (unavailable plus freeze, any entity, not just
-#           batteries); this rename lands first so the engine rewrite happens
-#           under the final name. No behaviour change in this version.
-#   1.0.0-alpha.5 - A device with no last_reported anywhere (no timestamp on
-#           any of its entities) is now flagged as not reporting instead of
-#           skipped. A device that has never reported is the strongest
-#           not-reporting case there is. Such a device carries last_seen: null
-#           and age: 'never reported' in its record.
-#   1.0.0-alpha.4 - Area and device scopes are now re-filtered to
-#           device_class: battery, the same fix as the Low blueprint. An area
-#           sweeps in every entity it holds; without the filter, non-battery
-#           entities were treated as monitored. Explicit entity lists and
-#           labels stay trusted.
-#   1.0.0-alpha.3 - Removed the scan_interval input. The sensor now fires once
-#           a day at report_hour (via a time_pattern pinned to that hour) plus
-#           on Home Assistant start, instead of waking on a minute interval and
-#           doing nothing on most wakes. The daily latch still guards against
-#           redundant runs and lets a restart after the report hour catch up.
-#           Nothing is lost: the check ran once a day regardless.
-#   1.0.0-alpha.2 - Judge liveness by the device, not the battery entity. A
-#           battery reading is sticky and may report only when the percentage
-#           changes, which on an efficient sensor can be once a week, so the
-#           old check false-flagged healthy devices as not reporting. Now, for
-#           each monitored battery entity, the freshest last_reported across all
-#           of that device's entities is the heartbeat: a live device always has
-#           something fresh (link quality, motion, temperature), a dead one has
-#           everything stale. Falls back to the battery entity's own
-#           last_reported when the entity has no device behind it.
-#   1.0.0-alpha - Initial build. Split from the combined Battery Sentinel
-#           blueprint into a single-purpose stopped-reporting sensor, so the
-#           entity carries only its own attributes with no cross-mode noise.
-#           Creates one trigger-based template sensor whose state is the count
-#           of battery devices that have not reported within a lookback window,
-#           judged once a day at a configured hour and latched until the next
-#           daily boundary. This spares devices that legitimately report only
-#           once a day, and it catches the device that freezes at its last
-#           value without ever going unavailable, which a plain unavailable
-#           check misses. Include and exclude accept entities, areas, devices,
-#           or labels, with exclude winning; an empty include watches every
-#           battery device-class entity. Carries the proven native-dict output
-#           (no tojson/from_json) and the optional debug log line. The daily
-#           latch is held in the sensor's own devices and eval_date attributes,
-#           read back each render.
+#   1.0.0-alpha.7 - Rewrote the engine from battery not-reporting into the two-mode
+#           entity liveness monitor described above: entity-level unavailable with a
+#           duration debounce derived live from last_changed, device-level freeze
+#           with a duration lookback against the freshest last_reported, automatic
+#           per-entity routing, representative-per-device sweeping for area/device/
+#           label-on-device scopes with a device_class priority order, trusted-entity
+#           precedence with dedupe, the startup grace gate ported from Battery
+#           Sentinel (unavailable only, by design), and an optional refresh button.
+#           Output per flagged entity: name, entity_id, area, reason
+#           (unavailable/unknown/missing/frozen), since, last_seen, age. State is the
+#           count. The battery device_class filter is gone; any entity can be watched.
+#           Replaces report_hour/lookback_hours/once-daily with scan_interval cadence,
+#           freeze_lookback, and unavailable_debounce.
+#   1.0.0-alpha.6 - Scaffolding rename from Battery Sentinel - Not Reporting to
+#           Entity Sentinel, engine unchanged (battery not-reporting), ahead of this
+#           rewrite so the file, name, and logger were settled first.
+#   1.0.0-alpha.5 through 1.0.0-alpha - Battery not-reporting lineage (device-freshest
+#           heartbeat, once-daily latch, never-reported flagging, area/device
+#           battery-class filter, initial split from the combined blueprint). See the
+#           Battery Sentinel history for the shared origin.
 
 blueprint:
   name: Entity Sentinel (Alpha)
   description: |
     # Entity Sentinel (Alpha)
 
-    *One sensor that counts every battery device that stopped reporting, including the one frozen at its last value.*
+    *One sensor that counts every critical entity that has gone quiet, the one that dropped offline and the one frozen at its last value.*
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
@@ -79,76 +82,66 @@ blueprint:
 
     ---
 
-    **Scaffolding release.** The name is now Entity Sentinel, ahead of the engine work. The detection logic in this version is still the battery not-reporting engine from the previous build, unchanged: it watches battery devices and counts those that have stopped reporting. The generalization to a full entity liveness monitor (any entity, unavailable plus freeze) is in progress and will land in a later version.
-
-    Creates one trigger-based template sensor whose state is the count of battery devices that have stopped reporting. The flagged devices are listed in the `devices` attribute, each with its name, area, last-seen time, and battery type, for any automation, dashboard, or notification to read.
+    Creates one trigger-based template sensor whose state is the count of watched entities that have gone quiet. Each is listed in the `devices` attribute with the reason it was flagged, for any automation, dashboard, or notification to read.
 
     ## How it works
 
-    A device counts as not reporting when it has not sent an update within a lookback window, whatever value it is still showing. That is the point: a device frozen at eighty percent still reads 80, and a plain unavailable check sails right past it. Asking instead whether the device reported at all catches both the unavailable device and the silently-frozen one.
+    Every watched entity is judged by two checks, chosen automatically. An entity that has gone `unavailable` or `unknown` and stayed that way past a debounce is flagged at the entity level. A device that has not reported anything within a lookback window is flagged as frozen, judged by the freshest report across the whole device so a quiet sticky entity is not mistaken for a dead one.
 
-    The check is judged once a day at a chosen hour against the lookback window, not continuously, so a device that legitimately reports only once a day is not flagged for the hours it is quiet. The verdict is held until the next daily check, so it does not flap between scans.
-
-    Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. The sensor evaluates once a day at the report hour, and on Home Assistant start.
+    Scope by entity, label, area, or device, with include and exclude, and exclude always wins. Explicit entities and labels are watched precisely for both checks; areas and devices are swept to one representative entity per device, tuned for freeze. For precise unavailable coverage, name entities or use a label.
 
     Its companion, **Battery Sentinel**, counts the batteries running low. Build both for full coverage.
 
-    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
+    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation.
 
     This is an alpha, under active testing on a live system.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.6
+    1.0.0-alpha.7
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
-    reporting_settings:
-      name: Not-reporting detection
-      icon: mdi:battery-off-outline
+    detection_settings:
+      name: Liveness detection
+      icon: mdi:radar
       input:
-        report_hour:
-          name: Daily check hour
-          description: 'The hour of day the check is judged, 0 to 23. It is evaluated
-            once per day at this hour rather than continuously, so a device that
-            reports once a day is not flagged for the hours it is quiet.
+        freeze_lookback:
+          name: Freeze lookback
+          description: 'How long a device may go without reporting anything before it
+            counts as frozen. Set it a little longer than the entity''s normal
+            reporting interval: minutes for an active sensor, hours or days for a
+            quiet one. Judged against the freshest report across the whole device.
 
             '
-          default: 8
+          default:
+            hours: 6
           selector:
-            number:
-              min: 0.0
-              max: 23.0
-              step: 1.0
-              mode: slider
-        lookback_hours:
-          name: Lookback window
-          description: 'How many hours back from the daily check hour a device must
-            have reported to count as alive. A once-a-day reporter needs a window
-            wide enough to absorb timing drift. Raise this if normal daily reporters
-            keep getting flagged.
+            duration: {}
+        unavailable_debounce:
+          name: Unavailable debounce
+          description: 'How long an entity must stay unavailable or unknown before it
+            is flagged. Absorbs brief blips on flaky WiFi or cloud devices. Set to
+            zero to flag the moment an entity goes unavailable.
 
             '
-          default: 28
+          default:
+            minutes: 3
           selector:
-            number:
-              min: 1.0
-              max: 168.0
-              step: 1.0
-              unit_of_measurement: hours
-              mode: box
+            duration: {}
     scope_settings:
-      name: Which devices to watch
+      name: Which entities to watch
       icon: mdi:select-group
       input:
         include_target:
           name: Include
-          description: 'Devices, areas, entities, or labels to watch. Leave empty
-            to watch every entity with a battery device class automatically. Set a
-            label here to watch only the devices you tag.
+          description: 'Entities, labels, areas, or devices to watch. Explicit
+            entities and labels are watched precisely for both checks. Areas and
+            devices are swept to one representative entity per device, tuned for
+            freeze. A scope is required; there is no watch-everything default.
 
             '
           default: {}
@@ -156,14 +149,76 @@ blueprint:
             target: {}
         exclude_target:
           name: Exclude
-          description: 'Devices, areas, entities, or labels to leave out. Exclude
-            always wins over include. Use it to drop phones, tablets, or a device
-            you are letting run down on purpose.
+          description: 'Entities, labels, areas, or devices to leave out. Exclude
+            always wins over include. Use it to trim a broad area sweep.
 
             '
           default: {}
           selector:
             target: {}
+    cadence_settings:
+      name: Evaluation cadence
+      icon: mdi:timer-sync-outline
+      input:
+        scan_interval:
+          name: Re-evaluation interval
+          description: 'How often the sensor re-evaluates, in minutes. This is the
+            only latency knob: an entity is caught within one tick. A short cadence
+            keeps detection prompt.
+
+            '
+          default: /2
+          selector:
+            select:
+              options:
+              - label: Every 1
+                value: /1
+              - label: Every 2
+                value: /2
+              - label: Every 3
+                value: /3
+              - label: Every 5
+                value: /5
+              - label: Every 10
+                value: /10
+              - label: Every 15
+                value: /15
+              - label: Every 30
+                value: /30
+              sort: false
+              custom_value: false
+              multiple: false
+        startup_grace_seconds:
+          name: Startup grace period (seconds)
+          description: 'After Home Assistant starts, how long to hold the unavailable
+            list empty while the mesh repopulates, so a momentary restart does not
+            report a false outage. Freeze is not held (it cannot false-fire at
+            startup). Set to 0 to disable.
+
+            '
+          default: 120
+          selector:
+            number:
+              min: 0.0
+              max: 900.0
+              step: 10.0
+              unit_of_measurement: seconds
+              mode: box
+        refresh_button:
+          name: Manual refresh button (optional)
+          description: 'An optional input_button. Press it to make the sensor
+            re-evaluate immediately. It re-scans; it does not force a device to
+            report. Point several Sentinel sensors at the same button to refresh
+            them all with one press. Leave blank to disable.
+
+            '
+          default: input_button.none
+          selector:
+            entity:
+              filter:
+              - domain:
+                - input_button
+              multiple: false
     naming_settings:
       name: Sensor identity
       icon: mdi:tag-outline
@@ -178,8 +233,8 @@ blueprint:
               multiline: false
         unique_id:
           name: Unique ID
-          description: 'A unique id so the sensor is registered and you can rename
-            it or place it in an area from the interface. Make it distinct for every
+          description: 'A unique id so the sensor is registered and you can rename it
+            or place it in an area from the interface. Make it distinct for every
             sensor you build, for example entity_sentinel.
 
             '
@@ -193,9 +248,8 @@ blueprint:
       input:
         debug_enabled:
           name: Write a debug line to the log
-          description: 'When on, the sensor writes one summary line to the system
-            log each time it evaluates, covering the daily-check timing and naming
-            the flagged devices. Useful while setting the sensor up. Leave off for
+          description: 'When on, the sensor writes one summary line to the system log
+            each time it evaluates, naming the flagged entities and why. Leave off for
             normal use so the log stays quiet.
 
             '
@@ -203,132 +257,175 @@ blueprint:
           selector:
             boolean: {}
 variables:
-  report_hour: !input report_hour
-  lookback_hours: !input lookback_hours
+  freeze_lookback: !input freeze_lookback
+  unavailable_debounce: !input unavailable_debounce
   include_target: !input include_target
   exclude_target: !input exclude_target
+  startup_grace_seconds: !input startup_grace_seconds
   debug_enabled: !input debug_enabled
   result: |
-    {%- set lookback = lookback_hours | float(28) -%}
-    {%- set rpt_hour = report_hour | int(8) -%}
+    {%- set debounce_s = (timedelta(**unavailable_debounce).total_seconds() if (unavailable_debounce is mapping and unavailable_debounce) else 0) -%}
+    {%- set freeze_s = (timedelta(**freeze_lookback).total_seconds() if (freeze_lookback is mapping and freeze_lookback) else 21600) -%}
     {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
+    {%- set grace = startup_grace_seconds | int(120) -%}
+    {%- set is_start = (trigger is defined and trigger is not none and trigger.id is defined and trigger.id == 'ha_start') -%}
+    {%- set prev_boot = prev.get('boot_time') -%}
+    {%- set boot_dt = now() if is_start else (prev_boot | as_datetime if prev_boot else (now() - timedelta(seconds=(grace + 60)))) -%}
+    {%- set settled = (now() - boot_dt).total_seconds() >= grace -%}
+    {%- set priority = ['occupancy', 'motion', 'door', 'window', 'opening', 'garage_door', 'lock', 'moisture', 'smoke', 'gas', 'carbon_monoxide', 'temperature', 'humidity', 'connectivity', 'battery'] -%}
     {%- set inc = include_target -%}
-    {%- set ns = namespace(ents=[]) -%}
-    {%- set batt = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
-                 + (states.binary_sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list) -%}
-    {%- if inc is mapping and (inc.entity_id is defined or inc.device_id is defined or inc.area_id is defined or inc.label_id is defined) -%}
+    {%- set exc = exclude_target -%}
+
+    {%- set trusted = namespace(ents=[]) -%}
+    {%- set swept = namespace(ents=[]) -%}
+
+    {%- if inc is mapping -%}
       {%- if inc.entity_id is defined -%}
         {%- set elist = inc.entity_id if (inc.entity_id is iterable and inc.entity_id is not string) else [inc.entity_id] -%}
-        {%- set ns.ents = ns.ents + elist -%}
-      {%- endif -%}
-      {%- if inc.device_id is defined -%}
-        {%- set dlist = inc.device_id if (inc.device_id is iterable and inc.device_id is not string) else [inc.device_id] -%}
-        {%- for d in dlist -%}{%- set ns.ents = ns.ents + (device_entities(d) | select('in', batt) | list) -%}{%- endfor -%}
-      {%- endif -%}
-      {%- if inc.area_id is defined -%}
-        {%- set alist = inc.area_id if (inc.area_id is iterable and inc.area_id is not string) else [inc.area_id] -%}
-        {%- for a in alist -%}{%- set ns.ents = ns.ents + (area_entities(a) | select('in', batt) | list) -%}{%- endfor -%}
+        {%- set trusted.ents = trusted.ents + elist -%}
       {%- endif -%}
       {%- if inc.label_id is defined -%}
         {%- set llist = inc.label_id if (inc.label_id is iterable and inc.label_id is not string) else [inc.label_id] -%}
-        {%- for l in llist -%}{%- set ns.ents = ns.ents + label_entities(l) -%}{%- endfor -%}
+        {%- for l in llist -%}
+          {%- set trusted.ents = trusted.ents + label_entities(l) -%}
+          {%- for d in label_devices(l) -%}{%- set swept.ents = swept.ents + [('device', d)] -%}{%- endfor -%}
+          {%- for a in label_areas(l) -%}{%- set swept.ents = swept.ents + [('area', a)] -%}{%- endfor -%}
+        {%- endfor -%}
       {%- endif -%}
-    {%- else -%}
-      {%- set ns.ents = batt -%}
+      {%- if inc.device_id is defined -%}
+        {%- set dlist = inc.device_id if (inc.device_id is iterable and inc.device_id is not string) else [inc.device_id] -%}
+        {%- for d in dlist -%}{%- set swept.ents = swept.ents + [('device', d)] -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if inc.area_id is defined -%}
+        {%- set alist = inc.area_id if (inc.area_id is iterable and inc.area_id is not string) else [inc.area_id] -%}
+        {%- for a in alist -%}{%- set swept.ents = swept.ents + [('area', a)] -%}{%- endfor -%}
+      {%- endif -%}
     {%- endif -%}
-    {%- set exc = exclude_target -%}
-    {%- set xns = namespace(ents=[]) -%}
+
+    {%- set rep = namespace(ents=[]) -%}
+    {%- set devset = namespace(ids=[]) -%}
+    {%- for kind, ref in swept.ents -%}
+      {%- if kind == 'device' -%}
+        {%- if ref not in devset.ids -%}{%- set devset.ids = devset.ids + [ref] -%}{%- endif -%}
+      {%- else -%}
+        {%- for d in area_devices(ref) -%}
+          {%- if d not in devset.ids -%}{%- set devset.ids = devset.ids + [d] -%}{%- endif -%}
+        {%- endfor -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- for d in devset.ids -%}
+      {%- set chosen = namespace(eid=none, rank=999) -%}
+      {%- for de in device_entities(d) -%}
+        {%- set dc = state_attr(de, 'device_class') -%}
+        {%- set r = priority.index(dc) if dc in priority else 999 -%}
+        {%- if r < chosen.rank -%}
+          {%- set chosen.rank = r -%}
+          {%- set chosen.eid = de -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- if chosen.eid is not none -%}
+        {%- set rep.ents = rep.ents + [chosen.eid] -%}
+      {%- endif -%}
+    {%- endfor -%}
+
+    {%- set xset = namespace(ents=[]) -%}
     {%- if exc is mapping -%}
       {%- if exc.entity_id is defined -%}
         {%- set elist = exc.entity_id if (exc.entity_id is iterable and exc.entity_id is not string) else [exc.entity_id] -%}
-        {%- set xns.ents = xns.ents + elist -%}
-      {%- endif -%}
-      {%- if exc.device_id is defined -%}
-        {%- set dlist = exc.device_id if (exc.device_id is iterable and exc.device_id is not string) else [exc.device_id] -%}
-        {%- for d in dlist -%}{%- set xns.ents = xns.ents + device_entities(d) -%}{%- endfor -%}
-      {%- endif -%}
-      {%- if exc.area_id is defined -%}
-        {%- set alist = exc.area_id if (exc.area_id is iterable and exc.area_id is not string) else [exc.area_id] -%}
-        {%- for a in alist -%}{%- set xns.ents = xns.ents + area_entities(a) -%}{%- endfor -%}
+        {%- set xset.ents = xset.ents + elist -%}
       {%- endif -%}
       {%- if exc.label_id is defined -%}
         {%- set llist = exc.label_id if (exc.label_id is iterable and exc.label_id is not string) else [exc.label_id] -%}
-        {%- for l in llist -%}{%- set xns.ents = xns.ents + label_entities(l) -%}{%- endfor -%}
+        {%- for l in llist -%}{%- set xset.ents = xset.ents + label_entities(l) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.device_id is defined -%}
+        {%- set dlist = exc.device_id if (exc.device_id is iterable and exc.device_id is not string) else [exc.device_id] -%}
+        {%- for d in dlist -%}{%- set xset.ents = xset.ents + device_entities(d) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.area_id is defined -%}
+        {%- set alist = exc.area_id if (exc.area_id is iterable and exc.area_id is not string) else [exc.area_id] -%}
+        {%- for a in alist -%}{%- set xset.ents = xset.ents + area_entities(a) -%}{%- endfor -%}
       {%- endif -%}
     {%- endif -%}
-    {%- set monitored = ns.ents | unique | reject('in', xns.ents) | list -%}
-    {%- set today_str = now().strftime('%Y-%m-%d') -%}
-    {%- set boundary = now().replace(hour=rpt_hour, minute=0, second=0, microsecond=0) -%}
-    {%- set prev_eval_date = prev.get('eval_date', '') -%}
-    {%- set do_check = (now() >= boundary) and (prev_eval_date != today_str) -%}
-    {%- set sns = namespace(items=[]) -%}
-    {%- if do_check -%}
-      {%- for eid in monitored -%}
+
+    {%- set all_trusted = trusted.ents | unique | list -%}
+    {%- set rep_only = rep.ents | unique | reject('in', all_trusted) | list -%}
+    {%- set monitored = (all_trusted + rep_only) | reject('in', xset.ents) | list -%}
+
+    {%- set fl = namespace(items=[]) -%}
+    {%- for eid in monitored -%}
+      {%- set st = states(eid) -%}
+      {%- set sobj = states[eid] -%}
+      {%- set ename = (state_attr(eid, 'friendly_name') or (device_attr(device_id(eid), 'name') if device_id(eid) else none) or eid) -%}
+      {%- set earea = (area_name(eid) or 'Unassigned') -%}
+      {%- if st is none or st in ['unavailable', 'unknown', 'none'] -%}
+        {%- set lc = sobj.last_changed if (sobj is not none and sobj.last_changed is not none) else none -%}
+        {%- set bad_for = (now() - lc).total_seconds() if lc is not none else (debounce_s + 1) -%}
+        {%- if settled and bad_for >= debounce_s -%}
+          {%- set fl.items = fl.items + [{
+            'name': ename,
+            'entity_id': eid,
+            'area': earea,
+            'reason': (st if st is not none else 'missing'),
+            'since': (lc.isoformat() if lc is not none else none),
+            'last_seen': (sobj.last_reported.isoformat() if (sobj is not none and sobj.last_reported is not none) else none),
+            'age': (relative_time(sobj.last_reported) if (sobj is not none and sobj.last_reported is not none) else 'unknown')
+          }] -%}
+        {%- endif -%}
+      {%- else -%}
         {%- set did = device_id(eid) -%}
-        {%- set heartbeat = namespace(latest=none) -%}
+        {%- set hb = namespace(latest=none) -%}
         {%- if did is not none -%}
           {%- for de in device_entities(did) -%}
-            {%- set deo = states[de] if states[de] is not none else none -%}
+            {%- set deo = states[de] -%}
             {%- if deo is not none and deo.last_reported is not none -%}
-              {%- if heartbeat.latest is none or deo.last_reported > heartbeat.latest -%}
-                {%- set heartbeat.latest = deo.last_reported -%}
-              {%- endif -%}
+              {%- if hb.latest is none or deo.last_reported > hb.latest -%}{%- set hb.latest = deo.last_reported -%}{%- endif -%}
             {%- endif -%}
           {%- endfor -%}
         {%- else -%}
-          {%- set sobj = states[eid] if states[eid] is not none else none -%}
-          {%- if sobj is not none and sobj.last_reported is not none -%}
-            {%- set heartbeat.latest = sobj.last_reported -%}
-          {%- endif -%}
+          {%- if sobj is not none and sobj.last_reported is not none -%}{%- set hb.latest = sobj.last_reported -%}{%- endif -%}
         {%- endif -%}
-        {%- if heartbeat.latest is none -%}
-          {%- set sns.items = sns.items + [{
-            'name': (device_attr(did, 'name') or state_attr(eid, 'friendly_name') or eid),
-            'entity_id': eid,
-            'area': (area_name(eid) or 'Unassigned'),
-            'last_seen': none,
-            'age': 'never reported',
-            'battery_type': (state_attr(eid, 'battery_type') or '')
-          }] -%}
-        {%- else -%}
-          {%- set age_h = (now() - heartbeat.latest).total_seconds() / 3600 -%}
-          {%- if age_h > lookback -%}
-            {%- set sns.items = sns.items + [{
-              'name': (device_attr(did, 'name') or state_attr(eid, 'friendly_name') or eid),
+        {%- if hb.latest is not none -%}
+          {%- set age_s = (now() - hb.latest).total_seconds() -%}
+          {%- if age_s > freeze_s -%}
+            {%- set fl.items = fl.items + [{
+              'name': ename,
               'entity_id': eid,
-              'area': (area_name(eid) or 'Unassigned'),
-              'last_seen': heartbeat.latest.isoformat(),
-              'age': relative_time(heartbeat.latest),
-              'battery_type': (state_attr(eid, 'battery_type') or '')
+              'area': earea,
+              'reason': 'frozen',
+              'since': hb.latest.isoformat(),
+              'last_seen': hb.latest.isoformat(),
+              'age': relative_time(hb.latest)
             }] -%}
           {%- endif -%}
         {%- endif -%}
-      {%- endfor -%}
-      {%- set devices = sns.items -%}
-      {%- set eval_date = today_str -%}
-    {%- else -%}
-      {%- set devices = prev.get('devices', []) -%}
-      {%- set eval_date = prev_eval_date -%}
-    {%- endif -%}
+      {%- endif -%}
+    {%- endfor -%}
+
+    {%- set flagged = fl.items -%}
     {{
       {
-        'state': devices | length,
+        'state': flagged | length,
         'total_monitored': monitored | length,
-        'devices': devices,
-        'eval_date': eval_date,
-        'last_evaluated': now().isoformat(),
-        'ran': do_check,
-        'boundary': boundary.isoformat(),
-        'lookback': lookback,
-        'report_hour': rpt_hour
+        'devices': flagged,
+        'unavailable_count': (flagged | selectattr('reason', 'in', ['unavailable', 'unknown', 'missing']) | list | length),
+        'frozen_count': (flagged | selectattr('reason', 'eq', 'frozen') | list | length),
+        'boot_time': boot_dt.isoformat(),
+        'settled': settled,
+        'last_evaluated': now().isoformat()
       }
     }}
+
 trigger:
 - trigger: time_pattern
-  hours: !input report_hour
-  minutes: '0'
+  hours: '*'
+  minutes: !input scan_interval
 - trigger: homeassistant
   event: start
+  id: ha_start
+- trigger: state
+  entity_id: !input refresh_button
+  id: manual_refresh
 action:
 - if:
   - condition: template
@@ -339,19 +436,20 @@ action:
       level: info
       logger: entity_sentinel
       message: >-
-        Entity Sentinel @ {{ result.last_evaluated }} | monitored:
-        {{ result.total_monitored }} | ran={{ result.ran }} boundary={{
-        result.boundary }} lookback={{ result.lookback | round(0) }}h report_hour={{
-        result.report_hour }} eval_date={{ result.eval_date }} | not reporting: {{
-        result.state }}{% for d in result.devices %} | {{ d.name }} (last seen {{
-        d.age }}, {{ d.last_seen }}) [{{ d.entity_id }}]{% endfor %}
+        Entity Sentinel @ {{ result.last_evaluated }} | monitored: {{
+        result.total_monitored }} | flagged: {{ result.state }} (unavailable {{
+        result.unavailable_count }}, frozen {{ result.frozen_count }}){% for d in
+        result.devices %} | {{ d.name }} [{{ d.reason }}, {{ d.age }}] {{
+        d.entity_id }}{% endfor %}
 sensor:
 - name: !input sensor_name
   unique_id: !input unique_id
   state: '{{ result.state }}'
-  icon: '{{ ''mdi:battery-off-outline'' if result.state | int(0) > 0 else ''mdi:battery-check'' }}'
+  icon: '{{ ''mdi:alert-circle'' if result.state | int(0) > 0 else ''mdi:check-circle-outline'' }}'
   attributes:
     total_monitored: '{{ result.total_monitored }}'
     devices: '{{ result.devices }}'
-    eval_date: '{{ result.eval_date }}'
+    unavailable_count: '{{ result.unavailable_count }}'
+    frozen_count: '{{ result.frozen_count }}'
+    boot_time: '{{ result.boot_time }}'
     last_evaluated: '{{ result.last_evaluated }}'

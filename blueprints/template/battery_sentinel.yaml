@@ -1,7 +1,7 @@
 # Copyright (C) 2026 James Lander, The Thinking Home
 # Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
 # Battery Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
-#   Article: https://xeazy.com/battery-sentinel-blueprint/
+#   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
 # Changelog:
 #   1.0.0-alpha.5 - Renamed from Battery Sentinel - Low to Battery Sentinel. The
@@ -73,7 +73,7 @@ blueprint:
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-    - 📖 [Read the article](https://xeazy.com/battery-sentinel-blueprint/) - the design and worked examples.
+    - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprint/) - the design and worked examples.
     - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) - import instructions, parameters, and attribute reference.
     - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.

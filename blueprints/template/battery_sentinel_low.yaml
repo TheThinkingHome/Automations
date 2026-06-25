@@ -268,7 +268,7 @@ variables:
     {%- set grace = startup_grace_seconds | int(120) -%}
     {%- set is_start = (trigger is defined and trigger is not none and trigger.id is defined and trigger.id == 'ha_start') -%}
     {%- set prev_boot = prev.get('boot_time') -%}
-    {%- set boot_dt = now() if is_start else (prev_boot | as_datetime if prev_boot else (now() - timedelta(days=3650))) -%}
+    {%- set boot_dt = now() if is_start else (prev_boot | as_datetime if prev_boot else (now() - timedelta(seconds=(grace + 60)))) -%}
     {%- set settled = (now() - boot_dt).total_seconds() >= grace -%}
     {%- set inc = include_target -%}
     {%- set ns = namespace(ents=[]) -%}

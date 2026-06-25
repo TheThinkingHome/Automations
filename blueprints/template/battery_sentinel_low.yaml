@@ -4,16 +4,21 @@
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
-#   1.0.0-alpha.4 - Added a startup grace period. After Home Assistant starts,
-#           the sensor waits startup_grace_seconds (default 120) before its
-#           first evaluation, so a momentary restart no longer reports a false
-#           fleet-wide unavailable list while the mesh is still repopulating.
-#           The wait applies only to the Home Assistant start trigger; the
-#           normal re-evaluation cadence is unaffected. During the wait the
-#           sensor holds its previous value. Also added an optional refresh_button
-#           input: press the named input_button to force an immediate re-evaluation
-#           (for example after changing a battery). It re-scans; it does not force
-#           a device to report. Defaults to a non-firing placeholder when unused.
+#   1.0.0-alpha.4 - Added a startup grace period for the unavailable list. For
+#           startup_grace_seconds (default 120) after Home Assistant starts, the
+#           unavailable_entities list is held empty and unavailable_count is 0 on
+#           every evaluation, so a momentary restart no longer reports a false
+#           fleet-wide outage while the mesh is still repopulating. The window is
+#           measured from the Home Assistant start time (latched in the boot_time
+#           attribute) and applies to every trigger, not just start, so a cadence
+#           tick or button press during the window is gated too. The low count is
+#           never gated; it evaluates live throughout. After the window the list
+#           populates on the next evaluation. Two attributes expose the mechanism:
+#           boot_time (when the current session started) and settled (whether the
+#           grace window has passed). Also added an optional refresh_button input:
+#           press the named input_button to force an immediate re-evaluation (for
+#           example after changing a battery). It re-scans; it does not force a
+#           device to report. Defaults to a non-firing placeholder when unused.
 #           Fixed: a scoped entity with no device (for example a typo'd or removed
 #           entity id) no longer raises a device_attr render error; its name falls
 #           back to the friendly name or the entity id.
@@ -258,6 +263,9 @@ variables:
     {%- set thr = low_threshold | float(20) -%}
     {%- set margin = low_clear_margin | float(2) -%}
     {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
+    {%- set grace = startup_grace_seconds | int(120) -%}
+    {%- set boot_dt = now() if (trigger is defined and trigger.id is defined and trigger.id == 'ha_start') else ((prev.get('boot_time') | as_datetime) if prev.get('boot_time') else now()) -%}
+    {%- set settled = (now() - boot_dt).total_seconds() >= grace -%}
     {%- set inc = include_target -%}
     {%- set ns = namespace(ents=[]) -%}
     {%- set batt = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
@@ -339,7 +347,7 @@ variables:
       {%- endif -%}
     {%- endfor -%}
     {%- set devices = low_ns.items -%}
-    {%- set unavailable = un_ns.items -%}
+    {%- set unavailable = un_ns.items if settled else [] -%}
     {{
       {
         'state': devices | length,
@@ -347,6 +355,8 @@ variables:
         'devices': devices,
         'unavailable_count': unavailable | length,
         'unavailable_entities': unavailable,
+        'boot_time': boot_dt.isoformat(),
+        'settled': settled,
         'last_evaluated': now().isoformat()
       }
     }}
@@ -361,13 +371,6 @@ trigger:
   entity_id: !input refresh_button
   id: manual_refresh
 action:
-- alias: Hold for the startup grace period after Home Assistant starts
-  if:
-  - condition: template
-    value_template: '{{ trigger.id == ''ha_start'' and (startup_grace_seconds | int(0)) > 0 }}'
-  then:
-  - delay:
-      seconds: '{{ startup_grace_seconds | int(0) }}'
 - if:
   - condition: template
     value_template: '{{ debug_enabled }}'
@@ -392,4 +395,5 @@ sensor:
     devices: '{{ result.devices }}'
     unavailable_count: '{{ result.unavailable_count }}'
     unavailable_entities: '{{ result.unavailable_entities }}'
+    boot_time: '{{ result.boot_time }}'
     last_evaluated: '{{ result.last_evaluated }}'

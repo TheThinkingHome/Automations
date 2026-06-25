@@ -4,6 +4,11 @@
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.5 - A device with no last_reported anywhere (no timestamp on
+#           any of its entities) is now flagged as not reporting instead of
+#           skipped. A device that has never reported is the strongest
+#           not-reporting case there is. Such a device carries last_seen: null
+#           and age: 'never reported' in its record.
 #   1.0.0-alpha.4 - Area and device scopes are now re-filtered to
 #           device_class: battery, the same fix as the Low blueprint. An area
 #           sweeps in every entity it holds; without the filter, non-battery
@@ -74,7 +79,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.4
+    1.0.0-alpha.5
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_not_reporting.yaml
@@ -256,7 +261,16 @@ variables:
             {%- set heartbeat.latest = sobj.last_reported -%}
           {%- endif -%}
         {%- endif -%}
-        {%- if heartbeat.latest is not none -%}
+        {%- if heartbeat.latest is none -%}
+          {%- set sns.items = sns.items + [{
+            'name': (device_attr(did, 'name') or state_attr(eid, 'friendly_name') or eid),
+            'entity_id': eid,
+            'area': (area_name(eid) or 'Unassigned'),
+            'last_seen': none,
+            'age': 'never reported',
+            'battery_type': (state_attr(eid, 'battery_type') or '')
+          }] -%}
+        {%- else -%}
           {%- set age_h = (now() - heartbeat.latest).total_seconds() / 3600 -%}
           {%- if age_h > lookback -%}
             {%- set sns.items = sns.items + [{

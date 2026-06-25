@@ -36,7 +36,7 @@ Battery Sentinel counts the batteries at or below a threshold and lists each one
 
 This is an alpha, under active testing on a live system. The design may still change. Do not rely on it for anything load-bearing until it graduates.
 
-Full write-up and worked examples: <https://xeazy.com/battery-sentinel-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
+Full write-up and worked examples: <https://xeazy.com/battery-entity-sentinel-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
 
 ## Import the Blueprint
 
@@ -270,7 +270,7 @@ action:
             item: "{{ repeat.item.name }} battery ({{ repeat.item.battery_type }})"
 ```
 
-For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-sentinel-blueprint/>
+For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
 
 ## License
 

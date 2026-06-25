@@ -15,7 +15,9 @@
 #           never gated; it evaluates live throughout. After the window the list
 #           populates on the next evaluation. Two attributes expose the mechanism:
 #           boot_time (when the current session started) and settled (whether the
-#           grace window has passed). Also added an optional refresh_button input:
+#           grace window has passed). The window is only ever started by the Home
+#           Assistant start trigger; no cadence tick or button press can restart
+#           it. Also added an optional refresh_button input:
 #           press the named input_button to force an immediate re-evaluation (for
 #           example after changing a battery). It re-scans; it does not force a
 #           device to report. Defaults to a non-firing placeholder when unused.
@@ -264,7 +266,9 @@ variables:
     {%- set margin = low_clear_margin | float(2) -%}
     {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
     {%- set grace = startup_grace_seconds | int(120) -%}
-    {%- set boot_dt = now() if (trigger is defined and trigger.id is defined and trigger.id == 'ha_start') else ((prev.get('boot_time') | as_datetime) if prev.get('boot_time') else now()) -%}
+    {%- set is_start = (trigger is defined and trigger is not none and trigger.id is defined and trigger.id == 'ha_start') -%}
+    {%- set prev_boot = prev.get('boot_time') -%}
+    {%- set boot_dt = now() if is_start else (prev_boot | as_datetime if prev_boot else (now() - timedelta(days=3650))) -%}
     {%- set settled = (now() - boot_dt).total_seconds() >= grace -%}
     {%- set inc = include_target -%}
     {%- set ns = namespace(ents=[]) -%}

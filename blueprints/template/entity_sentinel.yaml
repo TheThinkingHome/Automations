@@ -45,6 +45,13 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.0-alpha.7.2 - Fixed missing-entity detection. HA's states(eid) returns the
+#           string 'unknown' for an entity that does not exist, never None, so the
+#           previous check labeled a deleted or mistyped entity 'unknown' instead of
+#           'missing'. Now keys on states[eid] (the state object), which is None only
+#           when the entity truly does not exist: absent -> reason 'missing', present
+#           but unknown -> reason 'unknown'. Caught by live test with fictitious
+#           entities.
 #   1.0.0-alpha.7.1 - Restored never-reported flagging dropped in alpha.7. An
 #           entity (or device) with no last_reported anywhere is flagged frozen
 #           with last_seen null and age 'never reported', matching the old
@@ -105,7 +112,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.7.1
+    1.0.0-alpha.7.2
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -365,7 +372,7 @@ variables:
       {%- set sobj = states[eid] -%}
       {%- set ename = (state_attr(eid, 'friendly_name') or (device_attr(device_id(eid), 'name') if device_id(eid) else none) or eid) -%}
       {%- set earea = (area_name(eid) or 'Unassigned') -%}
-      {%- if st is none or st in ['unavailable', 'unknown', 'none'] -%}
+      {%- if sobj is none or st in ['unavailable', 'unknown', 'none'] -%}
         {%- set lc = sobj.last_changed if (sobj is not none and sobj.last_changed is not none) else none -%}
         {%- set bad_for = (now() - lc).total_seconds() if lc is not none else (debounce_s + 1) -%}
         {%- if settled and bad_for >= debounce_s -%}
@@ -373,7 +380,7 @@ variables:
             'name': ename,
             'entity_id': eid,
             'area': earea,
-            'reason': (st if st is not none else 'missing'),
+            'reason': ('missing' if sobj is none else st),
             'since': (lc.isoformat() if lc is not none else none),
             'last_seen': (sobj.last_reported.isoformat() if (sobj is not none and sobj.last_reported is not none) else none),
             'age': (relative_time(sobj.last_reported) if (sobj is not none and sobj.last_reported is not none) else 'unknown')

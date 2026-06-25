@@ -1,9 +1,18 @@
 # Copyright (C) 2026 James Lander, The Thinking Home
 # Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
-# Battery Sentinel - Low - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+# Battery Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
 #   Article: https://xeazy.com/battery-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.0-alpha.5 - Renamed from Battery Sentinel - Low to Battery Sentinel. The
+#           companion blueprint generalizes from battery not-reporting into a
+#           general entity liveness monitor (Entity Sentinel), so the "Low"
+#           qualifier on this one is no longer needed: this sensor is the battery
+#           state and level monitor, its companion watches anything for going
+#           quiet. Behaviour is unchanged from alpha.4; this is a name and file
+#           rename only (battery_sentinel_low.yaml becomes battery_sentinel.yaml,
+#           sensor_name default becomes Battery Sentinel, the debug logger becomes
+#           battery_sentinel).
 #   1.0.0-alpha.4 - Added a startup grace period for the unavailable list. For
 #           startup_grace_seconds (default 120) after Home Assistant starts, the
 #           unavailable_entities list is held empty and unavailable_count is 0 on
@@ -56,9 +65,9 @@
 #           field for production before graduation.
 
 blueprint:
-  name: Battery Sentinel - Low (Alpha)
+  name: Battery Sentinel (Alpha)
   description: |
-    # Battery Sentinel - Low (Alpha)
+    # Battery Sentinel (Alpha)
 
     *One sensor that counts every battery device running low.*
 
@@ -79,7 +88,7 @@ blueprint:
 
     Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. Percentage and binary battery sensors are supported. The sensor re-evaluates on a set cadence.
 
-    Its companion, **Battery Sentinel - Not Reporting**, catches the device that stopped reporting or froze at its last value. Build both for full coverage.
+    Its companion, **Entity Sentinel**, catches any entity that stopped reporting, went unavailable, or froze at its last value. Build both for full coverage.
 
     An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
 
@@ -87,10 +96,10 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.4
+    1.0.0-alpha.5
   author: James Lander (xeazy.com)
   domain: template
-  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel_low.yaml
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
@@ -224,7 +233,7 @@ blueprint:
         sensor_name:
           name: Sensor name
           description: The name for the sensor this blueprint creates.
-          default: Battery Sentinel Low
+          default: Battery Sentinel
           selector:
             text:
               multiple: false
@@ -233,7 +242,7 @@ blueprint:
           name: Unique ID
           description: 'A unique id so the sensor is registered and you can rename
             it or place it in an area from the interface. Make it distinct for every
-            sensor you build, for example battery_sentinel_low.
+            sensor you build, for example battery_sentinel.
 
             '
           selector:
@@ -382,9 +391,9 @@ action:
   - action: system_log.write
     data:
       level: info
-      logger: battery_sentinel_low
+      logger: battery_sentinel
       message: >-
-        Battery Sentinel Low @ {{ result.last_evaluated }} | monitored: {{
+        Battery Sentinel @ {{ result.last_evaluated }} | monitored: {{
         result.total_monitored }} | low: {{ result.state }}{% for d in
         result.devices %} | {{ d.name }} {{ ('(' ~ d.level | round(0) ~ '%)')
         if d.level is not none else '(binary on)' }} [{{ d.entity_id }}]{%

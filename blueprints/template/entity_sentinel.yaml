@@ -1,7 +1,7 @@
 # Copyright (C) 2026 James Lander, The Thinking Home
 # Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
 # Entity Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
-#   Article: https://xeazy.com/battery-sentinel-blueprint/
+#   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
 # Entity Sentinel watches the entities you name and flags any that have gone quiet,
 # by either of two checks, chosen automatically per entity:
@@ -45,6 +45,13 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.0-alpha.7.1 - Restored never-reported flagging dropped in alpha.7. An
+#           entity (or device) with no last_reported anywhere is flagged frozen
+#           with last_seen null and age 'never reported', matching the old
+#           not-reporting engine. It is held during the startup grace window like
+#           the unavailable list, since a slow integration may legitimately not
+#           have reported yet just after a restart. Added trigger aliases for
+#           legible YAML.
 #   1.0.0-alpha.7 - Rewrote the engine from battery not-reporting into the two-mode
 #           entity liveness monitor described above: entity-level unavailable with a
 #           duration debounce derived live from last_changed, device-level freeze
@@ -75,7 +82,7 @@ blueprint:
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-    - 📖 [Read the article](https://xeazy.com/battery-sentinel-blueprint/) - the design and worked examples.
+    - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprint/) - the design and worked examples.
     - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) - import instructions, parameters, and attribute reference.
     - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
@@ -98,7 +105,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.7
+    1.0.0-alpha.7.1
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -398,6 +405,16 @@ variables:
               'age': relative_time(hb.latest)
             }] -%}
           {%- endif -%}
+        {%- elif settled -%}
+          {%- set fl.items = fl.items + [{
+            'name': ename,
+            'entity_id': eid,
+            'area': earea,
+            'reason': 'frozen',
+            'since': none,
+            'last_seen': none,
+            'age': 'never reported'
+          }] -%}
         {%- endif -%}
       {%- endif -%}
     {%- endfor -%}
@@ -418,12 +435,15 @@ variables:
 
 trigger:
 - trigger: time_pattern
+  alias: Re-evaluate on the cadence interval
   hours: '*'
   minutes: !input scan_interval
 - trigger: homeassistant
+  alias: Latch the startup grace boot time on Home Assistant start
   event: start
   id: ha_start
 - trigger: state
+  alias: Manual refresh button press
   entity_id: !input refresh_button
   id: manual_refresh
 action:

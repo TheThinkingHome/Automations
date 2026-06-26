@@ -45,6 +45,23 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.1-beta - Three fixes from the pre-public adversarial review.
+#           (1) Area and device sweeps no longer silently skip a device that
+#           exposes no priority device_class. The representative election is now
+#           tiered: a priority device_class still wins, then the device's primary
+#           function domain (light, switch, lock, cover, fan, climate, and the rest),
+#           then mains telemetry (power, energy), then any non-diagnostic entity, so
+#           smart plugs, bulbs, and relays are caught instead of invisibly dropped.
+#           A device whose only entities are configuration or diagnostic (an update
+#           or number entity alone) is still skipped, as there is nothing to monitor.
+#           (2) An entity that has genuinely never reported is now flagged with its
+#           own reason, never_reported, instead of being mislabeled frozen, and it
+#           counts with the entity-level failures rather than the device-freeze count.
+#           Detection is unchanged: a never-reporting device still surfaces.
+#           (3) Added an ok boolean attribute, true only when the sensor is
+#           functioning and false during setup_error, so a downstream automation can
+#           gate on ok rather than doing integer math on the state (int('setup_error')
+#           silently evaluates to 0, which would read a broken sensor as healthy).
 #   1.0.0-beta - First beta. The two-mode liveness engine: entity-level
 #           unavailable/unknown/missing with a duration debounce, device-level
 #           freeze against the freshest device report over a lookback, auto-routed
@@ -103,7 +120,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-beta
+    1.0.1-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -355,18 +372,33 @@ variables:
         {%- endfor -%}
       {%- endif -%}
     {%- endfor -%}
+    {%- set primary_domains = ['binary_sensor', 'sensor', 'light', 'switch', 'lock', 'cover', 'fan', 'climate', 'vacuum', 'lawn_mower', 'water_heater', 'humidifier', 'media_player', 'camera', 'valve', 'siren', 'device_tracker'] -%}
+    {%- set telemetry_dc = ['power', 'energy', 'current', 'voltage', 'apparent_power', 'power_factor', 'illuminance'] -%}
+    {%- set junk_domains = ['update', 'button', 'number', 'select', 'text', 'image', 'scene', 'configurator'] -%}
     {%- for d in devset.ids -%}
       {%- set chosen = namespace(eid=none, rank=999) -%}
+      {%- set fb = namespace(primary=none, telemetry=none, any=none) -%}
       {%- for de in device_entities(d) -%}
+        {%- set dom = de.split('.')[0] -%}
         {%- set dc = state_attr(de, 'device_class') -%}
         {%- set r = priority.index(dc) if dc in priority else 999 -%}
         {%- if r < chosen.rank -%}
           {%- set chosen.rank = r -%}
           {%- set chosen.eid = de -%}
         {%- endif -%}
+        {%- if fb.primary is none and dom in primary_domains and dc not in telemetry_dc -%}
+          {%- set fb.primary = de -%}
+        {%- endif -%}
+        {%- if fb.telemetry is none and dc in telemetry_dc -%}
+          {%- set fb.telemetry = de -%}
+        {%- endif -%}
+        {%- if fb.any is none and dom not in junk_domains -%}
+          {%- set fb.any = de -%}
+        {%- endif -%}
       {%- endfor -%}
-      {%- if chosen.eid is not none -%}
-        {%- set rep.ents = rep.ents + [chosen.eid] -%}
+      {%- set elected = chosen.eid if chosen.eid is not none else (fb.primary if fb.primary is not none else (fb.telemetry if fb.telemetry is not none else fb.any)) -%}
+      {%- if elected is not none -%}
+        {%- set rep.ents = rep.ents + [elected] -%}
       {%- endif -%}
     {%- endfor -%}
 
@@ -458,7 +490,7 @@ variables:
             'name': ename,
             'entity_id': eid,
             'area': earea,
-            'reason': 'frozen',
+            'reason': 'never_reported',
             'since': none,
             'last_seen': none,
             'age': 'never reported'
@@ -473,6 +505,7 @@ variables:
     {{
       {
         'state': 'setup_error',
+        'ok': false,
         'error': error_msg,
         'uptime_status': uptime_status,
         'total_monitored': 0,
@@ -488,11 +521,12 @@ variables:
     {{
       {
         'state': flagged | length,
+        'ok': true,
         'error': '',
         'uptime_status': uptime_status,
         'total_monitored': monitored | length,
         'devices': flagged,
-        'unavailable_count': (flagged | selectattr('reason', 'in', ['unavailable', 'unknown', 'missing']) | list | length),
+        'unavailable_count': (flagged | selectattr('reason', 'in', ['unavailable', 'unknown', 'missing', 'never_reported']) | list | length),
         'frozen_count': (flagged | selectattr('reason', 'eq', 'frozen') | list | length),
         'boot_time': boot_dt.isoformat(),
         'settled': settled,
@@ -524,7 +558,7 @@ action:
       level: info
       logger: entity_sentinel
       message: >-
-        Entity Sentinel v1.0.0-beta @ {{ result.last_evaluated }} | state: {{
+        Entity Sentinel v1.0.1-beta @ {{ result.last_evaluated }} | state: {{
         result.state }} | uptime_status: {{ result.uptime_status }}{% if
         result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
         result.settled }} | boot: {{ result.boot_time }} | monitored: {{
@@ -541,6 +575,7 @@ sensor:
     {% if result.state == 'setup_error' %}mdi:cog-off{% elif result.state | int(0)
     > 0 %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
   attributes:
+    ok: '{{ result.ok }}'
     error: '{{ result.error }}'
     uptime_status: '{{ result.uptime_status }}'
     total_monitored: '{{ result.total_monitored }}'

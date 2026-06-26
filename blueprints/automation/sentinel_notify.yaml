@@ -4,6 +4,17 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.6-beta - Two fixes from a third adversarial review, both in the upstream-broken
+#           handling added in 1.0.5. First, an upstream sensor that is unavailable or
+#           unknown (its template integration failed to load, or it was deleted) is now
+#           treated as a broken monitor and alerted, where before it slipped past the
+#           setup_error and ok:false checks and its missing device list was read as
+#           all-clear, dismissing the warning card and going silent on a dead sensor.
+#           Second, the multi-sensor error string is now joined with a comma instead of
+#           " || ", which collided with the "||" delimiter used between the stored
+#           fingerprint and its timestamp; when two sensors broke at once, the split on
+#           "||" truncated the stored fingerprint, so it never matched and re-alerted
+#           every cycle forever.
 #   1.0.5-beta - Two fixes from a second adversarial review. First, a broken upstream
 #           Sentinel is now surfaced, not hidden: if a source sensor reports
 #           setup_error or ok:false (for example its uptime sensor was deleted), the
@@ -130,7 +141,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.5-beta
+    1.0.6-beta
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -322,7 +333,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.5-beta
+  version: 1.0.6-beta
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -357,13 +368,15 @@ variables:
     {% set ns = namespace(bad=[]) %}
     {% if ok %}
       {% for s in source_sensors %}
-        {% if states(s) == 'setup_error' or state_attr(s, 'ok') == false %}
+        {% if states(s) in ['unavailable', 'unknown'] %}
+          {% set ns.bad = ns.bad + [s ~ ' is ' ~ states(s)] %}
+        {% elif states(s) == 'setup_error' or state_attr(s, 'ok') == false %}
           {% set msg = state_attr(s, 'error') | default('') %}
-          {% set ns.bad = ns.bad + [s ~ (': ' ~ msg if msg else '')] %}
+          {% set ns.bad = ns.bad + [s ~ (': ' ~ msg if msg else ' reports a setup error')] %}
         {% endif %}
       {% endfor %}
     {% endif %}
-    {{ ns.bad | join(' || ') }}
+    {{ ns.bad | join(', ') }}
 
   upstream_broken: "{{ ok and upstream_error != '' }}"
 

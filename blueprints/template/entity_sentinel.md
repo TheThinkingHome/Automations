@@ -1,8 +1,8 @@
-# Entity Sentinel (Alpha)
+# Entity Sentinel (Beta)
 
 A Home Assistant template blueprint that watches your critical entities and reports any that have gone quiet, the device that dropped offline and the one frozen at its last value, as a sensor anything in your system can read.
 
-> **Status.** Entity Sentinel is in alpha, under active testing on a live system. The two-mode engine described here is the engine you import today.
+> **Status.** Entity Sentinel is in beta. The two-mode engine described here is the engine you import today. It is an advanced blueprint: more capable than most, and more demanding to set up. It requires the uptime integration and a deliberately chosen grace period (both covered below). The power is real, and so is the configuration it asks of you. If you want a simpler starting point, build it against a small explicit list first, then widen.
 
 A device going quiet is rarely announced. A Zigbee sensor drops off the mesh, an integration stops serving one entity, a device hangs and freezes at its last value while still showing a healthy state. None of these throws an error, and a value check sails right past the frozen one because the value still looks fine. Entity Sentinel asks the question that catches all of them: has this entity actually reported lately, and is it still present?
 
@@ -30,10 +30,8 @@ It asks two questions, at two levels, because the right level is different for e
 The two run together, picked per entity with no configuration. Unavailable always applies. Freeze applies when the device exposes something whose timestamp advances; if nothing on the device does, unavailable covers it alone. An entity can be flagged by both for different reasons.
 
 - **Structured output.** Each flagged entity carries its name, area, the `reason` it was flagged, how long it has been in that state, and its last-seen time with a human-readable age.
-- **A grace period after a restart.** A restart briefly reads much of the mesh as `unavailable` while it repopulates. For a short window after Home Assistant starts (`startup_grace_seconds`), flagging is held back so a restart never reports a false fleet-wide outage.
+- **A grace period after a restart.** A restart briefly reads much of the mesh as `unavailable` while it repopulates. For a window after Home Assistant starts (`startup_grace_seconds`, measured from the uptime sensor), flagging is held back so a restart never reports a false fleet-wide outage.
 - **Scope by entity, label, area, or device**, with include and exclude, and exclude always wins.
-
-This is an alpha, under active testing on a live system. Do not rely on it for anything load-bearing until it graduates.
 
 Full write-up and worked examples: <https://xeazy.com/battery-entity-sentinel-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
 
@@ -46,6 +44,14 @@ The **unavailable** check reads the entity's own state. If it is `unavailable` o
 The **freeze** check reads timestamps, not states. It resolves the device behind the entity and takes the freshest report across all of that device's entities. If even the freshest is older than the lookback window, the device is frozen and the entity is flagged. Reading the whole device defeats the sticky-entity trap: a door contact shut for two days has not changed, but its link-quality or battery entity is still checking in, so the device reads alive. The freeze check asks "has anything on this device reported lately," which is only false when the device is genuinely silent.
 
 What freeze reads is "did the device send anything," not "did its value change." A temperature sensor reporting the same reading every minute is alive; a freeze check that watched only value changes would wrongly flag it. Reading the report timestamp, not the value, is what keeps a steady-but-live device off the list.
+
+## Before You Start: the Uptime Requirement
+
+Entity Sentinel measures its startup grace from a Home Assistant uptime sensor, so it needs one, in timestamp mode. This is the one hard dependency the blueprint adds, and it exists for a good reason: it is the reliable way to know how long Home Assistant has been running, which is what the grace period depends on.
+
+Add the **Uptime** integration if you do not have it: Settings, Devices & Services, Add Integration, Uptime. It creates `sensor.uptime`, whose state is a timestamp like `2026-06-26T14:56:59+00:00` (the moment Home Assistant started). That timestamp form is what the blueprint needs.
+
+If the uptime sensor is missing, or is set to a numeric mode instead of a timestamp, the Sentinel does not guess or limp along. It reports a `setup_error` state with a message telling you exactly what to fix, and it watches nothing until you fix it. This is deliberate: a monitor that is itself misconfigured should say so loudly, not fail quietly. See the `setup_error` details under the output section.
 
 ## Import the Blueprint
 
@@ -71,6 +77,7 @@ use_blueprint:
   input:
     sensor_name: Entity Sentinel
     unique_id: entity_sentinel
+    uptime_sensor: sensor.uptime
     include_target:
       label_id:
         - liveness_watch
@@ -102,11 +109,13 @@ template:
       input:
         sensor_name: Entity Sentinel
         unique_id: entity_sentinel
+        uptime_sensor: sensor.uptime
         freeze_lookback:
           hours: 6
         unavailable_debounce:
           minutes: 3
         scan_interval: "/2"
+        startup_grace_seconds: 240
         include_target:
           label_id:
             - liveness_watch
@@ -118,7 +127,19 @@ If you also build Battery Sentinel, the natural choice is to put both `use_bluep
 
 A brand-new package file needs a full Home Assistant restart to register the first time. After that, adding more `use_blueprint` blocks to the same file only needs a quick reload through Developer Tools, YAML, Reload Template Entities.
 
-When it comes up you will have a sensor named after `sensor_name`. Watch it in Developer Tools, States. The state is the count, and the `devices` attribute lists the flagged entities.
+When it comes up you will have a sensor named after `sensor_name`. Watch it in Developer Tools, States. The state is the count, and the `devices` attribute lists the flagged entities. If you see `setup_error` instead of a number, read the `error` attribute, it almost always means the uptime sensor needs attention.
+
+## Setting the Grace Period
+
+`startup_grace_seconds` is the one number on this blueprint you should set deliberately rather than leave at its default. It is the window after Home Assistant starts during which flagging is held back, so a restart, while the system and the mesh come up, does not report a false outage.
+
+Because the grace is measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's **full** startup, not just part of it:
+
+1. **Boot time.** How long from process start until Home Assistant and its integrations are up.
+2. **Mesh settle time.** How long after that until your Zigbee or Z-Wave devices finish re-routing and report in.
+3. **A margin** on top, so a slightly slow morning does not slip past the window.
+
+Watch your own startup once and add the pieces up. A fast mini-PC may settle in three to four minutes; a slower hub with a large Z-Wave network may need five or six. The default is `240` (four minutes), a reasonable starting point for a small-to-medium system, but it is a starting point, not a universal answer. Set it too short and a restart can flash a brief false outage before the mesh finishes; set it generously and the only cost is that a genuine outage in the first few minutes after a restart waits until the window closes to show.
 
 ## Scoping: Choosing What the Sensor Watches
 
@@ -134,13 +155,15 @@ Name entities directly, or tag them with a label such as `liveness_watch`, and e
             - liveness_watch
 ```
 
-A label is the natural way to run this: tag your critical entities once, and the sensor follows the tag.
+A label is the natural way to run this: tag your critical entities once, and the sensor follows the tag. Labels expand fully, a label on an entity, a label on a device, and a label on an area all resolve to the underlying entities, on both the include and the exclude side.
 
 ### Areas and Devices: Convenient, Tuned for Freeze
 
 Point the scope at an area or a device, and the sensor sweeps it. Because an area or device holds many entities, a sweep does not watch all of them. It picks one representative entity per device, the behaviorally meaningful one, chosen by a priority order: occupancy and motion first, then door, window, opening, garage, and lock, then moisture, smoke, gas, and carbon monoxide, then temperature and humidity, then connectivity, and battery last. A device with no such entity is skipped.
 
 This is tuned for freeze, and it is correct for freeze, because freeze resolves to the device anyway, the representative is just the anchor. For the unavailable check it is approximate: the sweep watches the representative's availability as a stand-in for the device, so if the integration drops a different entity on that device while the representative stays present, the sweep does not see it.
+
+**The area-sweep boundary to know:** an area or device sweep collects entities that belong to a hardware device. A standalone helper, a virtual boolean, a template sensor, or an unmapped integration that lives in an area but has no device behind it is not picked up by the sweep. Those have nothing to sweep to. If you need to watch one, name it explicitly or give it a label; do not rely on the area sweep to find it.
 
 **The rule of thumb:** use an area or device scope for broad freeze coverage of a room or a device. For precise unavailable coverage of specific entities, name them in a list or tag them with a label, which are watched exactly as given.
 
@@ -160,6 +183,10 @@ This is tuned for freeze, and it is correct for freeze, because freeze resolves 
             - sensor.nursery_humidity
 ```
 
+### Trusted Entities and Swept Devices Do Not Double-Count
+
+If you both name an entity explicitly (or label it) and sweep the area or device it lives on, the entity is watched once, through the explicit name, not twice. The dedupe works at the device level: when a device is already covered by a trusted entity, the sweep does not add a second representative from the same device. So a dead device counts once, no matter how many of your scope rules happen to reach it.
+
 ## What the Sensor Looks Like
 
 With one entity unavailable and one device frozen:
@@ -168,6 +195,8 @@ With one entity unavailable and one device frozen:
 sensor.entity_sentinel
 State: 2
 
+error: ''
+uptime_status: '2026-06-24T06:00:00-05:00'
 total_monitored: 14
 last_evaluated: '2026-06-24T10:15:00-05:00'
 devices:
@@ -191,12 +220,14 @@ The state is the count of flagged entities, the number you badge or trigger on. 
 
 **What each field means:**
 
-- **`state`** the number of entities currently flagged. Zero means everything in scope is reporting normally.
+- **`state`** the number of entities currently flagged, or the string `setup_error` if the uptime sensor is missing or misconfigured (see below). Zero means everything in scope is reporting normally.
+- **`error`** empty in normal operation. When `state` is `setup_error`, this carries the human-readable reason and what to fix.
+- **`uptime_status`** what the engine read from the uptime sensor: the timestamp when valid, or the bad value (or `unknown`/`unavailable`) when not. This is a diagnostic, so you can confirm at a glance that the grace clock is healthy.
 - **`total_monitored`** how many entities fell within the scope after include, exclude, and the per-device representative sweep. A scope problem (a mistyped label, a device with nothing to watch) shows up here as a count lower than you expect.
 - **`unavailable_count`** how many of the flagged entities failed the entity-level check (`unavailable`, `unknown`, or `missing`).
 - **`frozen_count`** how many failed the device-level freeze check. These two counts always sum to the state.
 - **`devices`** the list of flagged entities, each with the fields below.
-- **`boot_time`** when the startup grace window last began, used internally to gate flagging after a restart.
+- **`boot_time`** the timestamp the grace window is measured from, taken from the uptime sensor. `null` during a `setup_error`.
 - **`last_evaluated`** the timestamp of the most recent evaluation, so you can confirm the sensor is still ticking.
 
 **Each flagged entity in `devices` carries:**
@@ -218,19 +249,30 @@ The state is the count of flagged entities, the number you badge or trigger on. 
 
 The first three come from the entity-level check and add into `unavailable_count`; `frozen` comes from the device-level check and is `frozen_count`. A consumer can tell a newly-offline entity from a long-dead one by comparing `since` to the previous evaluation, no separate list needed.
 
+### The `setup_error` State
+
+If the uptime sensor named in `uptime_sensor` is missing, unavailable, or not a timestamp, the sensor's state reads `setup_error` instead of a number, with a distinct `mdi:cog-off` icon. In that state it watches nothing, `total_monitored` is 0 and `devices` is empty, so it never produces a false reading off a broken clock. The `error` attribute tells you what went wrong:
+
+- **uptime sensor not found or unavailable** the entity id in `uptime_sensor` does not exist, or is currently `unavailable`/`unknown`. Check the name, or add the Uptime integration.
+- **uptime sensor is not a timestamp** the entity exists but its state is a number or some other non-timestamp value. Set the Uptime integration to its timestamp form.
+
+The sensor heals itself the moment the uptime sensor is fixed; the next evaluation reads a valid timestamp and resumes normally. If you build a dashboard badge on the state, treat any non-numeric value as "needs attention," since `setup_error` is a string.
+
 ## Parameters
 
 | Input | Required | Default | Accepted values | What it does |
 | --- | --- | --- | --- | --- |
 | `unique_id` | Yes | none | any short text id, distinct per sensor | Registers the entity so you can rename it or place it in an area. Reusing one collides two sensors. |
 | `include_target` | Yes | empty | entities, labels, areas, or devices | Which entities to watch. Explicit entities and labels are watched precisely for both checks; areas and devices are swept, one representative entity per device, tuned for freeze. |
-| `exclude_target` | No | empty | entities, labels, areas, or devices | Which to leave out. Exclude always wins over include. |
+| `uptime_sensor` | Yes | `sensor.uptime` | a `sensor` in timestamp mode | The Home Assistant uptime sensor the startup grace is measured from. Must be a timestamp (its state is an ISO time, not a number). If missing or not a timestamp, the sensor reports `setup_error`. |
+| `exclude_target` | No | empty | entities, labels, areas, or devices | Which to leave out. Exclude always wins over include. Labels expand on this side too. |
 | `freeze_lookback` | No | `{hours: 6}` | a duration | How long a device may go without reporting anything before it counts as frozen. Set it to a little longer than the entity's normal reporting interval: minutes for an active sensor, hours or days for a quiet one. |
 | `unavailable_debounce` | No | `{minutes: 3}` | a duration | How long an entity must stay `unavailable` or `unknown` before it is flagged. Absorbs brief blips on flaky WiFi or cloud devices. |
 | `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/5`, `/10`, `/15`, `/30` | How often the sensor re-evaluates, in minutes. This is the only latency knob: an entity is caught within one tick. A short cadence keeps detection prompt. |
-| `startup_grace_seconds` | No | `120` | 0 to 900 seconds | After Home Assistant starts, how long to hold flagging back while the mesh repopulates, so a restart does not report a false outage. Set to 0 to disable. |
+| `startup_grace_seconds` | No | `240` | 0 to 1800 seconds | Measured from the uptime sensor, how long after Home Assistant starts to hold flagging back while the system and mesh come up. Must cover your full boot plus mesh-settle time plus a margin; see "Setting the Grace Period." Set to 0 to disable. |
+| `refresh_button` | No | `input_button.none` | an `input_button` | An optional button; pressing it re-evaluates the sensor immediately. Point several Sentinel sensors at one button to refresh them all at once. It re-scans; it cannot force a device to report. |
 | `sensor_name` | No | `Entity Sentinel` | any text | The friendly name, and what the entity id is built from. |
-| `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, naming the flagged entities and why. |
+| `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, with the blueprint version, the state, the uptime status, and the flagged entities and why. |
 
 ## The Sticky-Entity Caveat
 
@@ -246,15 +288,7 @@ Three ways to handle it, in order of preference:
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0-alpha.7.2 | Fixed missing-entity detection. Home Assistant's `states(eid)` returns the string `unknown` for an entity that does not exist, never `None`, so a deleted or mistyped entity was being labeled `unknown` instead of `missing`. The engine now keys on the state object (`states[eid]`), which is `None` only when the entity truly does not exist: absent reports `missing`, present-but-unknown reports `unknown`. Caught by a live test with fictitious entities. |
-| 1.0.0-alpha.7.1 | Restored never-reported flagging. An entity or device with no report on record is flagged `frozen` with `last_seen: null` and `age: never reported`, held during the startup grace window. Added trigger aliases. |
-| 1.0.0-alpha.7 | Rewrote the engine into the two-mode liveness monitor: entity-level unavailable with a duration debounce read live from `last_changed`, device-level freeze against the freshest `last_reported` over a duration lookback, automatic per-entity routing, representative-per-device sweeping for area and device scopes by a `device_class` priority order, trusted-entity precedence with dedupe, the startup grace gate (unavailable only, by design), and an optional refresh button. The battery `device_class` filter is gone; any entity can be watched. Replaced `report_hour` and `lookback_hours` with `scan_interval`, `freeze_lookback`, and `unavailable_debounce`. |
-| 1.0.0-alpha.6 | Renamed from Battery Sentinel - Not Reporting to Entity Sentinel, ahead of the engine work, so the file, name, logger, and docs are settled before the two-mode liveness rewrite. Scaffolding rename only: the importable engine is still the battery not-reporting logic from alpha.5. |
-| 1.0.0-alpha.5 | A device with no report timestamp anywhere, one that has never reported, is now flagged rather than skipped, carrying `last_seen: null` and `age: never reported`. A device that has never reported is the strongest not-reporting case there is, and this also surfaces a typo'd or phantom entity id instead of silently ignoring it. |
-| 1.0.0-alpha.4 | Area and device scopes re-filtered to `device_class: battery`, matching Battery Sentinel. An area sweeps in every entity it holds; without the filter, non-battery entities were treated as monitored. Explicit entity lists and labels stay trusted. |
-| 1.0.0-alpha.3 | Removed the `scan_interval` input from the battery engine. The sensor fired once a day at `report_hour` plus on Home Assistant start, instead of waking on a minute interval and doing nothing on most wakes. |
-| 1.0.0-alpha.2 | Judge liveness by the device, not the battery entity. A battery reading is sticky and may report only when the percentage changes, so the old per-entity check false-flagged healthy devices. The freshest report across all of a device's entities became the heartbeat. |
-| 1.0.0-alpha | Initial build. Single-purpose stopped-reporting sensor split from the combined Battery Sentinel blueprint. Judged once a day against a lookback window, catching the device that freezes at its last value without going unavailable. Include and exclude by entity, area, device, or label, with exclude winning. Optional debug log line. Under active testing on a live system. |
+| 1.0.0-beta.1 | First beta. The two-mode liveness engine: entity-level unavailable/unknown/missing with a duration debounce, device-level freeze against the freshest device report over a lookback, auto-routed per entity. Scope by entity, label, area, or device, with include and exclude (exclude wins, labels expand on both sides), and device-level dedupe so an entity reached by both a name and a sweep is watched once. Representative-per-device sweeping by a `device_class` priority order. Startup grace measured from a required uptime sensor (timestamp mode), so it is reliable across restarts and reloads and covers slow-booting hubs; a missing or non-timestamp uptime sensor yields a loud `setup_error` state with `error` and `uptime_status` attributes, and the sensor fails safe (watches nothing) until fixed. Timezone-safe grace math. Optional refresh button. Structured `devices` output with `reason`, `since`, `last_seen`, and a human-readable `age`. Hardened across an extensive adversarial test suite and proven on a live system, including a real power-loss outage, the device-dedupe collapse, the full grace cycle off the uptime clock, and the `setup_error` path end to end. |
 
 ## Putting the Signal to Work
 

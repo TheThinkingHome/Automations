@@ -102,6 +102,8 @@ By design, the change is tracked at the level of which batteries are low, not th
 
 Because the notification uses a tag, even when it does fire it replaces the previous one in place rather than stacking a pile of alerts.
 
+If one of the source Sentinels is itself broken (its uptime sensor was deleted, or it has gone unavailable), the companion sends a separate "Sentinel not working" notification, on its own tag, so it does not interfere with the battery report. A broken monitor never silences the healthy ones: low batteries on the working Sentinels are still reported in the same run.
+
 ## Keeping It Calm
 
 The companion is only as quiet as the sensor you point it at. For batteries this is rarely an issue, batteries cross the threshold one at a time, so notifications are naturally infrequent. The advice matters more for the Entity mode (coming later): watch the handful of things whose silence is a real problem, not every entity in the house, because a sensor flagging dozens of flapping entities will notify you about churn no matter how good the change detection is. A tight, deliberate scope on the Sentinel is what keeps the notifications meaningful.
@@ -120,6 +122,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.8-beta | The broken-Sentinel alert is now its own notification with its own tag and no longer halts the run, so a low battery on a healthy Sentinel is still reported when another Sentinel is down. Change-detection memory is now two hashed slots in one helper, so no upstream error text can corrupt the stored value or cause a re-alert loop. The offline-wins de-duplication uses explicit fields rather than a dictionary merge. |
 | 1.0.7-beta | When two source Sentinels with overlapping scopes report the same physical device in different states (low from one, offline from the other), the companion now collapses it to one entry instead of double-counting with contradictory lines. Dedupe is by device, and offline wins over low, resolved order-independently. |
 | 1.0.6-beta | Two fixes in the upstream-broken handling. An upstream sensor that is unavailable or unknown (integration failed to load, or it was deleted) is now alerted as a broken monitor, rather than slipping past the checks and being read as all-clear. The multi-sensor error string is joined with a comma instead of "||", which had collided with the stored fingerprint delimiter and caused an endless re-alert loop when two sensors broke at once. |
 | 1.0.5-beta | Two fixes from a second adversarial review. A broken upstream Sentinel is now surfaced rather than hidden: if a source sensor reports a setup error (for example its uptime sensor was deleted), the companion sends a distinct "Sentinel not working" alert and stops, instead of reading the empty device list as all-clear and dismissing the warning. The alert is change-detected, firing once on break and clearing on recovery. The 1.0.4 source-sensor trigger condition compared only the count, which missed a real change when one battery cleared and another dropped in the same window; it now compares the device list, so a same-count swap is caught while attribute churn is still ignored. |

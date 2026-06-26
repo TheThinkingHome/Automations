@@ -59,10 +59,14 @@ blueprint:
 
     - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprints/) - the design and worked examples.
     - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) - setup, parameters, and the change-detection behavior.
+    - 🔋 [Battery Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml) - the sensor that counts low batteries.
+    - 📡 [Entity Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml) - the sensor that catches entities gone quiet.
     - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
 
     ---
+
+    This is a COMPANION to the Sentinel sensor blueprints. It does nothing on its own: build a **Battery Sentinel** or **Entity Sentinel** first (each makes a sensor), then build this to notify from it. The two source blueprints are linked above.
 
     Reads the rich attributes a Sentinel exposes and notifies you about what is actually wrong, by name, with the detail, not just a count. It notifies only when the situation changes, so it does not flood you every cycle.
 

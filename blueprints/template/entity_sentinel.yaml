@@ -45,90 +45,36 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
-#   1.0.0-alpha.9 - Hardened the uptime grace math against a timezone crash and
-#           made the setup_error path a true early-exit. A user-supplied uptime
-#           sensor reporting a naive timestamp (no UTC offset, e.g. a hand-rolled
-#           template sensor) parsed as valid, then crashed the whole template on
-#           the aware-minus-naive datetime subtraction (TypeError), which would
-#           have shown the sensor as unavailable instead of catching it in the
-#           setup_error net. The grace comparison now uses epoch math
-#           (as_timestamp), which handles naive and aware uniformly and never
-#           throws. Also wrapped the scope-resolution and liveness loops in an
-#           uptime_ok guard so a misconfigured uptime sensor skips all that work
-#           instead of computing a full liveness matrix and discarding it.
-#   1.0.0-alpha.8 - Reworked the startup grace to measure from a required uptime
-#           sensor (timestamp mode) instead of the trigger-template this object.
-#           The old approach read boot_time back from this.attributes, which is
-#           unreliable in trigger-template renders (HA #115585), and it also left a
-#           gap on slow-booting hubs where an early time_pattern tick could run
-#           before the homeassistant start event fired, with the mesh still
-#           re-routing, and wrongly read as settled. Measuring from sensor.uptime
-#           (process start), read fresh every render, closes both: it is immune to
-#           #115585 and reflects true elapsed time since boot regardless of when
-#           start fires. Grace must now be set to cover the hub''s full boot plus
-#           mesh-settle time (default raised 120 -> 240). New REQUIRED input
-#           uptime_sensor (default sensor.uptime). A missing or non-timestamp uptime
-#           sensor now yields a loud state 'setup_error' with an error attribute and
-#           a uptime_status attribute, and the sensor computes nothing until fixed
-#           (fail loud and safe, no false flags). setup_error is a reusable
-#           precondition-failure state for future required-input checks. ha_start is
-#           retained only as an evaluation trigger.
-#   1.0.0-alpha.7.4 - Expanded the debug log line: added the blueprint version as
-#           the first token (so a pasted support log shows which version produced
-#           it), plus settled, boot_time, and per-entity area, since, and last_seen
-#           alongside the existing name, entity_id, reason, and age. The verbose
-#           per-entity timestamps are a development aid and may be trimmed at beta;
-#           the version token stays. No engine logic change. NOTE: the version
-#           string in the log message is hardcoded and must be bumped together with
-#           this changelog on every release.
-#   1.0.0-alpha.7.3 - Fixed asymmetric device-level deduplication (beta blocker B).
-#           A swept representative was dropped only when its exact entity_id was
-#           already trusted. If a user trusted a low-priority sibling (say a
-#           temperature entity) while the sweep elected a different high-priority
-#           sibling (say occupancy) on the SAME device, both survived and a single
-#           dead device counted twice. The dedupe now resolves each trusted
-#           entity's device and drops any swept representative whose device is
-#           already covered, so a device reached by both a trusted entity and a
-#           sweep is watched once, through the trusted entity.
-#   1.0.0-alpha.7.2 - Fixed missing-entity detection. HA's states(eid) returns the
-#           string 'unknown' for an entity that does not exist, never None, so the
-#           previous check labeled a deleted or mistyped entity 'unknown' instead of
-#           'missing'. Now keys on states[eid] (the state object), which is None only
-#           when the entity truly does not exist: absent -> reason 'missing', present
-#           but unknown -> reason 'unknown'. Caught by live test with fictitious
-#           entities.
-#   1.0.0-alpha.7.1 - Restored never-reported flagging dropped in alpha.7. An
-#           entity (or device) with no last_reported anywhere is flagged frozen
-#           with last_seen null and age 'never reported', matching the old
-#           not-reporting engine. It is held during the startup grace window like
-#           the unavailable list, since a slow integration may legitimately not
-#           have reported yet just after a restart. Added trigger aliases for
-#           legible YAML.
-#   1.0.0-alpha.7 - Rewrote the engine from battery not-reporting into the two-mode
-#           entity liveness monitor described above: entity-level unavailable with a
-#           duration debounce derived live from last_changed, device-level freeze
-#           with a duration lookback against the freshest last_reported, automatic
-#           per-entity routing, representative-per-device sweeping for area/device/
-#           label-on-device scopes with a device_class priority order, trusted-entity
-#           precedence with dedupe, the startup grace gate ported from Battery
-#           Sentinel (unavailable only, by design), and an optional refresh button.
-#           Output per flagged entity: name, entity_id, area, reason
-#           (unavailable/unknown/missing/frozen), since, last_seen, age. State is the
-#           count. The battery device_class filter is gone; any entity can be watched.
-#           Replaces report_hour/lookback_hours/once-daily with scan_interval cadence,
-#           freeze_lookback, and unavailable_debounce.
-#   1.0.0-alpha.6 - Scaffolding rename from Battery Sentinel - Not Reporting to
-#           Entity Sentinel, engine unchanged (battery not-reporting), ahead of this
-#           rewrite so the file, name, and logger were settled first.
-#   1.0.0-alpha.5 through 1.0.0-alpha - Battery not-reporting lineage (device-freshest
-#           heartbeat, once-daily latch, never-reported flagging, area/device
-#           battery-class filter, initial split from the combined blueprint). See the
-#           Battery Sentinel history for the shared origin.
+#   1.0.0-beta - First beta. The two-mode liveness engine: entity-level
+#           unavailable/unknown/missing with a duration debounce, device-level
+#           freeze against the freshest device report over a lookback, auto-routed
+#           per entity. Scope by entity, label, area, or device with include and
+#           exclude (exclude wins; labels expand to entities, devices, and areas on
+#           both sides). Device-level dedupe so an entity reached by both an explicit
+#           name and a sweep is watched once. Representative-per-device sweeping by a
+#           device_class priority order. Startup grace measured from a REQUIRED
+#           uptime sensor in timestamp mode, read fresh every render, so it is immune
+#           to the trigger-template this-unreliability (HA #115585) and covers
+#           slow-booting hubs where an early cadence tick precedes the start event. A
+#           missing or non-timestamp uptime sensor yields a loud setup_error state
+#           with error and uptime_status attributes; the sensor fails safe (watches
+#           nothing, no false flags) and self-heals once fixed. Timezone-safe grace
+#           math via epoch comparison, so a naive user-supplied uptime timestamp
+#           cannot crash the template. Optional refresh button. Structured devices
+#           output with reason, since, last_seen, and a human-readable age. Hardened
+#           across an extensive adversarial test suite (138 cases) and proven on a
+#           live system: a real power-loss outage, the device-dedupe collapse, the
+#           full grace cycle off the uptime clock, and the setup_error path end to
+#           end. Versioning from here: patch (1.0.1-beta) for fixes, minor
+#           (1.1.0-beta) for features, major (2.0.0-beta) for breaking changes.
+#
+#   Alpha history (1.0.0-alpha through 1.0.0-alpha.9) is preserved in the project
+#   document, not carried here.
 
 blueprint:
-  name: Entity Sentinel (Alpha)
+  name: Entity Sentinel (Beta)
   description: |
-    # Entity Sentinel (Alpha)
+    # Entity Sentinel (Beta)
 
     *One sensor that counts every critical entity that has gone quiet, the one that dropped offline and the one frozen at its last value.*
 
@@ -153,11 +99,11 @@ blueprint:
 
     An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation.
 
-    This is an alpha, under active testing on a live system.
+    This is a beta. It is an advanced blueprint: it requires the uptime integration (timestamp mode) and a startup grace period you set to cover your own boot and mesh-settle time. See the README.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.9
+    1.0.0-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -578,7 +524,7 @@ action:
       level: info
       logger: entity_sentinel
       message: >-
-        Entity Sentinel v1.0.0-alpha.9 @ {{ result.last_evaluated }} | state: {{
+        Entity Sentinel v1.0.0-beta @ {{ result.last_evaluated }} | state: {{
         result.state }} | uptime_status: {{ result.uptime_status }}{% if
         result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
         result.settled }} | boot: {{ result.boot_time }} | monitored: {{

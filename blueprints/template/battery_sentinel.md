@@ -1,4 +1,4 @@
-# Battery Sentinel (Alpha)
+# Battery Sentinel (Beta)
 
 A Home Assistant template blueprint that watches every battery device in the house and reports the ones running low, as a sensor anything in your system can read.
 
@@ -30,13 +30,26 @@ Battery Sentinel counts the batteries at or below a threshold and lists each one
 - **Hysteresis so it does not flap.** A value-hysteresis band keeps a device hovering at the threshold from bouncing in and out of the list. A flagged device stays low until it climbs above the threshold plus a margin, which for a battery only happens when a fresh cell is fitted.
 - **Structured output.** The `devices` list holds objects carrying the device name, area, percentage level, and battery type if available. Every consumer can format them in its own way.
 - **Offline batteries surfaced separately.** Any in-scope battery sitting at `unavailable` or `unknown`, an offline device, an integration that dropped an entity, a typo'd entity id, is not a low battery, so it never lands in the low list. Instead it is reported in its own `unavailable_entities` attribute, with a count in `unavailable_count`. The low state stays clean while you still get a window onto what is currently offline.
-- **A grace period after a restart.** A momentary restart briefly reads most of the mesh as `unavailable` while it repopulates. For a short window after Home Assistant starts (`startup_grace_seconds`, default 120), the unavailable list is held empty so a restart never reports a false fleet-wide outage. The low count is never held; it evaluates live the whole time.
+- **A grace period after a restart, measured from a reliable clock.** A momentary restart briefly reads most of the mesh as `unavailable` while it repopulates. For a window after Home Assistant starts, the unavailable list is held empty so a restart never reports a false fleet-wide outage. That window is measured from a required uptime sensor, which makes it reliable across restarts and reloads; see the next section. The low count is never held; it evaluates live the whole time.
+- **A loud error if it is set up wrong.** If the uptime sensor is missing or misconfigured, or if a threshold or margin value is set to something invalid, the sensor reports a `setup_error` state and does nothing else until you fix it, rather than failing quietly. An `ok` attribute lets your automations tell a working sensor from a broken one.
 - **A manual refresh button.** Point an optional `input_button` at the sensor and a press re-evaluates it on the spot, handy right after you change a battery instead of waiting for the next scan. It re-scans; it cannot make a device report a fresh reading it has not sent yet.
-- **Scope by label, area, device, or entity**, with include and exclude, and exclude always wins. Area and device scopes are filtered to real battery entities; labels and explicit entity lists are trusted as you curated them.
+- **Scope by label, area, device, or entity**, with include and exclude, and exclude always wins. Area and device scopes are filtered to real battery entities; labels expand to every battery entity they cover, whether the label sits on the entity, its device, or its area.
 
-This is an alpha, under active testing on a live system. The design may still change. Do not rely on it for anything load-bearing until it graduates.
+This is a beta. It is an advanced blueprint: it requires the uptime integration in timestamp mode and a startup grace period you set to cover your own boot and mesh-settle time. Read the next two sections before you import.
 
 Full write-up and worked examples: <https://xeazy.com/battery-entity-sentinel-blueprint/>  Questions and discussion: <https://xeazy.com/logbook/>
+
+## Before You Start: the Uptime Requirement
+
+Battery Sentinel needs one thing in place before it will work: a Home Assistant **uptime sensor in timestamp mode**.
+
+The reason is the startup grace period. After a restart, the sensor needs to know how long the system has been up, so it can hold the unavailable list while the mesh comes back. The obvious way to track that, reading the sensor's own last boot time from its attributes, is unreliable: Home Assistant has a long-standing bug ([#115585](https://github.com/home-assistant/core/issues/115585)) where a trigger-based template sensor sometimes cannot read its own attributes during evaluation. Building the grace period on that foundation means it occasionally fails open and floods you with false alerts right after a restart, the exact moment it is supposed to protect.
+
+The uptime sensor sidesteps the whole problem. It is an independent entity whose value, the timestamp the Home Assistant process started, is read fresh on every evaluation and never depends on the sensor's own attributes. It is reliable across restarts, reloads, and the bug.
+
+Most systems already have the uptime sensor. If yours does not, add the **Uptime** integration (Settings, Devices & Services, Add Integration, Uptime). Then make sure the entity is in **timestamp** mode: its state should read like `2026-06-26T14:56:59+00:00`, an ISO timestamp, not a number of days. If it shows a number, change the entity's "displayed unit" or the integration option to timestamp.
+
+If the uptime sensor is missing, unavailable, or not a timestamp, Battery Sentinel will not guess. It reports a `setup_error` state with a message telling you exactly what is wrong, watches nothing, and starts working the moment you fix it.
 
 ## Import the Blueprint
 
@@ -54,20 +67,7 @@ Importing only registers a blueprint. It does not create a sensor yet. After imp
 
 ### The Catch with Template Blueprints
 
-Automation blueprints get a friendly Create automation button right on the Blueprints page. Template blueprints do not. You will not find this in the Create Helper list, and that is expected, not a fault. Template blueprints become real entities through a short piece of YAML called `use_blueprint`. It takes a path to the blueprint and a set of inputs:
-
-```yaml
-use_blueprint:
-  path: TheThinkingHome/battery_sentinel.yaml
-  input:
-    low_threshold: 20
-    sensor_name: Battery Sentinel
-    unique_id: battery_sentinel
-```
-
-`path` is relative to `config/blueprints/template/`, so it is the `TheThinkingHome` folder from the import step plus the filename. `unique_id` is the only required setting; the rest have sensible defaults. Every parameter is laid out in the reference table below.
-
-That block has to sit under Home Assistant's `template:` configuration. The tidy way to do that, and the way that scales, is a package.
+Automation blueprints get a friendly Create automation button right on the Blueprints page. Template blueprints do not. You will not find this in the Create Helper list, and that is expected, not a fault. Template blueprints become real entities through a short piece of YAML called `use_blueprint`. It takes a path to the blueprint and a set of inputs.
 
 ### What a Package Is, and How to Create One
 
@@ -91,6 +91,8 @@ template:
       input:
         low_threshold: 20
         low_clear_margin: 2
+        startup_grace_seconds: 240
+        uptime_sensor: sensor.uptime
         scan_interval: "/2"
         sensor_name: Battery Sentinel
         unique_id: battery_sentinel
@@ -104,36 +106,19 @@ A brand-new package file needs a full Home Assistant restart to register the fir
 
 When it comes up you will have a sensor named after `sensor_name`. Watch it in Developer Tools, States. The state is the count, and the `devices` attribute lists the flagged devices.
 
-## What the Sensor Looks Like
+## Setting the Grace Period
 
-With two cells below the threshold and one battery currently offline:
+The `startup_grace_seconds` value is the one input you should think about rather than accept blindly, because the right number depends on your hardware.
 
-```yaml
-sensor.battery_sentinel
-State: 2
+The grace period covers the gap between Home Assistant starting and your battery devices being fully back online. It is measured from the uptime sensor, which marks when the Home Assistant process started. So the window has to cover your hub's **full** startup: the boot itself, plus the time your Zigbee or Z-Wave mesh takes to repopulate, plus a margin.
 
-total_monitored: 27
-unavailable_count: 1
-unavailable_entities:
-  - name: Hall Motion
-    entity_id: sensor.hall_motion_battery
-    area: Hall
-    state: unavailable
-last_evaluated: '2026-06-24T10:15:00-05:00'
-devices:
-  - name: Master Bath Motion
-    entity_id: sensor.master_bath_motion_battery
-    area: Master Bath
-    level: 12
-    battery_type: CR2450
-  - name: Back Door
-    entity_id: binary_sensor.back_door_battery
-    area: Back Door
-    level: null
-    battery_type: ''
-```
+The default is `240` (four minutes), which suits a fast mini-PC with a Zigbee mesh. Tune from there:
 
-The state is the single number you badge or trigger on. The `devices` list is there for any consumer that wants the detail. `total_monitored` reports how many battery entities fell within the scope. A binary device shows `level: null`, since "on" carries no percentage. `unavailable_entities` is a separate list of in-scope batteries currently `unavailable` or `unknown`, each with its raw `state` (`unavailable`, `unknown`, or `missing` for an entity id that resolves to nothing), and `unavailable_count` is its length. These never affect the low state; they are a parallel view of what is offline.
+- A fast system (an N100 or better, Zigbee) is usually settled in two to three minutes. Four minutes gives headroom.
+- A slower hub, or a large or Z-Wave mesh that is slow to repopulate, may need five or six minutes. If you see a burst of false `unavailable` reports in the first few minutes after every restart, the grace is too short; raise it.
+- Set it to `0` to disable the grace entirely, only sensible if your devices come back effectively instantly.
+
+The cost of setting it too high is small: for those extra minutes after a restart, a battery that is genuinely offline will not appear in the unavailable list yet. The low count is never affected; it works the entire time. So err on the generous side.
 
 ## Scoping: Choosing What the Sensor Watches
 
@@ -179,13 +164,9 @@ Point the scope at an area or a device, and the sensor watches the battery entit
 
 ### Filter by Label
 
-A label lets you tag the exact devices you care about and watch only those, for example a `battery_watch` label on your critical infrastructure. There is one rule that decides whether this works at all:
+A label lets you tag the exact devices you care about and watch only those, for example a `battery_watch` label on your critical infrastructure.
 
-**The label must live on the battery entity, not on the device.**
-
-Home Assistant lets you apply a label to an entity, a device, or an area, and these are separate attachment points. This blueprint reads labels at the entity level. A label on a battery entity is found and watched. A label on a device is not, because the label sits on the device, not on the entities inside it.
-
-Do this, label the battery entity itself:
+Home Assistant lets you apply a label to an entity, a device, or an area, and these are separate attachment points. Battery Sentinel reads **all three**. A label applied directly to a battery entity is found. A label applied to a *device* is expanded to that device's battery entities. A label applied to an *area* is expanded to the battery entities in that area. So you can label whatever is most convenient, the entity, its device, or its room, and the sensor finds the battery either way.
 
 ```yaml
         include_target:
@@ -193,87 +174,127 @@ Do this, label the battery entity itself:
             - battery_watch
 ```
 
-with the `battery_watch` label applied to `sensor.motion_master_battery`, `sensor.leak_kitchen_sink_battery`, and so on, the battery entities.
+This expansion works on both sides. On the include side it is filtered to battery entities, so labeling a device pulls in only its battery, not its other entities. On the exclude side it is expanded fully, so a label used to suppress a device reliably removes that device's battery from the list. A device labeled to be ignored is actually ignored, not silently watched anyway.
 
-Not this: applying `battery_watch` to the Motion Master *device*. A device holds many entities, and the label on it is not seen by the sensor. That device is silently skipped, with no error and no warning.
+## What the Sensor Looks Like
 
-The symptom to recognize: if a label-scoped sensor's `total_monitored` count looks lower than the number of devices you tagged, you almost certainly labeled devices instead of their battery entities. Move the label to the entity and the count corrects itself.
+With two cells below the threshold and one battery currently offline:
+
+```yaml
+sensor.battery_sentinel
+State: 2
+
+ok: true
+error: ''
+uptime_status: '2026-06-24T09:40:00-05:00'
+total_monitored: 27
+unavailable_count: 1
+unavailable_entities:
+  - name: Hall Motion
+    entity_id: sensor.hall_motion_battery
+    area: Hall
+    state: unavailable
+last_evaluated: '2026-06-24T10:15:00-05:00'
+devices:
+  - name: Master Bath Motion
+    entity_id: sensor.master_bath_motion_battery
+    area: Master Bath
+    level: 12
+    battery_type: CR2450
+  - name: Back Door
+    entity_id: binary_sensor.back_door_battery
+    area: Back Door
+    level: null
+    battery_type: ''
+```
+
+The state is the single number you badge or trigger on, or the string `setup_error` if the sensor is misconfigured. The `devices` list is there for any consumer that wants the detail. `total_monitored` reports how many battery entities fell within the scope. A binary device shows `level: null`, since "on" carries no percentage. `unavailable_entities` is a separate list of in-scope batteries currently `unavailable` or `unknown`, each with its raw `state` (`unavailable`, `unknown`, or `missing` for an entity id that resolves to nothing), and `unavailable_count` is its length. These never affect the low state; they are a parallel view of what is offline.
+
+### Attribute Reference
+
+- **`state`** the number of batteries currently low, or the string `setup_error` if the sensor is misconfigured (see below). Zero means everything in scope is above the threshold and reporting.
+- **`ok`** a boolean, `true` when the sensor is functioning (whether or not it has flagged any low batteries), `false` only when it is in `setup_error`. This is the safe field to gate downstream automations on; see the warning under "Putting the Signal to Work."
+- **`error`** empty in normal operation. When the state is `setup_error`, this names the input that is wrong and what to do about it.
+- **`uptime_status`** the parsed uptime timestamp in normal operation, or the raw bad value when the uptime sensor is the problem. A diagnostic aid.
+- **`total_monitored`** how many battery entities fell within the scope.
+- **`devices`** the list of low batteries, each with `name`, `entity_id`, `area`, `level` (null for binary), and `battery_type` if the device exposes it.
+- **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace.
+- **`boot_time`** the start time the grace is measured from, or null in `setup_error`.
+- **`settled`** false during the startup grace window, true afterward.
+
+### The `setup_error` State
+
+If the sensor cannot run correctly, it does not fail quietly or report a misleading zero. It sets its state to the string `setup_error`, sets `ok` to false, and puts a plain-language explanation in the `error` attribute. It watches nothing and counts nothing until the problem is fixed, then recovers on its own at the next evaluation.
+
+Two kinds of problem trigger it. The first is the uptime sensor: missing, unavailable, or not in timestamp mode. The second is an input set to an invalid value:
+
+- `low_threshold` must be a number between 0 and 100 (it is a battery percentage). A value like 150 or -5 is rejected.
+- `low_clear_margin` must be a number of 0 or greater. A negative margin would invert the hysteresis band.
+- `startup_grace_seconds` must be a number of 0 or greater.
+
+The import UI constrains these for you, so you will mostly meet `setup_error` only if you deploy through a `use_blueprint` package and mistype a value, or if the uptime sensor is not set up. The error message names the specific input and the fix.
 
 ## Parameters
 
 | Input | Required | Default | Accepted values | What it does |
 | --- | --- | --- | --- | --- |
 | `unique_id` | Yes | none | any short text id, distinct per sensor | Registers the entity so you can rename it or place it in an area. Reusing one collides two sensors. |
-| `low_threshold` | No | `20` | 1 to 100 | A battery percentage at or below this counts as low. Binary battery sensors reading `on` always count as low. |
-| `low_clear_margin` | No | `2` | 0 to 25 | How far above the threshold a flagged device must climb before it clears. The hysteresis band that stops flapping. |
-| `include_target` | No | empty | entities, areas, devices, or labels | Which devices to watch. Empty watches every battery device-class entity. Areas and devices are filtered to batteries; labels and entity lists are trusted. |
+| `uptime_sensor` | Yes | `sensor.uptime` | an uptime sensor in timestamp mode | The clock the startup grace is measured from. Required. Missing or non-timestamp yields `setup_error`. See "Before You Start." |
+| `low_threshold` | No | `20` | 0 to 100 | A battery percentage at or below this counts as low. Binary battery sensors reading `on` always count as low. Out of range yields `setup_error`. |
+| `low_clear_margin` | No | `2` | 0 or greater | How far above the threshold a flagged device must climb before it clears. The hysteresis band that stops flapping. Negative yields `setup_error`. |
+| `include_target` | No | empty | entities, areas, devices, or labels | Which devices to watch. Empty watches every battery device-class entity. Areas and devices are filtered to batteries; labels expand to the batteries they cover on entity, device, or area. |
 | `exclude_target` | No | empty | entities, areas, devices, or labels | Which to leave out. Exclude always wins over include. |
-| `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/5`, `/10`, `/15`, `/30` | How often the sensor re-scans. In the alpha this is in minutes for fast testing; it reverts to hours for production. |
-| `startup_grace_seconds` | No | `120` | 0 to 900 seconds | After Home Assistant starts, how long to hold the `unavailable_entities` list empty while the mesh repopulates, so a momentary restart does not report a false outage. The low count is never held. Set to 0 to disable. |
+| `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/5`, `/10`, `/15`, `/30` | How often the sensor re-scans, in hours. |
+| `startup_grace_seconds` | No | `240` | 0 or greater (seconds) | After Home Assistant starts, how long to hold the `unavailable_entities` list empty while the mesh repopulates, measured from the uptime sensor. The low count is never held. Set to 0 to disable. See "Setting the Grace Period." |
 | `refresh_button` | No | none | an `input_button` entity | Optional. Press the named button to re-evaluate the sensor immediately, for example after changing a battery. It re-scans; it does not force a device to report. Several sensors can share one button. Leave unset to disable. |
 | `sensor_name` | No | `Battery Sentinel` | any text | The friendly name, and what the entity id is built from. |
-| `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, naming the flagged devices. |
+| `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, carrying the version, state, and both the low and unavailable lists. |
+
+## A Note on Hysteresis After a Restart
+
+The hysteresis band, the rule that keeps a flagged battery low until it climbs past the threshold plus the margin, remembers which batteries were low on the previous evaluation. That memory is the one piece of state the sensor reads from its own prior output, because "was this battery low last time" is inherently self-referential; there is no external source for it the way there is for the startup clock.
+
+In the rare event that Home Assistant's [#115585](https://github.com/home-assistant/core/issues/115585) bug strikes on a given evaluation, that memory reads empty for that one tick, and a battery sitting inside the clear margin (say 21 percent with a threshold of 20 and a margin of 2) briefly drops off the low list, returning on the next clean evaluation. This is a known, self-correcting limitation. It cannot be engineered away without giving up hysteresis altogether, and a one-cycle flicker is a fair price for a deadband that otherwise keeps a marginal battery from bouncing in and out of your alerts.
+
+## Putting the Signal to Work
+
+The sensor is the foundation. Here are a few things to build on it.
+
+A dashboard card listing what is low, with the battery type so you know what to fetch:
+
+```yaml
+type: markdown
+content: >
+  {% set s = state_attr('sensor.battery_sentinel', 'devices') %}
+  {% if s %}**Low batteries:**
+  {% for d in s %}
+  - {{ d.name }}{% if d.level is not none %} ({{ d.level }}%){% endif %}{% if d.battery_type %} - {{ d.battery_type }}{% endif %}
+  {% endfor %}
+  {% else %}All batteries above threshold.{% endif %}
+```
+
+A gate that holds back an automation when the battery list is not clean. Note the `ok` check first: it confirms the sensor itself is healthy before trusting its count, so a misconfigured sensor does not wave the automation through:
+
+```yaml
+condition:
+  - condition: template
+    value_template: >-
+      {{ is_state_attr('sensor.battery_sentinel', 'ok', true)
+         and states('sensor.battery_sentinel') | int(0) == 0 }}
+```
+
+**A word on the state and downstream math.** In normal operation the state is a number, but if the sensor is misconfigured the state becomes the string `setup_error`. Do not gate automations on `int()` math alone: `{{ states('sensor.battery_sentinel') | int(0) == 0 }}` reads `setup_error` as 0 and would treat a broken sensor as "no low batteries, all clear." Check the `ok` attribute first (`is_state_attr('sensor.battery_sentinel', 'ok', true)`), which is true only when the sensor is actually working, then read the count.
+
+A daily summary through a notification, fired by your own automation reading the `devices` attribute, so the alert names the device, the area, and the battery to buy.
 
 ## Changelog
 
 | Version | Notes |
 | --- | --- |
-| 1.0.0-alpha.5 | Renamed from Battery Sentinel - Low to Battery Sentinel. The companion blueprint generalizes into Entity Sentinel, so the "Low" qualifier is no longer needed: this sensor is the battery state and level monitor. Name, file, `sensor_name` default, and debug logger renamed; detection unchanged. |
-| 1.0.0-alpha.4 | Added a startup grace period for the offline list and an optional manual refresh button. For `startup_grace_seconds` after Home Assistant starts, `unavailable_entities` is held empty so a momentary restart no longer reports a false fleet-wide outage while the mesh repopulates; the low count is never held. The window is started only by the Home Assistant start event, never restarted by a scan or a button press. The `refresh_button` input re-evaluates the sensor on demand. Also fixed: an in-scope entity with no device (a typo'd or removed entity id) no longer raises a render error and instead appears in the offline list. |
-| 1.0.0-alpha.3 | Added the `unavailable_count` and `unavailable_entities` attributes. Any in-scope entity at `unavailable`, `unknown`, or resolving to nothing is now listed separately, with its raw state, rather than silently dropped. The sensor state still counts only low batteries; an offline battery is a not-reporting problem, not a low one, so it is reported here instead of in the low list. |
-| 1.0.0-alpha.2 | Area and device scopes are re-filtered to `device_class: battery`. Pointing the sensor at an area previously pulled in every entity there (signal strength, connectivity, blinds position) and read their numbers as battery levels. Explicit entity lists and labels stay trusted and unfiltered, since the user curates those. |
-| 1.0.0-alpha | Initial build. Single-purpose low-battery sensor split from the combined Battery Sentinel blueprint, so the entity carries only low attributes. Value-hysteresis band so a device at the threshold does not flap. Include and exclude by entity, area, device, or label, with exclude winning. Percentage and binary battery sensors; voltage staged for later. Optional debug log line. Under active testing on a live system. |
-
-## Putting the Signal to Work
-
-Because the sensor is a count with a `devices` list, anything can read it.
-
-A notification that speaks only when something needs attention:
-
-```yaml
-trigger:
-  - trigger: state
-    entity_id: sensor.battery_sentinel
-action:
-  - action: notify.mobile_app_yourphone
-    data:
-      title: Low batteries
-      message: >-
-        {% set low = state_attr('sensor.battery_sentinel', 'devices') %}
-        {% if low %}{{ low | map(attribute='name') | join(', ') }}.{% endif %}
-```
-
-A dashboard card listing the low devices with area and battery type, so a glance tells you what to grab from the drawer:
-
-```yaml
-type: markdown
-content: >-
-  {% for d in state_attr('sensor.battery_sentinel', 'devices') %}
-  - **{{ d.name }}** ({{ d.area }}) {{ d.level }}%, {{ d.battery_type }}
-  {% endfor %}
-```
-
-A to-do consumer, dropping each low cell onto a shopping list so the right battery is on hand before the swap:
-
-```yaml
-trigger:
-  - trigger: state
-    entity_id: sensor.battery_sentinel
-action:
-  - repeat:
-      for_each: "{{ state_attr('sensor.battery_sentinel', 'devices') }}"
-      sequence:
-        - action: todo.add_item
-          target:
-            entity_id: todo.shopping
-          data:
-            item: "{{ repeat.item.name }} battery ({{ repeat.item.battery_type }})"
-```
-
-For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
+| 1.0.0-beta | First beta. Counts batteries at or below a threshold with a hysteresis deadband, handles percentage and binary battery entities, reports unavailable and missing batteries in a parallel `unavailable_entities` attribute. Scope by entity, label, area, or device with include and exclude (exclude wins; labels expand to entities, devices, and areas on both sides, so a device-labeled exclude actually suppresses its battery). Startup grace measured from a required uptime sensor in timestamp mode, reliable across restarts and reloads. Loud `setup_error` state with `error` and `uptime_status` attributes when the uptime sensor is missing or not a timestamp, or when `low_threshold`, `low_clear_margin`, or `startup_grace_seconds` is set to an invalid value; the sensor fails safe and self-heals. Added an `ok` boolean so downstream automations can gate on it rather than doing integer math on a state that may read `setup_error`. Timezone-safe grace math. Debug log line carries the version, state, uptime status, and both the low and unavailable arrays. |
 
 ## License
 
-Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>). This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.
+GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-You will find the full YAML, this README, and the one-click import badge at the [Thinking Home blueprints repository](https://github.com/TheThinkingHome/Automations).
+See the full YAML blueprint, the instructions, and the one-click import button at the [Thinking Home blueprints repository](https://github.com/TheThinkingHome/Automations).

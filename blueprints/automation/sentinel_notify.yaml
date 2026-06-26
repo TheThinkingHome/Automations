@@ -4,6 +4,21 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.8-beta - Three fixes from a fifth adversarial review, with the upstream-broken
+#           handling rebuilt rather than patched again. (1) The broken-Sentinel alert
+#           no longer halts the run: it is now its own notification with its own tag
+#           ({tag}_upstream), change-detected independently, and the normal battery
+#           notification still fires for the healthy sensors in the same run. Before, a
+#           single unconditional stop meant that if one source Sentinel was down, a
+#           genuine low-battery (even a smoke detector) on a healthy Sentinel was never
+#           reported. (2) Memory is now two hashed slots in one helper, stored as
+#           b={hash}|u={hash}|t={iso}. Both the battery and upstream fingerprints are
+#           md5-hashed before storage, so no error text (and no stray delimiter) can
+#           ever land in the stored value and corrupt the parse; this closes the
+#           infinite-loop class for good, including an error message that itself
+#           contains the delimiter. (3) The offline-wins de-duplication builds its
+#           forced item with explicit fields instead of a dict merge, removing a
+#           dependency on merge-function syntax in the template sandbox.
 #   1.0.7-beta - From a fourth adversarial review. When two source Sentinels with
 #           overlapping scopes report the SAME physical device in different states
 #           (one as low, the other as offline because the device dropped off the mesh
@@ -151,7 +166,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.7-beta
+    1.0.8-beta
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -343,7 +358,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.7-beta
+  version: 1.0.8-beta
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -428,7 +443,14 @@ variables:
       {% if d.entity_id not in ns.seen %}
         {% set ns.seen = ns.seen + [d.entity_id] %}
         {% if d.entity_id in off and d.kind != 'offline' %}
-          {% set ns.items = ns.items + [combine(d, {'kind': 'offline', 'level': none, 'battery_type': ''})] %}
+          {% set ns.items = ns.items + [{
+            'entity_id': d.entity_id,
+            'name': d.name,
+            'area': d.area,
+            'level': none,
+            'battery_type': '',
+            'kind': 'offline'
+          }] %}
         {% else %}
           {% set ns.items = ns.items + [d] %}
         {% endif %}
@@ -445,18 +467,28 @@ variables:
 
   fingerprint_plain: "{{ fingerprint_keys | join(',') }}"
 
-  fingerprint: >-
-    {% if fingerprint_plain | length <= 200 %}
-      {{ fingerprint_plain }}
-    {% else %}
-      {{ 'h:' ~ fingerprint_plain | md5 }}
-    {% endif %}
+  fingerprint: "{{ fingerprint_plain | md5 if fingerprint_plain != '' else '' }}"
+  upstream_fingerprint: "{{ upstream_error | md5 if upstream_error != '' else '' }}"
 
   stored_raw: "{{ states(memory_helper) }}"
-  previous_fingerprint: "{{ (stored_raw.split('||')[0]) if '||' in stored_raw else stored_raw }}"
-  previous_notified_iso: "{{ (stored_raw.split('||')[1]) if '||' in stored_raw else '' }}"
+  stored_parts: >-
+    {% set ns = namespace(b='', u='', t='') %}
+    {% for seg in stored_raw.split('|') %}
+      {% if seg.startswith('b=') %}{% set ns.b = seg[2:] %}
+      {% elif seg.startswith('u=') %}{% set ns.u = seg[2:] %}
+      {% elif seg.startswith('t=') %}{% set ns.t = seg[2:] %}
+      {% endif %}
+    {% endfor %}
+    {{ {'b': ns.b, 'u': ns.u, 't': ns.t} }}
+  previous_fingerprint: "{{ stored_parts.b }}"
+  previous_upstream: "{{ stored_parts.u }}"
+  previous_notified_iso: "{{ stored_parts.t }}"
+
+  stored_value: >-
+    b={{ fingerprint }}|u={{ upstream_fingerprint }}|t={{ now().isoformat() }}
 
   changed: "{{ ok and (fingerprint | trim) != (previous_fingerprint | trim) }}"
+  upstream_changed: "{{ ok and (upstream_fingerprint | trim) != (previous_upstream | trim) }}"
 
   flagged_count: "{{ flagged_items_unique | length }}"
 
@@ -540,24 +572,40 @@ action:
     then:
       - stop: Setup error, see the debug log and the README.
 
-  - alias: Handle a broken upstream Sentinel before anything else
+  - alias: Work out what to notify this run
+    variables:
+      reremind_due: >-
+        {% if reremind_hours | int(0) > 0 and previous_notified_iso != '' %}
+          {{ (as_timestamp(now()) - as_timestamp(previous_notified_iso, 0)) >= (reremind_hours | int * 3600) }}
+        {% else %}
+          {{ false }}
+        {% endif %}
+      battery_should_notify: "{{ changed or (reremind_due and flagged_count | int > 0) }}"
+      upstream_should_notify: "{{ upstream_changed or (reremind_due and upstream_broken) }}"
+      memory_needs_write: "{{ battery_should_notify or upstream_should_notify }}"
+
+  - alias: Persist both memory slots together when anything changed
+    if:
+      - condition: template
+        value_template: "{{ memory_needs_write }}"
+    then:
+      - action: input_text.set_value
+        continue_on_error: true
+        data:
+          value: "{{ stored_value | trim }}"
+        target:
+          entity_id: !input memory_helper
+
+  - alias: Broken-Sentinel notification, its own card, change-detected, does not block batteries
     if:
       - condition: template
         value_template: "{{ upstream_broken }}"
     then:
-      - alias: Alert that a source Sentinel is not working, once, change-detected
+      - alias: Notify that a source Sentinel is not working
         if:
           - condition: template
-            value_template: >-
-              {{ ('err:' ~ upstream_error) | trim != previous_fingerprint | trim }}
+            value_template: "{{ upstream_should_notify }}"
         then:
-          - alias: Remember the broken state so it does not re-alert every cycle
-            action: input_text.set_value
-            continue_on_error: true
-            data:
-              value: "{{ ('err:' ~ upstream_error) | trim ~ '||' ~ now().isoformat() }}"
-            target:
-              entity_id: !input memory_helper
           - alias: Persistent card for the broken Sentinel
             if:
               - condition: template
@@ -566,10 +614,10 @@ action:
               - action: persistent_notification.create
                 continue_on_error: true
                 data:
-                  notification_id: "{{ notification_tag }}"
+                  notification_id: "{{ notification_tag }}_upstream"
                   title: Sentinel not working
                   message: >-
-                    A source Sentinel is reporting a setup error and is not monitoring. Fix it, then this clears. Detail: {{ upstream_error }}
+                    A source Sentinel is reporting a problem and is not monitoring. Fix it, then this clears. Detail: {{ upstream_error }}
           - alias: Push for the broken Sentinel
             if:
               - condition: template
@@ -588,9 +636,9 @@ action:
                           data:
                             title: Sentinel not working
                             message: >-
-                              A source Sentinel is reporting a setup error and is not monitoring. Detail: {{ upstream_error }}
+                              A source Sentinel is reporting a problem and is not monitoring. Detail: {{ upstream_error }}
                             data:
-                              tag: "{{ notification_tag }}"
+                              tag: "{{ notification_tag }}_upstream"
                               priority: >-
                                 {{ 'high' if priority_level == 'high' else 'normal' }}
                               ttl: >-
@@ -602,10 +650,18 @@ action:
                               push:
                                 interruption-level: >-
                                   {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
-      - alias: Do not run the normal clear and notify logic while a Sentinel is broken
-        stop: A source Sentinel is in setup_error; alerted and holding.
 
-  - alias: Dismiss the persistent card whenever clear
+  - alias: Dismiss the broken-Sentinel card once all source Sentinels are healthy again
+    if:
+      - condition: template
+        value_template: "{{ persistent_enabled and not upstream_broken }}"
+    then:
+      - action: persistent_notification.dismiss
+        continue_on_error: true
+        data:
+          notification_id: "{{ notification_tag }}_upstream"
+
+  - alias: Dismiss the battery card whenever nothing is flagged
     if:
       - condition: template
         value_template: "{{ persistent_enabled and flagged_count | int == 0 }}"
@@ -615,29 +671,11 @@ action:
         data:
           notification_id: "{{ notification_tag }}"
 
-  - alias: Decide whether to notify
-    variables:
-      reremind_due: >-
-        {% if reremind_hours | int(0) > 0 and previous_notified_iso != '' %}
-          {{ (as_timestamp(now()) - as_timestamp(previous_notified_iso, 0)) >= (reremind_hours | int * 3600) }}
-        {% else %}
-          {{ false }}
-        {% endif %}
-      should_notify: "{{ changed or (reremind_due and flagged_count | int > 0) }}"
-
-  - alias: Notify and update memory
+  - alias: Battery notification, runs independently of any broken Sentinel
     if:
       - condition: template
-        value_template: "{{ should_notify }}"
+        value_template: "{{ battery_should_notify }}"
     then:
-      - alias: Update the memory helper
-        action: input_text.set_value
-        continue_on_error: true
-        data:
-          value: "{{ (fingerprint | trim) ~ '||' ~ now().isoformat() }}"
-        target:
-          entity_id: !input memory_helper
-
       - alias: Create or update the persistent notification
         if:
           - condition: template
@@ -682,15 +720,15 @@ action:
                             interruption-level: >-
                               {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
 
-      - alias: Log the notification
-        if:
-          - condition: template
-            value_template: "{{ debug_enabled }}"
-        then:
-          - action: system_log.write
-            continue_on_error: true
-            data:
-              level: info
-              logger: sentinel_notify
-              message: >-
-                Sentinel Notify v{{ version }} | NOTIFIED | mode: {{ family_mode }} | flagged: {{ flagged_count }} | pushed: {{ push_targets | length }} | persistent: {{ persistent_enabled }}
+  - alias: Log the result
+    if:
+      - condition: template
+        value_template: "{{ debug_enabled }}"
+    then:
+      - action: system_log.write
+        continue_on_error: true
+        data:
+          level: info
+          logger: sentinel_notify
+          message: >-
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | flagged: {{ flagged_count }} | battery_notify: {{ battery_should_notify }} | upstream_broken: {{ upstream_broken }} | upstream_notify: {{ upstream_should_notify }} | pushed: {{ push_targets | length }}

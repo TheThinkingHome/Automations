@@ -4,6 +4,16 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.7-beta - From a fourth adversarial review. When two source Sentinels with
+#           overlapping scopes report the SAME physical device in different states
+#           (one as low, the other as offline because the device dropped off the mesh
+#           between their evaluations), the companion now collapses it to a single
+#           entry instead of counting it twice with two contradictory lines. Dedupe is
+#           by entity, not by entity-and-state, and offline wins over low (an
+#           unreachable device is the more actionable state), resolved order-
+#           independently so the result does not depend on which sensor is read first.
+#           Uses the combine() function for the merge, the immutable template sandbox
+#           does not allow the dict() keyword-merge idiom.
 #   1.0.6-beta - Two fixes from a third adversarial review, both in the upstream-broken
 #           handling added in 1.0.5. First, an upstream sensor that is unavailable or
 #           unknown (its template integration failed to load, or it was deleted) is now
@@ -141,7 +151,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.6-beta
+    1.0.7-beta
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -333,7 +343,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.6-beta
+  version: 1.0.7-beta
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -411,12 +421,17 @@ variables:
     {{ ns.items }}
 
   flagged_items_unique: >-
+    {% set off = flagged_items | selectattr('kind', 'eq', 'offline')
+                 | map(attribute='entity_id') | list %}
     {% set ns = namespace(items=[], seen=[]) %}
     {% for d in flagged_items %}
-      {% set key = d.entity_id ~ '|' ~ d.kind %}
-      {% if key not in ns.seen %}
-        {% set ns.seen = ns.seen + [key] %}
-        {% set ns.items = ns.items + [d] %}
+      {% if d.entity_id not in ns.seen %}
+        {% set ns.seen = ns.seen + [d.entity_id] %}
+        {% if d.entity_id in off and d.kind != 'offline' %}
+          {% set ns.items = ns.items + [combine(d, {'kind': 'offline', 'level': none, 'battery_type': ''})] %}
+        {% else %}
+          {% set ns.items = ns.items + [d] %}
+        {% endif %}
       {% endif %}
     {% endfor %}
     {{ ns.items }}

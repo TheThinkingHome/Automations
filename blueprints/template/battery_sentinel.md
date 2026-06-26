@@ -45,7 +45,7 @@ Battery Sentinel counts the batteries at or below a threshold and lists each one
 - **A loud error if set up wrong.** If the uptime sensor is missing or misconfigured, or a threshold or margin is invalid, the sensor reports a `setup_error` state and does nothing until you fix it, rather than failing quietly. An `ok` attribute lets automations tell a working sensor from a broken one.
 - **Scope by label, area, device, or entity**, with include and exclude, and exclude always wins.
 
-The full design, the reasoning behind each choice, and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
+The full design, the reasoning behind each choice, and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 
 ## Before You Start: the Uptime Requirement
 
@@ -234,7 +234,7 @@ condition:
 
 Do not gate on `int()` math alone: `int('setup_error')` evaluates to 0, which would read a broken sensor as "all clear." Always check `ok` first.
 
-More worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
+More worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 
 ## Changelog
 

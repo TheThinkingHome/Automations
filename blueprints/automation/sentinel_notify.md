@@ -98,6 +98,8 @@ The companion keeps a small fingerprint of what it last reported, in the memory 
 
 So a battery dropping below the threshold, or one being replaced, changes the fingerprint and you hear about it. The same three batteries sitting low for a week do not re-notify you every cycle, you were told once. If you do want the periodic nag for unresolved items, the re-remind interval turns it on.
 
+By design, the change is tracked at the level of which batteries are low, not their exact percentage. A battery that keeps draining while staying below the threshold (say 15% down to 5%) will not send a fresh alert, you were already told it is low. This is deliberate: tracking the exact percentage would re-notify on every reading and bring back the flood the change detection exists to prevent. If you want to be nudged about a battery you have not yet replaced, use the re-remind interval.
+
 Because the notification uses a tag, even when it does fire it replaces the previous one in place rather than stacking a pile of alerts.
 
 ## Keeping It Calm
@@ -118,6 +120,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.4-beta | Two fixes from an adversarial review. The plain-versus-hash fingerprint gate dropped from 240 to 200 characters so the stored value (fingerprint plus a timestamp) always fits the 255-character `input_text` limit; previously a mid-length fingerprint could overflow, fail its write silently, and re-notify every cycle. The source-sensor trigger now ignores attribute-only changes, so the companion no longer re-evaluates on every upstream cadence tick. |
 | 1.0.3-beta | Hardening from an adversarial simulation. The battery line renderer no longer crashes on a malformed device item: a missing, null, or non-numeric level renders as "(low)", and a numeric level is coerced and shown as a clean integer percent (12.7 reads as 13%, not 13.0%). Flagged items are de-duplicated by entity, so a battery reported by two source sensors is counted and listed once. A correct Battery Sentinel does not emit malformed items, so this is defensive hardening for a public companion. |
 | 1.0.2-beta | Fixed a push guard that could silently swallow notifications after a restart. The 1.0.1 `has_value` guard rejected a target in the `unknown` state, but a mobile_app notify entity sits at `unknown` until its first send of the session, so a battery dropping low shortly after a reboot would skip the push. The guard now skips only a genuinely `unavailable` target and lets an idle one through. |
 | 1.0.1-beta | Pre-deploy review fixes. The persistent notification card is dismissed by a standalone, ungated step whenever nothing is flagged, and created or updated only when something is, removing the old create-then-dismiss dance and any chance of a ghost card. Push priority and ttl now scale with the chosen priority level, so a low-priority alert no longer wakes an Android radio at full power. Each push target is guarded with `has_value` so a renamed or deleted notify entity is skipped cleanly. The memory-helper guidance now stresses one dedicated helper per copy. |

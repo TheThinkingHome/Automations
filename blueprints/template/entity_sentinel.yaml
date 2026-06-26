@@ -45,6 +45,23 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.0-alpha.8 - Reworked the startup grace to measure from a required uptime
+#           sensor (timestamp mode) instead of the trigger-template this object.
+#           The old approach read boot_time back from this.attributes, which is
+#           unreliable in trigger-template renders (HA #115585), and it also left a
+#           gap on slow-booting hubs where an early time_pattern tick could run
+#           before the homeassistant start event fired, with the mesh still
+#           re-routing, and wrongly read as settled. Measuring from sensor.uptime
+#           (process start), read fresh every render, closes both: it is immune to
+#           #115585 and reflects true elapsed time since boot regardless of when
+#           start fires. Grace must now be set to cover the hub''s full boot plus
+#           mesh-settle time (default raised 120 -> 240). New REQUIRED input
+#           uptime_sensor (default sensor.uptime). A missing or non-timestamp uptime
+#           sensor now yields a loud state 'setup_error' with an error attribute and
+#           a uptime_status attribute, and the sensor computes nothing until fixed
+#           (fail loud and safe, no false flags). setup_error is a reusable
+#           precondition-failure state for future required-input checks. ha_start is
+#           retained only as an evaluation trigger.
 #   1.0.0-alpha.7.4 - Expanded the debug log line: added the blueprint version as
 #           the first token (so a pasted support log shows which version produced
 #           it), plus settled, boot_time, and per-entity area, since, and last_seen
@@ -129,7 +146,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.7.4
+    1.0.0-alpha.8
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -221,20 +238,43 @@ blueprint:
               multiple: false
         startup_grace_seconds:
           name: Startup grace period (seconds)
-          description: 'After Home Assistant starts, how long to hold the unavailable
-            list empty while the mesh repopulates, so a momentary restart does not
-            report a false outage. Freeze is not held (it cannot false-fire at
-            startup). Set to 0 to disable.
+          description: 'How long after Home Assistant starts to hold the unavailable
+            list empty while the system and the mesh come up, so a restart does not
+            report a false outage. Measured from the uptime sensor (process start),
+            so it must cover your hub''s FULL startup: boot time PLUS the time your
+            Zigbee or Z-Wave mesh takes to settle, plus a margin. Watch your own
+            startup and set this deliberately. A fast mini-PC may need 3 to 4
+            minutes; a slower hub with Z-Wave may need 5 to 6. Freeze is not held
+            (it cannot false-fire at startup). Set to 0 to disable.
 
             '
-          default: 120
+          default: 240
           selector:
             number:
               min: 0.0
-              max: 900.0
+              max: 1800.0
               step: 10.0
               unit_of_measurement: seconds
               mode: box
+        uptime_sensor:
+          name: Uptime sensor (required)
+          description: 'REQUIRED. The Home Assistant uptime sensor, in TIMESTAMP mode
+            (its state is an ISO time like 2026-06-26T14:06:56+00:00, not a number).
+            The startup grace is measured from this, which is reliable across
+            restarts and reloads. Add the Uptime integration if you do not have it.
+            If this sensor is missing or is not a timestamp, the Sentinel reports a
+            setup_error state and does nothing until it is fixed.
+
+            '
+          default: sensor.uptime
+          selector:
+            entity:
+              filter:
+              - domain:
+                - sensor
+                device_class:
+                - timestamp
+              multiple: false
         refresh_button:
           name: Manual refresh button (optional)
           description: 'An optional input_button. Press it to make the sensor
@@ -293,16 +333,29 @@ variables:
   include_target: !input include_target
   exclude_target: !input exclude_target
   startup_grace_seconds: !input startup_grace_seconds
+  uptime_sensor: !input uptime_sensor
   debug_enabled: !input debug_enabled
   result: |
     {%- set debounce_s = (timedelta(**unavailable_debounce).total_seconds() if (unavailable_debounce is mapping and unavailable_debounce) else 0) -%}
     {%- set freeze_s = (timedelta(**freeze_lookback).total_seconds() if (freeze_lookback is mapping and freeze_lookback) else 21600) -%}
-    {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
     {%- set grace = startup_grace_seconds | int(120) -%}
-    {%- set is_start = (trigger is defined and trigger is not none and trigger.id is defined and trigger.id == 'ha_start') -%}
-    {%- set prev_boot = prev.get('boot_time') -%}
-    {%- set boot_dt = now() if is_start else (prev_boot | as_datetime if prev_boot else (now() - timedelta(seconds=(grace + 60)))) -%}
-    {%- set settled = (now() - boot_dt).total_seconds() >= grace -%}
+    {%- set uptime_raw = states(uptime_sensor) -%}
+    {%- set uptime_dt = uptime_raw | as_datetime(none) -%}
+    {%- set uptime_ok = uptime_dt is not none -%}
+    {%- if not uptime_ok -%}
+      {%- if uptime_raw in ['unknown', 'unavailable', none] -%}
+        {%- set uptime_status = uptime_raw if uptime_raw is not none else 'unknown' -%}
+        {%- set error_msg = 'uptime_sensor ' ~ uptime_sensor ~ ' not found or unavailable (got: ' ~ uptime_status ~ '). This blueprint requires the uptime integration with the entity in timestamp mode.' -%}
+      {%- else -%}
+        {%- set uptime_status = uptime_raw -%}
+        {%- set error_msg = 'uptime_sensor ' ~ uptime_sensor ~ ' is not a timestamp (got: ' ~ uptime_raw ~ '). Set the uptime integration to timestamp mode.' -%}
+      {%- endif -%}
+    {%- else -%}
+      {%- set uptime_status = uptime_dt.isoformat() -%}
+      {%- set error_msg = '' -%}
+    {%- endif -%}
+    {%- set boot_dt = uptime_dt if uptime_ok else now() -%}
+    {%- set settled = uptime_ok and (now() - boot_dt).total_seconds() >= grace -%}
     {%- set priority = ['occupancy', 'motion', 'door', 'window', 'opening', 'garage_door', 'lock', 'moisture', 'smoke', 'gas', 'carbon_monoxide', 'temperature', 'humidity', 'connectivity', 'battery'] -%}
     {%- set inc = include_target -%}
     {%- set exc = exclude_target -%}
@@ -457,9 +510,27 @@ variables:
     {%- endfor -%}
 
     {%- set flagged = fl.items -%}
+    {%- if not uptime_ok -%}
+    {{
+      {
+        'state': 'setup_error',
+        'error': error_msg,
+        'uptime_status': uptime_status,
+        'total_monitored': 0,
+        'devices': [],
+        'unavailable_count': 0,
+        'frozen_count': 0,
+        'boot_time': none,
+        'settled': false,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+    {%- else -%}
     {{
       {
         'state': flagged | length,
+        'error': '',
+        'uptime_status': uptime_status,
         'total_monitored': monitored | length,
         'devices': flagged,
         'unavailable_count': (flagged | selectattr('reason', 'in', ['unavailable', 'unknown', 'missing']) | list | length),
@@ -469,6 +540,7 @@ variables:
         'last_evaluated': now().isoformat()
       }
     }}
+    {%- endif -%}
 
 trigger:
 - trigger: time_pattern
@@ -493,7 +565,9 @@ action:
       level: info
       logger: entity_sentinel
       message: >-
-        Entity Sentinel v1.0.0-alpha.7.4 @ {{ result.last_evaluated }} | settled: {{
+        Entity Sentinel v1.0.0-alpha.8 @ {{ result.last_evaluated }} | state: {{
+        result.state }} | uptime_status: {{ result.uptime_status }}{% if
+        result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
         result.settled }} | boot: {{ result.boot_time }} | monitored: {{
         result.total_monitored }} | flagged: {{ result.state }} (unavailable {{
         result.unavailable_count }}, frozen {{ result.frozen_count }}){% for d in
@@ -504,8 +578,12 @@ sensor:
 - name: !input sensor_name
   unique_id: !input unique_id
   state: '{{ result.state }}'
-  icon: '{{ ''mdi:alert-circle'' if result.state | int(0) > 0 else ''mdi:check-circle-outline'' }}'
+  icon: >-
+    {% if result.state == 'setup_error' %}mdi:cog-off{% elif result.state | int(0)
+    > 0 %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
   attributes:
+    error: '{{ result.error }}'
+    uptime_status: '{{ result.uptime_status }}'
     total_monitored: '{{ result.total_monitored }}'
     devices: '{{ result.devices }}'
     unavailable_count: '{{ result.unavailable_count }}'

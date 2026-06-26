@@ -4,78 +4,48 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
 # Changelog:
-#   1.0.0-alpha.6 - Fixed missing-entity detection. Home Assistant's states(eid)
-#           returns the string 'unknown' for an entity that does not exist, never
-#           None, so a deleted or mistyped entity in the scope was listed with
-#           state 'unknown' instead of 'missing'. Now keys on the state object
-#           (states[eid]), which is None only when the entity truly does not
-#           exist: absent -> state 'missing', present but unknown -> state
-#           'unknown'. Behaviour otherwise unchanged. Found by an adversarial
-#           simulation pass during beta evaluation.
-#   1.0.0-alpha.5 - Renamed from Battery Sentinel - Low to Battery Sentinel. The
-#           companion blueprint generalizes from battery not-reporting into a
-#           general entity liveness monitor (Entity Sentinel), so the "Low"
-#           qualifier on this one is no longer needed: this sensor is the battery
-#           state and level monitor, its companion watches anything for going
-#           quiet. Behaviour is unchanged from alpha.4; this is a name and file
-#           rename only (battery_sentinel_low.yaml becomes battery_sentinel.yaml,
-#           sensor_name default becomes Battery Sentinel, the debug logger becomes
-#           battery_sentinel).
-#   1.0.0-alpha.4 - Added a startup grace period for the unavailable list. For
-#           startup_grace_seconds (default 120) after Home Assistant starts, the
-#           unavailable_entities list is held empty and unavailable_count is 0 on
-#           every evaluation, so a momentary restart no longer reports a false
-#           fleet-wide outage while the mesh is still repopulating. The window is
-#           measured from the Home Assistant start time (latched in the boot_time
-#           attribute) and applies to every trigger, not just start, so a cadence
-#           tick or button press during the window is gated too. The low count is
-#           never gated; it evaluates live throughout. After the window the list
-#           populates on the next evaluation. Two attributes expose the mechanism:
-#           boot_time (when the current session started) and settled (whether the
-#           grace window has passed). The window is only ever started by the Home
-#           Assistant start trigger; no cadence tick or button press can restart
-#           it. Also added an optional refresh_button input:
-#           press the named input_button to force an immediate re-evaluation (for
-#           example after changing a battery). It re-scans; it does not force a
-#           device to report. Defaults to a non-firing placeholder when unused.
-#           Fixed: a scoped entity with no device (for example a typo'd or removed
-#           entity id) no longer raises a device_attr render error; its name falls
-#           back to the friendly name or the entity id.
-#   1.0.0-alpha.3 - Added unavailable_count and unavailable_entities attributes.
-#           Any in-scope entity sitting at unavailable, unknown, or with no
-#           state is now listed in unavailable_entities (with name, entity_id,
-#           area, and the raw state), and counted in unavailable_count. The
-#           sensor state still reports only the LOW count; this is additional
-#           reporting, not a change to what counts as low. An offline battery
-#           is a not-reporting problem, not a low one, so it belongs here
-#           rather than in the low list.
-#   1.0.0-alpha.2 - Area and device scopes are now re-filtered to
-#           device_class: battery. Pointing the sensor at an area pulled in
-#           every entity there (signal strength, connectivity, blinds
-#           position) and read their numbers as battery levels. Explicit
-#           entity lists and labels stay trusted and unfiltered, since the
-#           user curates those; area and device are swept, so they get the
-#           battery-class filter.
-#   1.0.0-alpha - Initial build. Split from the combined Battery Sentinel
-#           blueprint into a single-purpose low-battery sensor, so the entity
-#           carries only low attributes with no cross-mode noise. Creates one
-#           trigger-based template sensor whose state is the count of battery
-#           devices at or below a threshold. A value-hysteresis band holds a
-#           flagged device low until it climbs above the threshold plus a
-#           margin, so a cell hovering at the line does not flap. Percentage
-#           and binary battery sensors supported; voltage staged for a later
-#           build. Include and exclude accept entities, areas, devices, or
-#           labels, with exclude winning; an empty include watches every
-#           battery device-class entity. Carries the proven native-dict output
-#           (no tojson/from_json) and the optional debug log line.
-#           Test cadence: scan_interval feeds the time_pattern minutes field
-#           during the shakedown (/2 is every 2 minutes). Reverts to the hours
-#           field for production before graduation.
+#   1.0.0-beta - First beta. Counts batteries at or below a threshold, with a
+#           value-hysteresis deadband (a low_clear_margin so a cell hovering at the
+#           line does not flap). Handles percentage and binary battery entities.
+#           Scope by entity, label, area, or device with include and exclude (exclude
+#           wins; labels expand to entities, devices, and areas on both sides, so a
+#           device-labeled exclude actually suppresses its battery instead of silently
+#           failing). Area and device scopes are re-filtered to device_class battery.
+#           Reports unavailable and missing batteries in a parallel unavailable_entities
+#           attribute (held during startup grace, never folded into the low count).
+#           Startup grace measured from a REQUIRED uptime sensor in timestamp mode,
+#           read fresh every render, immune to the trigger-template this-unreliability
+#           (HA #115585) and correct on slow-booting hubs. Loud setup_error state with
+#           error and uptime_status attributes when the uptime sensor is missing or not
+#           a timestamp, OR when low_threshold, low_clear_margin, or startup_grace_seconds
+#           is set to an invalid value (non-number, threshold out of 0 to 100, negative
+#           margin or grace); the sensor fails safe and self-heals once fixed. Added an
+#           ok boolean so downstream automations can gate on it rather than doing integer
+#           math on a state that may read setup_error. Timezone-safe grace math. Debug log
+#           line carries the version, state, uptime status, and both the low and the
+#           unavailable arrays. Optional refresh button. Versioning from here: patch
+#           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major (2.0.0-beta)
+#           for breaking changes.
+#
+#   Alpha history (1.0.0-alpha through 1.0.0-alpha.6) is preserved in the project
+#   document, not carried here.
+#
+# Design note on hysteresis and HA #115585: the startup grace was moved to the
+# uptime sensor specifically to avoid depending on this.attributes, which trigger
+# templates can intermittently fail to read (#115585). The low-clear hysteresis,
+# however, reads the previous low set from this.attributes.devices, and that
+# dependency is irreducible: whether an entity was low on the prior render is
+# self-referential state, and this is the only channel HA gives a template sensor
+# to read its own prior output. If #115585 strikes on a given render, the previous
+# set reads empty and a battery sitting inside the clear margin (for example 21
+# with threshold 20 and margin 2) loses its was-low status for that one tick and
+# briefly drops off the low list. It returns on the next clean render. This is an
+# accepted, self-correcting degradation; the alternative is no hysteresis at all.
 
 blueprint:
-  name: Battery Sentinel (Alpha)
+  name: Battery Sentinel (Beta)
   description: |
-    # Battery Sentinel (Alpha)
+    # Battery Sentinel (Beta)
 
     *One sensor that counts every battery device running low.*
 
@@ -100,11 +70,11 @@ blueprint:
 
     An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
 
-    This is an alpha, under active testing on a live system.
+    This is a beta. It requires the uptime integration (timestamp mode) and a startup grace period you set to cover your own boot and mesh-settle time. See the README.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.6
+    1.0.0-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -200,22 +170,42 @@ blueprint:
               multiple: false
         startup_grace_seconds:
           name: Startup grace period (seconds)
-          description: 'After Home Assistant starts, the sensor waits this long before
-            its first evaluation, giving the Zigbee mesh and other integrations time
-            to settle. Without it, a momentary restart would briefly read most devices
-            as unavailable and report a false fleet-wide outage. During the wait the
-            sensor holds its previous value. 120 seconds suits a fast system; raise
-            it if your mesh is slow to repopulate after a restart.
+          description: 'How long after Home Assistant starts to hold the unavailable
+            list empty while the system and mesh come up, so a restart does not report
+            a false outage. Measured from the uptime sensor (process start), so it
+            must cover your hub''s FULL startup: boot time PLUS the time your Zigbee or
+            Z-Wave mesh takes to settle, plus a margin. A fast mini-PC may need 3 to 4
+            minutes; a slower hub with Z-Wave may need 5 to 6. The low-battery count is
+            never held; only the unavailable list waits. Set to 0 to disable.
 
             '
-          default: 120
+          default: 240
           selector:
             number:
               min: 0.0
-              max: 900.0
+              max: 1800.0
               step: 10.0
               unit_of_measurement: seconds
               mode: box
+        uptime_sensor:
+          name: Uptime sensor (required)
+          description: 'REQUIRED. The Home Assistant uptime sensor, in TIMESTAMP mode
+            (its state is an ISO time like 2026-06-26T14:56:59+00:00, not a number).
+            The startup grace is measured from this, which is reliable across restarts
+            and reloads. Add the Uptime integration if you do not have it. If this
+            sensor is missing or is not a timestamp, the sensor reports a setup_error
+            state and does nothing until it is fixed.
+
+            '
+          default: sensor.uptime
+          selector:
+            entity:
+              filter:
+              - domain:
+                - sensor
+                device_class:
+                - timestamp
+              multiple: false
         refresh_button:
           name: Manual refresh button (optional)
           description: 'An optional input_button. Press it to make the sensor re-evaluate
@@ -277,16 +267,57 @@ variables:
   include_target: !input include_target
   exclude_target: !input exclude_target
   startup_grace_seconds: !input startup_grace_seconds
+  uptime_sensor: !input uptime_sensor
   debug_enabled: !input debug_enabled
   result: |
-    {%- set thr = low_threshold | float(20) -%}
-    {%- set margin = low_clear_margin | float(2) -%}
     {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
-    {%- set grace = startup_grace_seconds | int(120) -%}
-    {%- set is_start = (trigger is defined and trigger is not none and trigger.id is defined and trigger.id == 'ha_start') -%}
-    {%- set prev_boot = prev.get('boot_time') -%}
-    {%- set boot_dt = now() if is_start else (prev_boot | as_datetime if prev_boot else (now() - timedelta(seconds=(grace + 60)))) -%}
-    {%- set settled = (now() - boot_dt).total_seconds() >= grace -%}
+    {%- set setup = namespace(ok=true, error='') -%}
+    {%- set thr_raw = low_threshold -%}
+    {%- set margin_raw = low_clear_margin -%}
+    {%- set grace_raw = startup_grace_seconds -%}
+    {%- if not (thr_raw | is_number) -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_threshold is not a number (got: ' ~ thr_raw ~ ').' -%}
+    {%- elif (thr_raw | float) < 0 or (thr_raw | float) > 100 -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_threshold ' ~ thr_raw ~ ' is out of range; it must be a battery percentage between 0 and 100.' -%}
+    {%- elif not (margin_raw | is_number) -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_clear_margin is not a number (got: ' ~ margin_raw ~ ').' -%}
+    {%- elif (margin_raw | float) < 0 -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_clear_margin ' ~ margin_raw ~ ' is negative; it must be 0 or greater (it widens the clear threshold above the low threshold).' -%}
+    {%- elif not (grace_raw | is_number) -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'startup_grace_seconds is not a number (got: ' ~ grace_raw ~ ').' -%}
+    {%- elif (grace_raw | float) < 0 -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'startup_grace_seconds ' ~ grace_raw ~ ' is negative; it must be 0 or greater.' -%}
+    {%- endif -%}
+    {%- set thr = thr_raw | float(20) -%}
+    {%- set margin = margin_raw | float(2) -%}
+    {%- set grace = grace_raw | int(120) -%}
+    {%- set uptime_raw = states(uptime_sensor) -%}
+    {%- set uptime_dt = uptime_raw | as_datetime(none) -%}
+    {%- set uptime_ok = uptime_dt is not none -%}
+    {%- if setup.ok and not uptime_ok -%}
+      {%- if uptime_raw in ['unknown', 'unavailable', none] -%}
+        {%- set uptime_status = uptime_raw if uptime_raw is not none else 'unknown' -%}
+        {%- set setup.ok = false -%}
+        {%- set setup.error = 'uptime_sensor ' ~ uptime_sensor ~ ' not found or unavailable (got: ' ~ uptime_status ~ '). This blueprint requires the uptime integration with the entity in timestamp mode.' -%}
+      {%- else -%}
+        {%- set uptime_status = uptime_raw -%}
+        {%- set setup.ok = false -%}
+        {%- set setup.error = 'uptime_sensor ' ~ uptime_sensor ~ ' is not a timestamp (got: ' ~ uptime_raw ~ '). Set the uptime integration to timestamp mode.' -%}
+      {%- endif -%}
+    {%- elif uptime_ok -%}
+      {%- set uptime_status = uptime_dt.isoformat() -%}
+    {%- else -%}
+      {%- set uptime_status = uptime_raw if uptime_raw is not none else 'unknown' -%}
+    {%- endif -%}
+    {%- set boot_dt = uptime_dt if uptime_ok else now() -%}
+    {%- set settled = uptime_ok and (as_timestamp(now()) - as_timestamp(boot_dt)) >= grace -%}
+    {%- if setup.ok -%}
     {%- set inc = include_target -%}
     {%- set ns = namespace(ents=[]) -%}
     {%- set batt = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
@@ -306,7 +337,11 @@ variables:
       {%- endif -%}
       {%- if inc.label_id is defined -%}
         {%- set llist = inc.label_id if (inc.label_id is iterable and inc.label_id is not string) else [inc.label_id] -%}
-        {%- for l in llist -%}{%- set ns.ents = ns.ents + label_entities(l) -%}{%- endfor -%}
+        {%- for l in llist -%}
+          {%- set ns.ents = ns.ents + label_entities(l) -%}
+          {%- for d in label_devices(l) -%}{%- set ns.ents = ns.ents + (device_entities(d) | select('in', batt) | list) -%}{%- endfor -%}
+          {%- for a in label_areas(l) -%}{%- set ns.ents = ns.ents + (area_entities(a) | select('in', batt) | list) -%}{%- endfor -%}
+        {%- endfor -%}
       {%- endif -%}
     {%- else -%}
       {%- set ns.ents = batt -%}
@@ -328,7 +363,11 @@ variables:
       {%- endif -%}
       {%- if exc.label_id is defined -%}
         {%- set llist = exc.label_id if (exc.label_id is iterable and exc.label_id is not string) else [exc.label_id] -%}
-        {%- for l in llist -%}{%- set xns.ents = xns.ents + label_entities(l) -%}{%- endfor -%}
+        {%- for l in llist -%}
+          {%- set xns.ents = xns.ents + label_entities(l) -%}
+          {%- for d in label_devices(l) -%}{%- set xns.ents = xns.ents + device_entities(d) -%}{%- endfor -%}
+          {%- for a in label_areas(l) -%}{%- set xns.ents = xns.ents + area_entities(a) -%}{%- endfor -%}
+        {%- endfor -%}
       {%- endif -%}
     {%- endif -%}
     {%- set monitored = ns.ents | unique | reject('in', xns.ents) | list -%}
@@ -370,9 +409,30 @@ variables:
     {%- endfor -%}
     {%- set devices = low_ns.items -%}
     {%- set unavailable = un_ns.items if settled else [] -%}
+    {%- endif -%}
+    {%- if not setup.ok -%}
+    {{
+      {
+        'state': 'setup_error',
+        'ok': false,
+        'error': setup.error,
+        'uptime_status': uptime_status,
+        'total_monitored': 0,
+        'devices': [],
+        'unavailable_count': 0,
+        'unavailable_entities': [],
+        'boot_time': none,
+        'settled': false,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+    {%- else -%}
     {{
       {
         'state': devices | length,
+        'ok': true,
+        'error': '',
+        'uptime_status': uptime_status,
         'total_monitored': monitored | length,
         'devices': devices,
         'unavailable_count': unavailable | length,
@@ -382,17 +442,21 @@ variables:
         'last_evaluated': now().isoformat()
       }
     }}
+    {%- endif -%}
 
 trigger:
 - trigger: time_pattern
   hours: '*'
   minutes: !input scan_interval
+  alias: Scheduled re-evaluation on the scan interval
 - trigger: homeassistant
   event: start
   id: ha_start
+  alias: Re-evaluate when Home Assistant starts
 - trigger: state
   entity_id: !input refresh_button
   id: manual_refresh
+  alias: Manual refresh button press
 action:
 - if:
   - condition: template
@@ -403,17 +467,27 @@ action:
       level: info
       logger: battery_sentinel
       message: >-
-        Battery Sentinel @ {{ result.last_evaluated }} | monitored: {{
-        result.total_monitored }} | low: {{ result.state }}{% for d in
-        result.devices %} | {{ d.name }} {{ ('(' ~ d.level | round(0) ~ '%)')
-        if d.level is not none else '(binary on)' }} [{{ d.entity_id }}]{%
-        endfor %}
+        Battery Sentinel v1.0.0-beta @ {{ result.last_evaluated }} | state: {{
+        result.state }} | uptime_status: {{ result.uptime_status }}{% if
+        result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
+        result.settled }} | boot: {{ result.boot_time }} | monitored: {{
+        result.total_monitored }} | low: {{ result.devices | length }} | unavailable: {{
+        result.unavailable_count }}{% for d in result.devices %} | LOW {{ d.name
+        }} ({{ d.entity_id }}) {{ ('(' ~ d.level | round(0) ~ '%)') if d.level
+        is not none else '(binary on)' }} area={{ d.area }}{% endfor %}{% for u
+        in result.unavailable_entities %} | UNAVAIL {{ u.name }} ({{ u.entity_id
+        }}) [{{ u.state }}] area={{ u.area }}{% endfor %}
 sensor:
 - name: !input sensor_name
   unique_id: !input unique_id
   state: '{{ result.state }}'
-  icon: '{{ ''mdi:battery-alert'' if result.state | int(0) > 0 else ''mdi:battery-check'' }}'
+  icon: >-
+    {% if result.state == 'setup_error' %}mdi:battery-off{% elif result.state |
+    int(0) > 0 %}mdi:battery-alert{% else %}mdi:battery-check{% endif %}
   attributes:
+    ok: '{{ result.ok }}'
+    error: '{{ result.error }}'
+    uptime_status: '{{ result.uptime_status }}'
     total_monitored: '{{ result.total_monitored }}'
     devices: '{{ result.devices }}'
     unavailable_count: '{{ result.unavailable_count }}'

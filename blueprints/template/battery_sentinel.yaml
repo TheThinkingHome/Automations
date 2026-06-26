@@ -27,20 +27,6 @@
 #           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major (2.0.0-beta)
 #           for breaking changes.
 #
-#   Alpha history (1.0.0-alpha through 1.0.0-alpha.6) is preserved in the project
-#   document, not carried here.
-#
-# Design note on hysteresis and HA #115585: the startup grace was moved to the
-# uptime sensor specifically to avoid depending on this.attributes, which trigger
-# templates can intermittently fail to read (#115585). The low-clear hysteresis,
-# however, reads the previous low set from this.attributes.devices, and that
-# dependency is irreducible: whether an entity was low on the prior render is
-# self-referential state, and this is the only channel HA gives a template sensor
-# to read its own prior output. If #115585 strikes on a given render, the previous
-# set reads empty and a battery sitting inside the clear margin (for example 21
-# with threshold 20 and margin 2) loses its was-low status for that one tick and
-# briefly drops off the low list. It returns on the next clean render. This is an
-# accepted, self-correcting degradation; the alternative is no hysteresis at all.
 
 blueprint:
   name: Battery Sentinel (Beta)

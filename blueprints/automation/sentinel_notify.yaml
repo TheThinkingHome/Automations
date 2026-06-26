@@ -4,116 +4,26 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
-#   1.0.8-beta - Three fixes from a fifth adversarial review, with the upstream-broken
-#           handling rebuilt rather than patched again. (1) The broken-Sentinel alert
-#           no longer halts the run: it is now its own notification with its own tag
-#           ({tag}_upstream), change-detected independently, and the normal battery
-#           notification still fires for the healthy sensors in the same run. Before, a
-#           single unconditional stop meant that if one source Sentinel was down, a
-#           genuine low-battery (even a smoke detector) on a healthy Sentinel was never
-#           reported. (2) Memory is now two hashed slots in one helper, stored as
-#           b={hash}|u={hash}|t={iso}. Both the battery and upstream fingerprints are
-#           md5-hashed before storage, so no error text (and no stray delimiter) can
-#           ever land in the stored value and corrupt the parse; this closes the
-#           infinite-loop class for good, including an error message that itself
-#           contains the delimiter. (3) The offline-wins de-duplication builds its
-#           forced item with explicit fields instead of a dict merge, removing a
-#           dependency on merge-function syntax in the template sandbox.
-#   1.0.7-beta - From a fourth adversarial review. When two source Sentinels with
-#           overlapping scopes report the SAME physical device in different states
-#           (one as low, the other as offline because the device dropped off the mesh
-#           between their evaluations), the companion now collapses it to a single
-#           entry instead of counting it twice with two contradictory lines. Dedupe is
-#           by entity, not by entity-and-state, and offline wins over low (an
-#           unreachable device is the more actionable state), resolved order-
-#           independently so the result does not depend on which sensor is read first.
-#           Uses the combine() function for the merge, the immutable template sandbox
-#           does not allow the dict() keyword-merge idiom.
-#   1.0.6-beta - Two fixes from a third adversarial review, both in the upstream-broken
-#           handling added in 1.0.5. First, an upstream sensor that is unavailable or
-#           unknown (its template integration failed to load, or it was deleted) is now
-#           treated as a broken monitor and alerted, where before it slipped past the
-#           setup_error and ok:false checks and its missing device list was read as
-#           all-clear, dismissing the warning card and going silent on a dead sensor.
-#           Second, the multi-sensor error string is now joined with a comma instead of
-#           " || ", which collided with the "||" delimiter used between the stored
-#           fingerprint and its timestamp; when two sensors broke at once, the split on
-#           "||" truncated the stored fingerprint, so it never matched and re-alerted
-#           every cycle forever.
-#   1.0.5-beta - Two fixes from a second adversarial review. First, a broken upstream
-#           Sentinel is now surfaced, not hidden: if a source sensor reports
-#           setup_error or ok:false (for example its uptime sensor was deleted), the
-#           companion sends a distinct "Sentinel not working" alert carrying the
-#           upstream error and then stops, instead of reading the empty device list as
-#           all-clear and silently dismissing the warning card. The alert is
-#           change-detected, so it fires once on break and clears on recovery. Second,
-#           the source-sensor trigger condition added in 1.0.4 compared only the state
-#           (the count), which dropped a real change when one battery cleared and a
-#           different one dropped in the same window (count unchanged, set changed); it
-#           now compares the devices attribute (and unavailable_entities when offline
-#           reporting is on), so a same-count set swap is caught while attribute-only
-#           churn is still ignored.
-#   1.0.4-beta - Two fixes from an adversarial review. The plain-versus-hash
-#           fingerprint gate is lowered from 240 to 200 characters so the STORED
-#           value (the fingerprint plus a delimiter and an ISO timestamp, about 34
-#           extra characters) always fits inside the 255-character input_text limit.
-#           Previously a fingerprint between roughly 221 and 240 characters stored a
-#           value over 255, the write failed silently under continue_on_error, the
-#           memory never updated, and the same situation re-notified every cycle. The
-#           source-sensor state trigger now ignores attribute-only changes: a bare
-#           state trigger fires on every attribute update, so the companion was
-#           re-evaluating on each upstream Sentinel cadence; a condition now requires
-#           the state value itself to have changed for a source-sensor trigger,
-#           leaving the time-pattern and start triggers untouched. Known limitation,
-#           by design: the fingerprint keys on entity and kind, not battery level, so
-#           a battery sliding further down while staying low does not re-notify; this
-#           is deliberate, keying on level would re-alert on every percent and
-#           reintroduce the flood the change-detection exists to prevent.
-#   1.0.3-beta - Hardening from an adversarial simulation of the engine. The
-#           battery line renderer no longer crashes on a malformed device item: a
-#           missing, null, or non-numeric level renders as "(low)" rather than
-#           raising on round(), and a numeric level is coerced and shown as a clean
-#           integer percent (a float like 12.7 now reads 13%, not 13.0%). Flagged
-#           items are de-duplicated by entity and kind, so a battery that two source
-#           sensors both report is counted and listed once, with a clean
-#           fingerprint, rather than double-counted. A correct Battery Sentinel does
-#           not emit malformed items, so this is defense for a public companion, not
-#           a fix for a known fault.
-#   1.0.2-beta - Fixed a push-notification guard that could silently swallow alerts
-#           right after a restart. The 1.0.1 has_value() guard rejected any target
-#           whose state was unknown, but a mobile_app notify entity reads unknown
-#           until it sends its first message of the session, so a battery dropping
-#           low shortly after a reboot would skip the push entirely. The guard now
-#           skips only a genuinely unavailable target and lets an idle (unknown)
-#           one through.
-#   1.0.1-beta - Pre-deploy review fixes. The persistent notification card is now
-#           dismissed by a standalone, ungated step whenever the count is zero, and
-#           is only created or updated when something is flagged; this removes the
-#           old create-an-All-clear-card-then-dismiss-it dance and the chance of a
-#           ghost card being orphaned when the clear state did not coincide with a
-#           change. The push priority and ttl now scale with the chosen priority
-#           level (high stays instant with ttl 0; normal and low use a normal
-#           priority and a longer ttl) so a low-priority notification no longer
-#           wakes an Android radio at full power. Each push target is guarded with
-#           has_value so a renamed or deleted notify entity is skipped cleanly. The
-#           memory-helper input description now stresses that every copy needs its
-#           own dedicated helper.
-#   1.0.0-beta - First beta. Battery mode: reads Battery Sentinel sensors and
-#           reports low batteries (and optionally offline ones) by name with
-#           percentage, battery type, and area; a binary low-battery sensor, which
-#           has no percentage, is reported without one. Combines multiple sensors
-#           into one report. Notifies ONLY when the flagged set changes, using a
-#           sorted fingerprint stored in an input_text helper, so it does not
-#           notify every cycle; the sort makes the fingerprint order-independent.
-#           Push to any number of mobile devices and/or a persistent notification,
-#           tag-replaced in place so alerts never stack. Priority levels with iOS
-#           interruption-level and Android channel/importance handling, inlined so
-#           the blueprint is self-contained. Optional re-remind interval (off by
-#           default) re-sends the current report on a schedule for unresolved
-#           items. Loud setup errors for a wrong-family sensor, a missing helper,
-#           or the not-yet-built Entity mode. Versioning from here: patch
-#           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major
-#           (2.0.0-beta) for breaking changes.
+#   1.0.0-beta - Initial release. Battery mode: reads one or more Battery Sentinel
+#           sensors and reports low batteries (and optionally offline ones) by name
+#           with percentage, battery type, and area; a binary low-battery sensor, which
+#           has no percentage, is reported without one. Notifies ONLY when the flagged
+#           set changes, using a sorted, md5-hashed fingerprint stored in one input_text
+#           helper, so it does not notify every cycle; the sort makes it order
+#           independent. A device reported by two overlapping-scope sensors is
+#           de-duplicated to one entry, offline winning over low. A second, independent
+#           change-detected stream raises a separate "Sentinel not working" alert (its
+#           own tag) when a source Sentinel is in setup_error, reports ok:false, or goes
+#           unavailable or unknown, without suppressing the battery alerts from the
+#           healthy sensors. Memory is two hashed slots in one helper, stored as
+#           b={hash}|u={hash}|t={iso}, so no error text or stray delimiter can corrupt
+#           the stored value. Push to any number of mobile devices and/or a persistent
+#           notification, tag-replaced in place; priority scales iOS interruption-level
+#           and Android channel/importance/ttl. Optional re-remind interval, off by
+#           default. Loud setup errors for a wrong-family sensor, a missing helper, or
+#           the not-yet-built Entity mode, which is reserved in the same blueprint for a
+#           later release. Versioning from here: patch (1.0.1-beta) for fixes, minor
+#           (1.1.0-beta) for features, major (2.0.0-beta) for breaking changes.
 #
 # Design note: this companion watches ONE Sentinel family per instance (a Battery
 # or Entity mode). The change-detection engine works across families, but the
@@ -124,11 +34,14 @@
 #
 # Memory note: change-detection needs to remember what was last reported across
 # restarts. The only UI-creatable, restart-surviving store is an input_text (capped
-# at 255 characters). That cap is not a constraint: the companion stores a sorted
-# fingerprint, which fits any fleet, falling back to a fixed-length hash if a list
-# would ever overflow. Persistent notifications cannot be read back from templates
-# since HA 2023.6, and a shell/file store is too much to ask of a non-advanced user,
-# so input_text is the store.
+# at 255 characters). That cap is not a constraint: the companion stores two md5
+# fingerprints, one for the battery report and one for the broken-Sentinel state,
+# plus a timestamp, as b={hash}|u={hash}|t={iso}. Hashing both before storage keeps
+# the value short regardless of fleet size and means no device name or error text
+# (and no stray delimiter) can ever land in the stored value and corrupt the parse.
+# Persistent notifications cannot be read back from templates since HA 2023.6, and a
+# shell or file store is too much to ask of a non-advanced user, so input_text is
+# the store.
 
 blueprint:
   name: Sentinel Notify (Beta)
@@ -166,7 +79,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.8-beta
+    1.0.0-beta
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -358,7 +271,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.8-beta
+  version: 1.0.0-beta
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -494,7 +407,7 @@ variables:
 
   title: >-
     {% if family_mode == 'battery' %}
-      Battery Sentinel: {{ flagged_count }} {{ 'battery' if flagged_count == 1 else 'batteries' }} to check
+      Battery Sentinel: {{ flagged_count }} {{ 'battery' if flagged_count | int == 1 else 'batteries' }} to check
     {% else %}
       Sentinel report
     {% endif %}

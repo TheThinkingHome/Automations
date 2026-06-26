@@ -1,1 +1,486 @@
+# Copyright (C) 2026 James Lander, The Thinking Home
+# Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
+# Sentinel Notify - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
+#   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
+#
+# Changelog:
+#   1.0.0-beta - First beta. Battery mode: reads Battery Sentinel sensors and
+#           reports low batteries (and optionally offline ones) by name with
+#           percentage, battery type, and area; a binary low-battery sensor, which
+#           has no percentage, is reported without one. Combines multiple sensors
+#           into one report. Notifies ONLY when the flagged set changes, using a
+#           sorted fingerprint stored in an input_text helper, so it does not
+#           notify every cycle; the sort makes the fingerprint order-independent.
+#           Push to any number of mobile devices and/or a persistent notification,
+#           tag-replaced in place so alerts never stack. Priority levels with iOS
+#           interruption-level and Android channel/importance handling, inlined so
+#           the blueprint is self-contained. Optional re-remind interval (off by
+#           default) re-sends the current report on a schedule for unresolved
+#           items. Loud setup errors for a wrong-family sensor, a missing helper,
+#           or the not-yet-built Entity mode. Versioning from here: patch
+#           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major
+#           (2.0.0-beta) for breaking changes.
+#
+# Design note: this companion watches ONE Sentinel family per instance (a Battery
+# or Entity mode). The change-detection engine works across families, but the
+# wording, item shape, and sensible defaults differ enough between batteries
+# (sparse, slow) and entities (dense, twitchy) that one instance per family keeps
+# each configuration and its notifications clean. The Battery mode ships in this
+# beta; the Entity mode is reserved in the same blueprint for a later beta.
+#
+# Memory note: change-detection needs to remember what was last reported across
+# restarts. The only UI-creatable, restart-surviving store is an input_text (capped
+# at 255 characters). That cap is not a constraint: the companion stores a sorted
+# fingerprint, which fits any fleet, falling back to a fixed-length hash if a list
+# would ever overflow. Persistent notifications cannot be read back from templates
+# since HA 2023.6, and a shell/file store is too much to ask of a non-advanced user,
+# so input_text is the store.
 
+blueprint:
+  name: Sentinel Notify (Beta)
+  description: |
+    # Sentinel Notify (Beta)
+
+    *Turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprints/) - the design and worked examples.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) - setup, parameters, and the change-detection behavior.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Reads the rich attributes a Sentinel exposes and notifies you about what is actually wrong, by name, with the detail, not just a count. It notifies only when the situation changes, so it does not flood you every cycle.
+
+    ## How it works
+
+    Set the mode to Battery or Entity and point it at sensors of that family. Each check, it builds a sorted fingerprint of what the Sentinel is flagging and compares it to what it last reported, stored in a required input_text helper. If the set changed, it sends a notification listing everything currently flagged; if not, it stays quiet. Several sensors of one family combine into a single report. The notification uses a tag, so even when it fires it replaces the previous one in place rather than stacking.
+
+    Send by push to any number of mobile devices, and/or as a persistent notification in the Home Assistant UI. Priority controls sound and Do Not Disturb on push. An optional re-remind interval, off by default, re-sends the current report on a schedule for items you have not resolved.
+
+    This companion watches ONE family per instance. If you run both Sentinels, build two copies, one in each mode. This beta ships the Battery mode; the Entity mode arrives in a later beta and reports a setup error if selected today.
+
+    An optional debug switch, off by default, writes one diagnostic line to the system log on each check, for use while setting it up.
+
+    This is a beta. It requires one input_text helper, which you create first and select below. See the README.
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+
+    1.0.0-beta
+  author: James Lander (xeazy.com)
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.yaml
+  input:
+    mode_section:
+      name: Mode
+      icon: mdi:shape-outline
+      description: Choose which Sentinel family this companion watches. One family per instance.
+      input:
+        family_mode:
+          name: Sentinel family
+          description: >-
+            Battery watches Battery Sentinel sensors and reports low batteries.
+            Entity watches Entity Sentinel sensors and reports entities that have
+            gone quiet. Pick one. If you run both Sentinels, build two copies of
+            this companion.
+          default: battery
+          selector:
+            select:
+              options:
+                - label: Battery (report low batteries)
+                  value: battery
+                - label: Entity (report entities gone quiet)
+                  value: entity
+
+    source_section:
+      name: Sensors to Watch
+      icon: mdi:radar
+      description: The Sentinel sensors this companion reads. Pick sensors of the family you chose above.
+      input:
+        source_sensors:
+          name: Sentinel sensors
+          description: >-
+            One or more Sentinel sensors of the chosen family. Their flagged
+            devices are combined into one list, so a single notification covers
+            all of them. Pointing at the wrong family yields a setup error.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+              multiple: true
+        memory_helper:
+          name: Memory helper (input_text)
+          description: >-
+            REQUIRED. An input_text helper this companion uses to remember what it
+            last reported, so it only notifies on a change. Create one first
+            (Settings, Devices & Services, Helpers, Create Helper, Text) and select
+            it here. Use a SEPARATE helper for each copy of this companion.
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+              multiple: false
+
+    battery_section:
+      name: Battery Settings
+      icon: mdi:battery-alert
+      description: Fill this in only if the mode above is Battery. Ignored for Entity.
+      collapsed: true
+      input:
+        battery_report_offline:
+          name: Also report offline batteries
+          description: >-
+            When on, batteries that are currently unavailable or unknown (the
+            sensor's unavailable_entities) are reported alongside the low ones. Off
+            by default, so you hear only about low batteries.
+          default: false
+          selector:
+            boolean: {}
+
+    entity_section:
+      name: Entity Settings
+      icon: mdi:lan-disconnect
+      description: Fill this in only if the mode above is Entity. Ignored for Battery. (Entity support arrives in a later beta.)
+      collapsed: true
+      input:
+        entity_placeholder:
+          name: Entity options (reserved)
+          description: >-
+            Reserved for the Entity branch, which is built in a later beta. Leave
+            as is. Setting the mode to Entity today yields a setup error directing
+            you to the Battery mode or a future release.
+          default: false
+          selector:
+            boolean: {}
+
+    notify_section:
+      name: Notification Targets and Style
+      icon: mdi:bell-ring
+      description: How and where to send. Shared by both families.
+      input:
+        push_targets:
+          name: Push notification targets
+          description: >-
+            The mobile_app notify targets to push to, as notify entities (for
+            example notify.mobile_app_your_phone). Leave empty to send no push and
+            rely on the persistent notification only.
+          default: []
+          selector:
+            entity:
+              filter:
+                - integration: mobile_app
+                  domain: notify
+              multiple: true
+        persistent_enabled:
+          name: Create a persistent notification
+          description: >-
+            When on, also creates or updates a persistent notification in the Home
+            Assistant UI, replaced in place each time so it never stacks.
+          default: true
+          selector:
+            boolean: {}
+        priority_level:
+          name: Priority
+          description: >-
+            Controls sound and Do Not Disturb behavior on push. Normal is standard
+            delivery. High bypasses DND with an alarm sound on Android and a
+            time-sensitive alert on iOS. Low is silent.
+          default: normal
+          selector:
+            select:
+              options:
+                - normal
+                - high
+                - low
+        notification_tag:
+          name: Notification tag
+          description: >-
+            The tag used to replace this companion's push in place rather than
+            stacking new ones. Leave the default unless you run several copies
+            pushing to the same device, in which case give each a distinct tag.
+          default: sentinel_notify
+          selector:
+            text: {}
+
+    advanced_section:
+      name: Advanced
+      icon: mdi:tune
+      description: Cadence, reminders, and diagnostics. The defaults are sensible.
+      collapsed: true
+      input:
+        scan_interval:
+          name: Check interval
+          description: >-
+            How often to re-check the sensors, in minutes. The companion checks
+            this often but only notifies when something has changed since the last
+            notification.
+          default: "/5"
+          selector:
+            select:
+              options:
+                - "/1"
+                - "/2"
+                - "/3"
+                - "/5"
+                - "/10"
+                - "/15"
+                - "/30"
+        reremind_hours:
+          name: Re-remind interval (hours)
+          description: >-
+            Optional. If greater than 0, re-send the current report this many hours
+            after the last notification even if nothing changed, a nag for items
+            you have not resolved. 0 disables it (the default), so an unchanged
+            situation stays quiet.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 168
+              step: 1
+              unit_of_measurement: hours
+              mode: box
+        debug_enabled:
+          name: Debug logging
+          description: >-
+            When on, writes one diagnostic line to the system log each check,
+            carrying the version, mode, current fingerprint, and whether it
+            notified. Requires a logger entry at info level to appear.
+          default: false
+          selector:
+            boolean: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  version: 1.0.0-beta
+  family_mode: !input family_mode
+  source_sensors: !input source_sensors
+  memory_helper: !input memory_helper
+  battery_report_offline: !input battery_report_offline
+  push_targets: !input push_targets
+  persistent_enabled: !input persistent_enabled
+  priority_level: !input priority_level
+  notification_tag: !input notification_tag
+  reremind_hours: !input reremind_hours
+  debug_enabled: !input debug_enabled
+
+  setup_error: >-
+    {% set ns = namespace(err='') %}
+    {% if family_mode == 'entity' %}
+      {% set ns.err = 'Entity mode is not available in this beta. Set the mode to Battery, or watch for a later release that adds the Entity branch.' %}
+    {% elif source_sensors | length == 0 %}
+      {% set ns.err = 'No source sensors selected. Pick one or more Battery Sentinel sensors.' %}
+    {% elif memory_helper in [none, ''] %}
+      {% set ns.err = 'No memory helper selected. Create an input_text helper and select it.' %}
+    {% else %}
+      {% for s in source_sensors %}
+        {% if states(s) not in ['unavailable', 'unknown'] and state_attr(s, 'devices') is none and state_attr(s, 'total_monitored') is none %}
+          {% set ns.err = 'Sensor ' ~ s ~ ' does not look like a Sentinel sensor (no devices or total_monitored attribute). Check the sensor and the chosen family.' %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {{ ns.err }}
+
+  ok: "{{ setup_error == '' }}"
+
+  flagged_items: >-
+    {% set ns = namespace(items=[]) %}
+    {% if ok and family_mode == 'battery' %}
+      {% for s in source_sensors %}
+        {% for d in (state_attr(s, 'devices') or []) %}
+          {% set ns.items = ns.items + [{
+            'entity_id': d.entity_id,
+            'name': d.name,
+            'area': d.area,
+            'level': d.level,
+            'battery_type': d.battery_type | default(''),
+            'kind': 'low'
+          }] %}
+        {% endfor %}
+        {% if battery_report_offline %}
+          {% for u in (state_attr(s, 'unavailable_entities') or []) %}
+            {% set ns.items = ns.items + [{
+              'entity_id': u.entity_id,
+              'name': u.name,
+              'area': u.area,
+              'level': none,
+              'battery_type': '',
+              'kind': 'offline'
+            }] %}
+          {% endfor %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {{ ns.items }}
+
+  fingerprint_keys: >-
+    {% set ns = namespace(keys=[]) %}
+    {% for d in flagged_items %}
+      {% set ns.keys = ns.keys + [d.entity_id ~ '|' ~ d.kind] %}
+    {% endfor %}
+    {{ ns.keys | sort }}
+
+  fingerprint_plain: "{{ fingerprint_keys | join(',') }}"
+
+  fingerprint: >-
+    {% if fingerprint_plain | length <= 240 %}
+      {{ fingerprint_plain }}
+    {% else %}
+      {{ 'h:' ~ fingerprint_plain | md5 }}
+    {% endif %}
+
+  stored_raw: "{{ states(memory_helper) }}"
+  previous_fingerprint: "{{ (stored_raw.split('||')[0]) if '||' in stored_raw else stored_raw }}"
+  previous_notified_iso: "{{ (stored_raw.split('||')[1]) if '||' in stored_raw else '' }}"
+
+  changed: "{{ ok and (fingerprint | trim) != (previous_fingerprint | trim) }}"
+
+  flagged_count: "{{ flagged_items | length }}"
+
+  title: >-
+    {% if family_mode == 'battery' %}
+      Battery Sentinel: {{ flagged_count }} {{ 'battery' if flagged_count == 1 else 'batteries' }} to check
+    {% else %}
+      Sentinel report
+    {% endif %}
+
+  body: >-
+    {% set lines = namespace(items=[]) %}
+    {% for d in flagged_items | sort(attribute='name') %}
+      {% if d.kind == 'offline' %}
+        {% set line = d.name ~ ' (offline)' ~ ((' - ' ~ d.area) if d.area not in [none, '', 'Unassigned'] else '') %}
+      {% elif d.level is none %}
+        {% set line = d.name ~ ' (low)' ~ ((' - ' ~ d.area) if d.area not in [none, '', 'Unassigned'] else '') %}
+      {% else %}
+        {% set line = d.name ~ ' (' ~ d.level | round(0) ~ '%' ~ ((', ' ~ d.battery_type) if d.battery_type else '') ~ ')' ~ ((' - ' ~ d.area) if d.area not in [none, '', 'Unassigned'] else '') %}
+      {% endif %}
+      {% set lines.items = lines.items + [line] %}
+    {% endfor %}
+    {{ lines.items | join('\n') }}
+
+trigger:
+  - trigger: time_pattern
+    minutes: !input scan_interval
+    id: cadence
+    alias: Scheduled re-check on the scan interval
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+    alias: Re-evaluate when Home Assistant starts
+  - trigger: state
+    entity_id: !input source_sensors
+    id: source_change
+    alias: Re-evaluate when a watched sensor changes
+
+condition: []
+
+action:
+  - alias: Log the check
+    if:
+      - condition: template
+        value_template: "{{ debug_enabled }}"
+    then:
+      - action: system_log.write
+        continue_on_error: true
+        data:
+          level: info
+          logger: sentinel_notify
+          message: >-
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
+
+  - alias: Stop if setup error
+    if:
+      - condition: template
+        value_template: "{{ not ok }}"
+    then:
+      - stop: Setup error, see the debug log and the README.
+
+  - alias: Decide whether to notify
+    variables:
+      reremind_due: >-
+        {% if reremind_hours | int(0) > 0 and previous_notified_iso != '' %}
+          {{ (as_timestamp(now()) - as_timestamp(previous_notified_iso, 0)) >= (reremind_hours | int * 3600) }}
+        {% else %}
+          {{ false }}
+        {% endif %}
+      should_notify: "{{ changed or (reremind_due and flagged_count | int > 0) }}"
+
+  - alias: Notify and update memory
+    if:
+      - condition: template
+        value_template: "{{ should_notify }}"
+    then:
+      - alias: Update the memory helper
+        action: input_text.set_value
+        continue_on_error: true
+        data:
+          value: "{{ (fingerprint | trim) ~ '||' ~ now().isoformat() }}"
+        target:
+          entity_id: !input memory_helper
+
+      - alias: Persistent notification
+        if:
+          - condition: template
+            value_template: "{{ persistent_enabled }}"
+        then:
+          - action: persistent_notification.create
+            continue_on_error: true
+            data:
+              notification_id: "{{ notification_tag }}"
+              title: "{{ title | trim }}"
+              message: >-
+                {% if flagged_count | int == 0 %}All clear.{% else %}{{ body }}{% endif %}
+
+      - alias: Dismiss persistent when all clear
+        if:
+          - condition: template
+            value_template: "{{ persistent_enabled and flagged_count | int == 0 }}"
+        then:
+          - action: persistent_notification.dismiss
+            continue_on_error: true
+            data:
+              notification_id: "{{ notification_tag }}"
+
+      - alias: Push notifications
+        if:
+          - condition: template
+            value_template: "{{ push_targets | length > 0 and flagged_count | int > 0 }}"
+        then:
+          - repeat:
+              for_each: "{{ push_targets }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  continue_on_error: true
+                  data:
+                    title: "{{ title | trim }}"
+                    message: "{{ body }}"
+                    data:
+                      tag: "{{ notification_tag }}"
+                      priority: high
+                      ttl: 0
+                      channel: >-
+                        {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
+                      importance: >-
+                        {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
+                      push:
+                        interruption-level: >-
+                          {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
+
+      - alias: Log the notification
+        if:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        then:
+          - action: system_log.write
+            continue_on_error: true
+            data:
+              level: info
+              logger: sentinel_notify
+              message: >-
+                Sentinel Notify v{{ version }} | NOTIFIED | mode: {{ family_mode }} | flagged: {{ flagged_count }} | pushed: {{ push_targets | length }} | persistent: {{ persistent_enabled }}

@@ -45,6 +45,17 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.0-alpha.9 - Hardened the uptime grace math against a timezone crash and
+#           made the setup_error path a true early-exit. A user-supplied uptime
+#           sensor reporting a naive timestamp (no UTC offset, e.g. a hand-rolled
+#           template sensor) parsed as valid, then crashed the whole template on
+#           the aware-minus-naive datetime subtraction (TypeError), which would
+#           have shown the sensor as unavailable instead of catching it in the
+#           setup_error net. The grace comparison now uses epoch math
+#           (as_timestamp), which handles naive and aware uniformly and never
+#           throws. Also wrapped the scope-resolution and liveness loops in an
+#           uptime_ok guard so a misconfigured uptime sensor skips all that work
+#           instead of computing a full liveness matrix and discarding it.
 #   1.0.0-alpha.8 - Reworked the startup grace to measure from a required uptime
 #           sensor (timestamp mode) instead of the trigger-template this object.
 #           The old approach read boot_time back from this.attributes, which is
@@ -146,7 +157,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.8
+    1.0.0-alpha.9
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -355,11 +366,12 @@ variables:
       {%- set error_msg = '' -%}
     {%- endif -%}
     {%- set boot_dt = uptime_dt if uptime_ok else now() -%}
-    {%- set settled = uptime_ok and (now() - boot_dt).total_seconds() >= grace -%}
+    {%- set settled = uptime_ok and (as_timestamp(now()) - as_timestamp(boot_dt)) >= grace -%}
     {%- set priority = ['occupancy', 'motion', 'door', 'window', 'opening', 'garage_door', 'lock', 'moisture', 'smoke', 'gas', 'carbon_monoxide', 'temperature', 'humidity', 'connectivity', 'battery'] -%}
     {%- set inc = include_target -%}
     {%- set exc = exclude_target -%}
 
+    {%- if uptime_ok -%}
     {%- set trusted = namespace(ents=[]) -%}
     {%- set swept = namespace(ents=[]) -%}
 
@@ -510,6 +522,7 @@ variables:
     {%- endfor -%}
 
     {%- set flagged = fl.items -%}
+    {%- endif -%}
     {%- if not uptime_ok -%}
     {{
       {
@@ -565,7 +578,7 @@ action:
       level: info
       logger: entity_sentinel
       message: >-
-        Entity Sentinel v1.0.0-alpha.8 @ {{ result.last_evaluated }} | state: {{
+        Entity Sentinel v1.0.0-alpha.9 @ {{ result.last_evaluated }} | state: {{
         result.state }} | uptime_status: {{ result.uptime_status }}{% if
         result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
         result.settled }} | boot: {{ result.boot_time }} | monitored: {{

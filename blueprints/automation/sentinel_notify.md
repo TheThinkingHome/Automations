@@ -40,7 +40,9 @@ The full design and worked examples are in the article: <https://xeazy.com/batte
 
 This companion needs one helper to do its job: an `input_text` it uses to remember what it last reported, so it can notify you only on a change.
 
-Create it first: Settings, Devices & Services, Helpers, Create Helper, Text. Give it any name, for example "Battery Notify Memory." You will select it in the blueprint below. **Use a separate helper for each copy of this companion**, two copies sharing one helper would overwrite each other's memory.
+Create it first: Settings, Devices & Services, Helpers, Create Helper, Text. Give it any name, for example "Battery Notify Memory." You will select it in the blueprint below.
+
+> **Critical: one dedicated helper per copy.** Every copy of this companion must have its own input_text helper. Two copies (say a Battery one and an Entity one) sharing a single helper will overwrite each other's memory and cross-fire endless notifications, each thinking the situation changed on every other check. If you build more than one copy, create a separate helper for each.
 
 You do not need to set a maximum length or any options on the helper; the default is fine. The companion stores a compact fingerprint there, which fits comfortably regardless of how many devices you watch.
 
@@ -111,6 +113,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.1-beta | Pre-deploy review fixes. The persistent notification card is dismissed by a standalone, ungated step whenever nothing is flagged, and created or updated only when something is, removing the old create-then-dismiss dance and any chance of a ghost card. Push priority and ttl now scale with the chosen priority level, so a low-priority alert no longer wakes an Android radio at full power. Each push target is guarded with `has_value` so a renamed or deleted notify entity is skipped cleanly. The memory-helper guidance now stresses one dedicated helper per copy. |
 | 1.0.0-beta | First beta. Battery mode: reads Battery Sentinel sensors, reports low batteries (and optionally offline ones) by name with percentage, battery type, and area; binary low-battery sensors reported without a percentage. Combines multiple sensors into one report. Notifies only when the flagged set changes, using a sorted fingerprint stored in an `input_text` helper, so it does not notify every cycle. Push to any number of mobile devices and/or a persistent notification, tag-replaced in place. Priority levels with iOS and Android handling. Optional re-remind interval, off by default. Loud setup errors for a wrong-family sensor, a missing helper, or the not-yet-built Entity mode. The Entity mode is reserved in the same blueprint for a later beta. |
 
 ## License

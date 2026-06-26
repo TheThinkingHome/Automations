@@ -284,12 +284,6 @@ Three ways to handle it, in order of preference:
 2. **Widen the freeze lookback** for that scope, so a naturally quiet device is given more room before it counts as frozen.
 3. **Drop the device from freeze scope** and let the unavailable check cover it, by excluding it or watching it only through a precise list.
 
-## Changelog
-
-| Version | Notes |
-| --- | --- |
-| 1.0.0-beta.1 | First beta. The two-mode liveness engine: entity-level unavailable/unknown/missing with a duration debounce, device-level freeze against the freshest device report over a lookback, auto-routed per entity. Scope by entity, label, area, or device, with include and exclude (exclude wins, labels expand on both sides), and device-level dedupe so an entity reached by both a name and a sweep is watched once. Representative-per-device sweeping by a `device_class` priority order. Startup grace measured from a required uptime sensor (timestamp mode), so it is reliable across restarts and reloads and covers slow-booting hubs; a missing or non-timestamp uptime sensor yields a loud `setup_error` state with `error` and `uptime_status` attributes, and the sensor fails safe (watches nothing) until fixed. Timezone-safe grace math. Optional refresh button. Structured `devices` output with `reason`, `since`, `last_seen`, and a human-readable `age`. Hardened across an extensive adversarial test suite and proven on a live system, including a real power-loss outage, the device-dedupe collapse, the full grace cycle off the uptime clock, and the `setup_error` path end to end. |
-
 ## Putting the Signal to Work
 
 Because the sensor is a count with a `devices` list, anything can read it.
@@ -332,6 +326,12 @@ condition:
 ```
 
 For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
+
+## Changelog
+
+| Version | Notes |
+| --- | --- |
+| 1.0.0-beta | First beta. The two-mode liveness engine: entity-level unavailable/unknown/missing with a duration debounce, device-level freeze against the freshest device report over a lookback, auto-routed per entity. Scope by entity, label, area, or device, with include and exclude (exclude wins, labels expand on both sides), and device-level dedupe so an entity reached by both a name and a sweep is watched once. Representative-per-device sweeping by a `device_class` priority order. Startup grace measured from a required uptime sensor (timestamp mode), so it is reliable across restarts and reloads and covers slow-booting hubs; a missing or non-timestamp uptime sensor yields a loud `setup_error` state with `error` and `uptime_status` attributes, and the sensor fails safe (watches nothing) until fixed. Timezone-safe grace math. Optional refresh button. Structured `devices` output with `reason`, `since`, `last_seen`, and a human-readable `age`. Hardened across an extensive adversarial test suite and proven on a live system, including a real power-loss outage, the device-dedupe collapse, the full grace cycle off the uptime clock, and the `setup_error` path end to end. |
 
 ## License
 

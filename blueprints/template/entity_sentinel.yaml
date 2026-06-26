@@ -45,6 +45,15 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.0-alpha.7.3 - Fixed asymmetric device-level deduplication (beta blocker B).
+#           A swept representative was dropped only when its exact entity_id was
+#           already trusted. If a user trusted a low-priority sibling (say a
+#           temperature entity) while the sweep elected a different high-priority
+#           sibling (say occupancy) on the SAME device, both survived and a single
+#           dead device counted twice. The dedupe now resolves each trusted
+#           entity's device and drops any swept representative whose device is
+#           already covered, so a device reached by both a trusted entity and a
+#           sweep is watched once, through the trusted entity.
 #   1.0.0-alpha.7.2 - Fixed missing-entity detection. HA's states(eid) returns the
 #           string 'unknown' for an entity that does not exist, never None, so the
 #           previous check labeled a deleted or mistyped entity 'unknown' instead of
@@ -112,7 +121,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.7.2
+    1.0.0-alpha.7.3
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -363,7 +372,20 @@ variables:
     {%- endif -%}
 
     {%- set all_trusted = trusted.ents | unique | list -%}
-    {%- set rep_only = rep.ents | unique | reject('in', all_trusted) | list -%}
+    {%- set trusted_devices = namespace(ids=[]) -%}
+    {%- for te in all_trusted -%}
+      {%- set td = device_id(te) -%}
+      {%- if td is not none and td not in trusted_devices.ids -%}
+        {%- set trusted_devices.ids = trusted_devices.ids + [td] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set rep_keep = namespace(ents=[]) -%}
+    {%- for re in (rep.ents | unique | list) -%}
+      {%- if re not in all_trusted and device_id(re) not in trusted_devices.ids -%}
+        {%- set rep_keep.ents = rep_keep.ents + [re] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set rep_only = rep_keep.ents -%}
     {%- set monitored = (all_trusted + rep_only) | reject('in', xset.ents) | list -%}
 
     {%- set fl = namespace(items=[]) -%}

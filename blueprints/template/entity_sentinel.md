@@ -159,7 +159,7 @@ A label is the natural way to run this: tag your critical entities once, and the
 
 ### Areas and Devices: Convenient, Tuned for Freeze
 
-Point the scope at an area or a device, and the sensor sweeps it. Because an area or device holds many entities, a sweep does not watch all of them. It picks one representative entity per device, the behaviorally meaningful one, chosen by a priority order: occupancy and motion first, then door, window, opening, garage, and lock, then moisture, smoke, gas, and carbon monoxide, then temperature and humidity, then connectivity, and battery last. A device with no such entity is skipped.
+Point the scope at an area or a device, and the sensor sweeps it. Because an area or device holds many entities, a sweep does not watch all of them. It picks one representative entity per device, the behaviorally meaningful one. A device class with a clear behavioral meaning wins first, in this order: occupancy and motion, then door, window, opening, garage, and lock, then moisture, smoke, gas, and carbon monoxide, then temperature and humidity, then connectivity, then battery. If a device exposes none of those, the sweep falls back to the device's primary function, a light, switch, lock, cover, fan, climate, and so on, then to mains telemetry like power or energy, and finally to any ordinary entity on the device. So a smart plug, a bulb, or a relay is represented by its switch or light entity rather than skipped. The only devices skipped are those whose entire entity set is configuration or diagnostic (a device exposing nothing but a firmware-update entity, say), where there is genuinely nothing to monitor.
 
 This is tuned for freeze, and it is correct for freeze, because freeze resolves to the device anyway, the representative is just the anchor. For the unavailable check it is approximate: the sweep watches the representative's availability as a stand-in for the device, so if the integration drops a different entity on that device while the representative stays present, the sweep does not see it.
 
@@ -221,6 +221,7 @@ The state is the count of flagged entities, the number you badge or trigger on. 
 **What each field means:**
 
 - **`state`** the number of entities currently flagged, or the string `setup_error` if the uptime sensor is missing or misconfigured (see below). Zero means everything in scope is reporting normally.
+- **`ok`** a boolean, `true` when the sensor is functioning (whether or not it has flagged anything), `false` only when it is in `setup_error`. This is the safe field to gate downstream automations on; see the warning under "Putting the Signal to Work."
 - **`error`** empty in normal operation. When `state` is `setup_error`, this carries the human-readable reason and what to fix.
 - **`uptime_status`** what the engine read from the uptime sensor: the timestamp when valid, or the bad value (or `unknown`/`unavailable`) when not. This is a diagnostic, so you can confirm at a glance that the grace clock is healthy.
 - **`total_monitored`** how many entities fell within the scope after include, exclude, and the per-device representative sweep. A scope problem (a mistyped label, a device with nothing to watch) shows up here as a count lower than you expect.
@@ -245,9 +246,10 @@ The state is the count of flagged entities, the number you badge or trigger on. 
 - **`unavailable`** the entity exists and its own state is `unavailable`. The device dropped off the network, or the integration marked it unavailable. Flagged after the debounce.
 - **`unknown`** the entity exists and its state is `unknown`. It is registered and present but has no usable value right now, often a sensor that has not reported since startup.
 - **`missing`** the entity does not exist at all. A deleted device, a renamed entity, or a typo in the scope. This is how a stale reference in your configuration surfaces instead of failing silently.
-- **`frozen`** the entity is present with a normal value, but its device has not reported anything within the freeze lookback. The device locked up while still looking healthy, the case a plain value check sails right past. A device that has never reported at all is also flagged `frozen`, with `last_seen` null and `age` reading `never reported`.
+- **`frozen`** the entity is present with a normal value, but its device has not reported anything within the freeze lookback. The device locked up while still looking healthy, the case a plain value check sails right past.
+- **`never_reported`** the entity exists but has produced no report on record at all, no timestamp to measure. A freshly added entity that has not initialized, or one whose integration has never served it. `last_seen` is null and `age` reads `never reported`. This is an entity-level signal, distinct from `frozen` (which means a device that did report, then went silent).
 
-The first three come from the entity-level check and add into `unavailable_count`; `frozen` comes from the device-level check and is `frozen_count`. A consumer can tell a newly-offline entity from a long-dead one by comparing `since` to the previous evaluation, no separate list needed.
+The first three and `never_reported` come from the entity-level check and add into `unavailable_count`; `frozen` comes from the device-level check and is `frozen_count`. A consumer can tell a newly-offline entity from a long-dead one by comparing `since` to the previous evaluation, no separate list needed.
 
 ### The `setup_error` State
 
@@ -314,16 +316,19 @@ content: >-
   {% endfor %}
 ```
 
-A gate that holds back an automation when the entity it relies on has gone quiet:
+A gate that holds back an automation when the entity it relies on has gone quiet. Note the `ok` check first: it confirms the Sentinel itself is healthy before trusting its list, so a misconfigured Sentinel does not wave the automation through:
 
 ```yaml
 condition:
   - condition: template
     value_template: >-
-      {{ 'sensor.greenhouse_temp' not in
+      {{ is_state_attr('sensor.entity_sentinel', 'ok', true)
+         and 'sensor.greenhouse_temp' not in
          (state_attr('sensor.entity_sentinel', 'devices')
           | map(attribute='entity_id') | list) }}
 ```
+
+**A word on the state and downstream math.** In normal operation the state is a number, but if the uptime sensor is misconfigured the state becomes the string `setup_error`. Do not gate automations with `int()` math on the state, `{{ states('sensor.entity_sentinel') | int(0) == 0 }}` reads `setup_error` as 0 and would treat a broken Sentinel as "all healthy," firing automations on stale data. Gate on the `ok` attribute instead (`is_state_attr('sensor.entity_sentinel', 'ok', true)`), which is `true` only when the sensor is actually working, then read the count or the `devices` list.
 
 For more worked examples, detailed setup, and the fuller story behind each design choice, see the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
 
@@ -331,6 +336,7 @@ For more worked examples, detailed setup, and the fuller story behind each desig
 
 | Version | Notes |
 | --- | --- |
+| 1.0.1-beta | Three fixes from the pre-public review. Area and device sweeps no longer silently skip a device that exposes no priority device class: the representative election now falls back through the device's primary domain (light, switch, lock, cover, and the rest), then mains telemetry, then any ordinary entity, so smart plugs, bulbs, and relays are caught. An entity that has genuinely never reported is now flagged `never_reported` rather than mislabeled `frozen`, counted with the entity-level failures. Added an `ok` boolean attribute, true only when the sensor is functioning, so downstream automations can gate on it rather than doing integer math on a state that may read `setup_error`. |
 | 1.0.0-beta | First beta. The two-mode liveness engine: entity-level unavailable/unknown/missing with a duration debounce, device-level freeze against the freshest device report over a lookback, auto-routed per entity. Scope by entity, label, area, or device, with include and exclude (exclude wins, labels expand on both sides), and device-level dedupe so an entity reached by both a name and a sweep is watched once. Representative-per-device sweeping by a `device_class` priority order. Startup grace measured from a required uptime sensor (timestamp mode), so it is reliable across restarts and reloads and covers slow-booting hubs; a missing or non-timestamp uptime sensor yields a loud `setup_error` state with `error` and `uptime_status` attributes, and the sensor fails safe (watches nothing) until fixed. Timezone-safe grace math. Optional refresh button. Structured `devices` output with `reason`, `since`, `last_seen`, and a human-readable `age`. Hardened across an extensive adversarial test suite and proven on a live system, including a real power-loss outage, the device-dedupe collapse, the full grace cycle off the uptime clock, and the `setup_error` path end to end. |
 
 ## License

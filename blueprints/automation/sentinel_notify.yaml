@@ -4,6 +4,16 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.3-beta - Hardening from an adversarial simulation of the engine. The
+#           battery line renderer no longer crashes on a malformed device item: a
+#           missing, null, or non-numeric level renders as "(low)" rather than
+#           raising on round(), and a numeric level is coerced and shown as a clean
+#           integer percent (a float like 12.7 now reads 13%, not 13.0%). Flagged
+#           items are de-duplicated by entity and kind, so a battery that two source
+#           sensors both report is counted and listed once, with a clean
+#           fingerprint, rather than double-counted. A correct Battery Sentinel does
+#           not emit malformed items, so this is defense for a public companion, not
+#           a fix for a known fault.
 #   1.0.2-beta - Fixed a push-notification guard that could silently swallow alerts
 #           right after a restart. The 1.0.1 has_value() guard rejected any target
 #           whose state was unknown, but a mobile_app notify entity reads unknown
@@ -91,7 +101,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.2-beta
+    1.0.3-beta
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -283,7 +293,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.2-beta
+  version: 1.0.3-beta
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -344,9 +354,20 @@ variables:
     {% endif %}
     {{ ns.items }}
 
+  flagged_items_unique: >-
+    {% set ns = namespace(items=[], seen=[]) %}
+    {% for d in flagged_items %}
+      {% set key = d.entity_id ~ '|' ~ d.kind %}
+      {% if key not in ns.seen %}
+        {% set ns.seen = ns.seen + [key] %}
+        {% set ns.items = ns.items + [d] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.items }}
+
   fingerprint_keys: >-
     {% set ns = namespace(keys=[]) %}
-    {% for d in flagged_items %}
+    {% for d in flagged_items_unique %}
       {% set ns.keys = ns.keys + [d.entity_id ~ '|' ~ d.kind] %}
     {% endfor %}
     {{ ns.keys | sort }}
@@ -366,7 +387,7 @@ variables:
 
   changed: "{{ ok and (fingerprint | trim) != (previous_fingerprint | trim) }}"
 
-  flagged_count: "{{ flagged_items | length }}"
+  flagged_count: "{{ flagged_items_unique | length }}"
 
   title: >-
     {% if family_mode == 'battery' %}
@@ -377,13 +398,19 @@ variables:
 
   body: >-
     {% set lines = namespace(items=[]) %}
-    {% for d in flagged_items | sort(attribute='name') %}
+    {% for d in flagged_items_unique | sort(attribute='name') %}
+      {% set nm = d.name | default('Unknown') %}
+      {% set ar = d.area | default('') %}
+      {% set suffix = (' - ' ~ ar) if ar not in [none, '', 'Unassigned'] else '' %}
+      {% set lvl = d.level | default(none) %}
+      {% set has_pct = lvl is not none and lvl not in ['unknown', 'unavailable', ''] and (lvl | string | float(none)) is not none %}
       {% if d.kind == 'offline' %}
-        {% set line = d.name ~ ' (offline)' ~ ((' - ' ~ d.area) if d.area not in [none, '', 'Unassigned'] else '') %}
-      {% elif d.level is none %}
-        {% set line = d.name ~ ' (low)' ~ ((' - ' ~ d.area) if d.area not in [none, '', 'Unassigned'] else '') %}
+        {% set line = nm ~ ' (offline)' ~ suffix %}
+      {% elif not has_pct %}
+        {% set line = nm ~ ' (low)' ~ suffix %}
       {% else %}
-        {% set line = d.name ~ ' (' ~ d.level | round(0) ~ '%' ~ ((', ' ~ d.battery_type) if d.battery_type else '') ~ ')' ~ ((' - ' ~ d.area) if d.area not in [none, '', 'Unassigned'] else '') %}
+        {% set bt = d.battery_type | default('') %}
+        {% set line = nm ~ ' (' ~ (lvl | float | round(0) | int) ~ '%' ~ ((', ' ~ bt) if bt else '') ~ ')' ~ suffix %}
       {% endif %}
       {% set lines.items = lines.items + [line] %}
     {% endfor %}

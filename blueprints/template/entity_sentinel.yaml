@@ -45,6 +45,14 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.0-alpha.7.4 - Expanded the debug log line: added the blueprint version as
+#           the first token (so a pasted support log shows which version produced
+#           it), plus settled, boot_time, and per-entity area, since, and last_seen
+#           alongside the existing name, entity_id, reason, and age. The verbose
+#           per-entity timestamps are a development aid and may be trimmed at beta;
+#           the version token stays. No engine logic change. NOTE: the version
+#           string in the log message is hardcoded and must be bumped together with
+#           this changelog on every release.
 #   1.0.0-alpha.7.3 - Fixed asymmetric device-level deduplication (beta blocker B).
 #           A swept representative was dropped only when its exact entity_id was
 #           already trusted. If a user trusted a low-priority sibling (say a
@@ -121,7 +129,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.7.3
+    1.0.0-alpha.7.4
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -485,11 +493,13 @@ action:
       level: info
       logger: entity_sentinel
       message: >-
-        Entity Sentinel @ {{ result.last_evaluated }} | monitored: {{
+        Entity Sentinel v1.0.0-alpha.7.4 @ {{ result.last_evaluated }} | settled: {{
+        result.settled }} | boot: {{ result.boot_time }} | monitored: {{
         result.total_monitored }} | flagged: {{ result.state }} (unavailable {{
         result.unavailable_count }}, frozen {{ result.frozen_count }}){% for d in
-        result.devices %} | {{ d.name }} [{{ d.reason }}, {{ d.age }}] {{
-        d.entity_id }}{% endfor %}
+        result.devices %} | {{ d.name }} ({{ d.entity_id }}) [{{ d.reason }}] area={{
+        d.area }} age={{ d.age }} since={{ d.since }} last_seen={{ d.last_seen
+        }}{% endfor %}
 sensor:
 - name: !input sensor_name
   unique_id: !input unique_id

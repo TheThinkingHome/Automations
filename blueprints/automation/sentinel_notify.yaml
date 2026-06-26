@@ -4,6 +4,19 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.5-beta - Two fixes from a second adversarial review. First, a broken upstream
+#           Sentinel is now surfaced, not hidden: if a source sensor reports
+#           setup_error or ok:false (for example its uptime sensor was deleted), the
+#           companion sends a distinct "Sentinel not working" alert carrying the
+#           upstream error and then stops, instead of reading the empty device list as
+#           all-clear and silently dismissing the warning card. The alert is
+#           change-detected, so it fires once on break and clears on recovery. Second,
+#           the source-sensor trigger condition added in 1.0.4 compared only the state
+#           (the count), which dropped a real change when one battery cleared and a
+#           different one dropped in the same window (count unchanged, set changed); it
+#           now compares the devices attribute (and unavailable_entities when offline
+#           reporting is on), so a same-count set swap is caught while attribute-only
+#           churn is still ignored.
 #   1.0.4-beta - Two fixes from an adversarial review. The plain-versus-hash
 #           fingerprint gate is lowered from 240 to 200 characters so the STORED
 #           value (the fingerprint plus a delimiter and an ISO timestamp, about 34
@@ -117,7 +130,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.4-beta
+    1.0.5-beta
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -309,7 +322,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.4-beta
+  version: 1.0.5-beta
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -339,6 +352,20 @@ variables:
     {{ ns.err }}
 
   ok: "{{ setup_error == '' }}"
+
+  upstream_error: >-
+    {% set ns = namespace(bad=[]) %}
+    {% if ok %}
+      {% for s in source_sensors %}
+        {% if states(s) == 'setup_error' or state_attr(s, 'ok') == false %}
+          {% set msg = state_attr(s, 'error') | default('') %}
+          {% set ns.bad = ns.bad + [s ~ (': ' ~ msg if msg else '')] %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {{ ns.bad | join(' || ') }}
+
+  upstream_broken: "{{ ok and upstream_error != '' }}"
 
   flagged_items: >-
     {% set ns = namespace(items=[]) %}
@@ -447,13 +474,22 @@ trigger:
     alias: Re-evaluate when a watched sensor changes
 
 condition:
-  - alias: For a source-sensor trigger, require the state value to have changed (ignore attribute-only churn)
+  - alias: For a source-sensor trigger, run only if the monitored content actually changed (ignore attribute-only churn like a refreshed evaluation timestamp)
     condition: template
     value_template: >-
-      {{ trigger.id != 'source_change'
-         or trigger.from_state is none
-         or trigger.to_state is none
-         or trigger.from_state.state != trigger.to_state.state }}
+      {% if trigger.id != 'source_change'
+            or trigger.from_state is none
+            or trigger.to_state is none %}
+        {{ true }}
+      {% else %}
+        {% set f = trigger.from_state %}
+        {% set t = trigger.to_state %}
+        {% set f_dev = f.attributes.get('devices', none) %}
+        {% set t_dev = t.attributes.get('devices', none) %}
+        {% set f_un = f.attributes.get('unavailable_entities', none) if battery_report_offline else none %}
+        {% set t_un = t.attributes.get('unavailable_entities', none) if battery_report_offline else none %}
+        {{ f.state != t.state or f_dev != t_dev or f_un != t_un }}
+      {% endif %}
 
 action:
   - alias: Log the check
@@ -475,6 +511,71 @@ action:
         value_template: "{{ not ok }}"
     then:
       - stop: Setup error, see the debug log and the README.
+
+  - alias: Handle a broken upstream Sentinel before anything else
+    if:
+      - condition: template
+        value_template: "{{ upstream_broken }}"
+    then:
+      - alias: Alert that a source Sentinel is not working, once, change-detected
+        if:
+          - condition: template
+            value_template: >-
+              {{ ('err:' ~ upstream_error) | trim != previous_fingerprint | trim }}
+        then:
+          - alias: Remember the broken state so it does not re-alert every cycle
+            action: input_text.set_value
+            continue_on_error: true
+            data:
+              value: "{{ ('err:' ~ upstream_error) | trim ~ '||' ~ now().isoformat() }}"
+            target:
+              entity_id: !input memory_helper
+          - alias: Persistent card for the broken Sentinel
+            if:
+              - condition: template
+                value_template: "{{ persistent_enabled }}"
+            then:
+              - action: persistent_notification.create
+                continue_on_error: true
+                data:
+                  notification_id: "{{ notification_tag }}"
+                  title: Sentinel not working
+                  message: >-
+                    A source Sentinel is reporting a setup error and is not monitoring. Fix it, then this clears. Detail: {{ upstream_error }}
+          - alias: Push for the broken Sentinel
+            if:
+              - condition: template
+                value_template: "{{ push_targets | length > 0 }}"
+            then:
+              - repeat:
+                  for_each: "{{ push_targets }}"
+                  sequence:
+                    - alias: Push to this target unless it is unavailable
+                      if:
+                        - condition: template
+                          value_template: "{{ states(repeat.item) != 'unavailable' }}"
+                      then:
+                        - action: "{{ repeat.item }}"
+                          continue_on_error: true
+                          data:
+                            title: Sentinel not working
+                            message: >-
+                              A source Sentinel is reporting a setup error and is not monitoring. Detail: {{ upstream_error }}
+                            data:
+                              tag: "{{ notification_tag }}"
+                              priority: >-
+                                {{ 'high' if priority_level == 'high' else 'normal' }}
+                              ttl: >-
+                                {{ 0 if priority_level == 'high' else 3600 }}
+                              channel: >-
+                                {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
+                              importance: >-
+                                {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
+                              push:
+                                interruption-level: >-
+                                  {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
+      - alias: Do not run the normal clear and notify logic while a Sentinel is broken
+        stop: A source Sentinel is in setup_error; alerted and holding.
 
   - alias: Dismiss the persistent card whenever clear
     if:

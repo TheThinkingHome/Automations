@@ -45,6 +45,15 @@
 # last_reported), revisit this and gate freeze during grace as well.
 #
 # Changelog:
+#   1.0.2-beta - Excluded event entities from area/device sweep election. A live
+#           test surfaced an NSPanel device exposing only event and button entities;
+#           the sweep fallback elected its touch event entity, which sits at unknown
+#           until pressed, producing a permanent false unknown flag. Event entities
+#           are never a usable liveness signal (their state is unknown-until-fired or
+#           a stale last-fired timestamp), so the event domain now joins the skip
+#           list. A device whose only non-diagnostic entities are events is skipped,
+#           which is correct: it offers no honest liveness anchor. An event entity
+#           never suppresses a real sensor when the device also exposes one.
 #   1.0.1-beta - Three fixes from the pre-public adversarial review.
 #           (1) Area and device sweeps no longer silently skip a device that
 #           exposes no priority device_class. The representative election is now
@@ -120,7 +129,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.1-beta
+    1.0.2-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -374,7 +383,7 @@ variables:
     {%- endfor -%}
     {%- set primary_domains = ['binary_sensor', 'sensor', 'light', 'switch', 'lock', 'cover', 'fan', 'climate', 'vacuum', 'lawn_mower', 'water_heater', 'humidifier', 'media_player', 'camera', 'valve', 'siren', 'device_tracker'] -%}
     {%- set telemetry_dc = ['power', 'energy', 'current', 'voltage', 'apparent_power', 'power_factor', 'illuminance'] -%}
-    {%- set junk_domains = ['update', 'button', 'number', 'select', 'text', 'image', 'scene', 'configurator'] -%}
+    {%- set junk_domains = ['update', 'button', 'number', 'select', 'text', 'image', 'scene', 'configurator', 'event'] -%}
     {%- for d in devset.ids -%}
       {%- set chosen = namespace(eid=none, rank=999) -%}
       {%- set fb = namespace(primary=none, telemetry=none, any=none) -%}
@@ -558,7 +567,7 @@ action:
       level: info
       logger: entity_sentinel
       message: >-
-        Entity Sentinel v1.0.1-beta @ {{ result.last_evaluated }} | state: {{
+        Entity Sentinel v1.0.2-beta @ {{ result.last_evaluated }} | state: {{
         result.state }} | uptime_status: {{ result.uptime_status }}{% if
         result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
         result.settled }} | boot: {{ result.boot_time }} | monitored: {{

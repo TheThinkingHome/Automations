@@ -48,7 +48,7 @@ The two run together, picked per entity with no configuration. Unavailable alway
 - **A loud error if set up wrong.** A missing or misconfigured uptime sensor yields a `setup_error` state with a distinct icon and a message naming the problem. An `ok` attribute lets automations tell a working sensor from a broken one.
 - **Scope by entity, label, area, or device**, with include and exclude, and exclude always wins.
 
-The full design, the reasoning behind each choice, and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
+The full design, the reasoning behind each choice, and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 
 ## How It Decides
 
@@ -267,7 +267,7 @@ condition:
 
 Do not gate on `int()` math alone: `int('setup_error')` evaluates to 0, which would read a broken Sentinel as "all healthy." Always check `ok` first.
 
-More worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprint/>
+More worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 
 ## Changelog
 

@@ -1,19 +1,17 @@
-# Sentinel Notify (Beta)
+# Sentinel Notify (Alpha)
 
-A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications: it tells you what is actually wrong, by name, and only when the situation changes.
+A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications: it tells you what is actually wrong, by name, and does not SPAM your notifications.
 
 ## What This Solves
 
-The Sentinels produce a sensor with a rich set of attributes: not just a count, but a list of exactly which batteries are low (with percentage, battery type, and area) or which entities have gone quiet (with the reason and how long). That detail is the whole point of building a sensor instead of a one-shot notifier. But a sensor does not notify you on its own; you need something that reads it and decides when and how to tell you.
-
-That is this companion. And because it reads the structured attributes, it can do two things the common notifier blueprints cannot. It can name what is wrong, "Master Bath Motion (12%, CR2450)", not just "3 batteries low." And it can notify you only when the situation has changed since it last told you, so it never nags you every cycle about the same three batteries you already know about.
+The Sentinels produce a sensor with a rich set of attributes: not just a count, but a list of exactly which batteries are low (with percentage, battery type, and area) or which entities have gone quiet (with the reason and how long). That detail is the whole point of building a sensor instead of a one-shot notifier. But a sensor does not notify you on its own; you need something that reads it and decides when and how to alert you.
 
 This is a companion to the two Sentinel sensor blueprints, and it does nothing on its own. Build a Sentinel first, it creates the sensor, then build this to notify from it:
 
 - [**Battery Sentinel**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) counts the batteries running low.
 - [**Entity Sentinel**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) catches entities that have gone quiet, unavailable or frozen at their last value.
 
-Both, and this companion, come from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/), and discussion is in the [community thread](https://xeazy.com/logbook/).
+Because it reads the structured attributes, it can do two things the common notifier blueprints cannot. It can name what is wrong, "Master Bath Motion (12%, CR2450)", not just "3 batteries low." And it can notify you only when the situation has changed, so it does not nag you every cycle about the same three batteries or entities you already know about. This companion comes from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/), and discussion is in the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints).
 
 ## Built on Request, and Why It Is a Beta
 

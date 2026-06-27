@@ -11,21 +11,19 @@ This is a companion to the two Sentinel sensor blueprints, and it does nothing o
 - [**Battery Sentinel**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) counts the batteries running low.
 - [**Entity Sentinel**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) catches entities that have gone quiet, unavailable or frozen at their last value.
 
-Because it reads the structured attributes, it can do two things the common notifier blueprints cannot. It can name what is wrong, "Master Bath Motion (12%, CR2450)", not just "3 batteries low." And it can notify you only when the situation has changed, so it does not nag you every cycle about the same three batteries or entities you already know about. This companion comes from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/), and discussion is in the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints).
+Because it reads the structured attributes, it can do two things the common notifier blueprints cannot. It can name what is wrong, "Master Bath Motion (12%, CR2450)", not just "3 batteries low." And it can notify you only when the situation has changed, so it does not nag you every cycle about the same three batteries or entities you already know about. This companion comes from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/).
 
 ## Built on Request, and Why It Is a Beta
 
 Every other blueprint from The Thinking Home grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job was to generalize what already worked: make it configurable, document it, smooth the edges, and hand over something I already trusted.
 
-This one is different. It did not run quietly in my walls for years before release. It was asked for, by the community, for a problem the existing tools did not solve. So I built it: imagined, drafted, edited, debugged, and tested as hard as one house allows. I believe in it, but I cannot yet claim what years of uneventful running would let me claim.
+This one is different. It did not run quietly for years in my walls. It was asked for, by the community, for a problem the existing tools cannot solve. So I built it: imagined, drafted, edited, reimagined, debugged, and am still testing it as hard as I can in one house and an adversarial test suite allows.
 
-That is why this is a beta, not a stable release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I cannot produce here. If you hit something, the [community thread](https://xeazy.com/logbook/) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
+That is why this is an **alpha** release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I did not imagine and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
 
-## One Family Per Copy
+## How it Works
 
-This companion watches one Sentinel family at a time. You set a mode, Battery or Entity, and point it at sensors of that family. If you run both Sentinels, build two copies of this companion, one in each mode. They behave differently enough, batteries are sparse and slow, entities are denser and twitchier, that keeping them separate makes each one simpler to configure and its notifications cleaner to read.
-
-This beta ships the **Battery** mode. The **Entity** mode is built into the same blueprint and arrives in a later beta; selecting it today reports a setup error pointing you back to Battery.
+This companion watches one Sentinel family at a time. You set a mode, _Battery or Entity_, and point it at sensors from that family. If you run both Sentinels, build two copies of this companion. They behave differently enough, batteries are sparse and slow, entities are denser and twitchier, that keeping them separate makes each one simpler to configure and its notifications cleaner to read.
 
 ## What It Does
 

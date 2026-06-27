@@ -47,13 +47,13 @@ The full design, the reasoning behind each choice, and worked examples are in th
 
 ## Before You Start: the Uptime Requirement
 
-Battery Sentinel measures its startup grace from a Home Assistant **uptime sensor in timestamp mode**, so it needs one in place before it will work.
+Entity Sentinel measures its startup grace from a Home Assistant **uptime sensor in timestamp mode**, so it needs one in place before it will work.
 
 The startup grace needs to know how long the system has been up. The obvious way to track that, reading the sensor's own boot time from its attributes, is unreliable: Home Assistant has a long-standing bug ([#115585](https://github.com/home-assistant/core/issues/115585)) where a trigger-based template sensor sometimes cannot read its own attributes during evaluation. The uptime sensor sidesteps it: an independent entity, read fresh every evaluation, reliable across restarts and reloads.
 
-Most systems already have it. If yours does not, add the **Uptime** integration (Settings, Devices & Services, Add Integration, Uptime). Then confirm the entity is in **timestamp** mode: its state should read like `2026-06-26T14:56:59+00:00`, not a number of days.
+Most systems already have it. If yours does not, add the **[Uptime Integration](https://www.home-assistant.io/integrations/uptime/)** (Settings, Devices & Services, Add Integration, Uptime). It creates `sensor.uptime`, whose state is a timestamp like `2026-06-26T14:56:59+00:00`. Confirm it is in **timestamp** mode, not a number of days.
 
-If the uptime sensor is missing, unavailable, or not a timestamp, Battery Sentinel reports a `setup_error` state with a message naming the problem, watches nothing, and starts working the moment you fix it.
+If the uptime sensor is missing, unavailable, or not a timestamp, Entity Sentinel reports a `setup_error` state with a message naming the problem, watches nothing, and starts working the moment you fix it.
 
 ## Import the Blueprint
 
@@ -118,11 +118,11 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 | `uptime_sensor` | Yes | `sensor.uptime` | an uptime sensor in timestamp mode | The clock the startup grace is measured from. Missing or non-timestamp yields `setup_error`. See "Before You Start." |
 | `low_threshold` | No | `20` | 0 to 100 | A battery percentage at or below this counts as low. Binary sensors reading `on` always count. Out of range yields `setup_error`. |
 | `low_clear_margin` | No | `2` | 0 or greater | How far above the threshold a flagged device must climb before it clears. The hysteresis band. Negative yields `setup_error`. |
-| `include_target` | No | empty | entities, areas, devices, or labels | Which devices to watch. Empty watches every battery device-class entity. Areas and devices are filtered to batteries; labels expand on entity, device, or area. |
+| `include_target` | No | empty | entities, areas, devices, or **labels** | Which devices to watch. Empty watches every battery device-class entity. Areas and devices are filtered to batteries; labels expand on entity, device, or area. |
 | `exclude_target` | No | empty | entities, areas, devices, or labels | Which to leave out. Exclude always wins over include. |
-| `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/5`, `/10`, `/15`, `/30` | How often the sensor re-scans, in hours. |
-| `startup_grace_seconds` | No | `240` | 0 or greater (seconds) | How long after Home Assistant starts to hold the unavailable list empty while the mesh repopulates, measured from the uptime sensor. The low count is never held. See "Setting the Grace Period." |
-| `refresh_button` | No | none | an `input_button` entity | Optional. Press to re-evaluate immediately, for example after changing a battery. It re-scans; it does not force a device to report. Several sensors can share one. |
+| `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/6`, `/12` | How often the sensor re-scans, in hours. /2 means that it will trigger every even hour. /5 means every hour divisible by 5. |
+| `startup_grace_seconds` | No | `240` | 0 or greater (seconds) | How long after Home Assistant starts to hold the unavailable list empty while the mesh repopulates, measured from the uptime sensor. |
+| `refresh_button` | No | none | an `input_button` entity | Optional. Press to re-evaluate immediately, for example after changing a battery. |
 | `sensor_name` | No | `Battery Sentinel` | any text | The friendly name, and what the entity id is built from. |
 | `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, carrying the version, state, and both the low and unavailable lists. |
 

@@ -12,6 +12,8 @@ That is the question Entity Sentinel asks, by two checks chosen automatically pe
 
 Its companion, **Battery Sentinel**, counts the batteries running low. Battery Sentinel answers "what is running low," Entity Sentinel answers "what stopped reporting." Build both for full coverage, or just the one you want. They are separate blueprints and do not depend on each other.
 
+Plenty of blueprints already scan the whole house on a timer and list whatever is offline. Those are good at "set it up in two minutes and get a daily list of everything that is dead," and this does not replace them. Entity Sentinel is for the narrower request: watch the specific entities that matter, catch the frozen ones a state scan misses, and hear about it without polling the whole system on a schedule.
+
 ## Built on Request, and Why It Is a Beta
 
 Every other blueprint from The Thinking Home grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job was to generalize what already worked: make it configurable, document it, smooth the edges, and hand over something I already trusted.

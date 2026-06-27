@@ -122,7 +122,7 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 | `exclude_target` | No | empty | entities, areas, devices, or labels | Which to leave out. Exclude always wins over include. |
 | `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/6`, `/12` | How often the sensor re-scans, in hours. /2 means that it will trigger every even hour. /5 means every hour divisible by 5. |
 | `startup_grace_seconds` | No | `240` | 0 or greater (seconds) | How long after Home Assistant starts to hold the unavailable list empty while the mesh repopulates, measured from the uptime sensor. |
-| `refresh_button` | No | none | an `input_button` entity | Optional. Press to re-evaluate immediately, for example after changing a battery. |
+| `refresh_button` | No | `input_button.none` | an `input_button` | Optional. Pressing it re-evaluates immediately. Point several Sentinels at one button to refresh them together. It re-scans; it cannot force a device to report. |
 | `sensor_name` | No | `Battery Sentinel` | any text | The friendly name, and what the entity id is built from. |
 | `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, carrying the version, state, and both the low and unavailable lists. |
 

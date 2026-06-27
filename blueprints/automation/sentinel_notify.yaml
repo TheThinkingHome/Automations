@@ -4,16 +4,21 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
-#   1.0.1-beta - Removed the minute-based check interval and the elapsed-time re-remind.
-#           Change-detection is now purely event-driven: the companion re-evaluates when
-#           a watched sensor changes (instant) and at Home Assistant start, with no
-#           idle polling. Added an OPTIONAL daily reminder at a configurable time of day:
-#           when enabled, at the set time it re-sends the current report if anything is
-#           still flagged (and re-raises the broken-Sentinel card if a source is still
-#           broken), reusing the same tag so it replaces any existing card in place. Off
-#           by default. This replaces the re-remind interval with a cleaner "remind me
-#           at 8am if it is still wrong" model and removes all timer overhead.
-#   1.0.0-beta - Initial release. Battery mode: reads one or more Battery Sentinel
+#   1.0.0-alpha.2 - Added the ENTITY family. Entity mode reads one or more Entity Sentinel
+#           sensors and reports the entities that have gone quiet, by name, with the reason
+#           (unavailable, frozen, missing, never_reported) and how long since each last
+#           reported, and the area. Title reads "Entity Sentinel: N entities gone quiet".
+#           When two overlapping Entity Sentinels flag the same entity, a genuinely-gone
+#           reason (unavailable, unknown, missing, never_reported) wins over frozen. The
+#           change-detection engine, memory, dedup, and delivery are shared with Battery.
+#           Also in this release: removed the minute-based check interval and the
+#           elapsed-time re-remind; change-detection is now purely event-driven (re-evaluates
+#           when a watched sensor changes, and at Home Assistant start, with no idle polling),
+#           and an OPTIONAL daily reminder at a configurable time of day re-sends the current
+#           report if anything is still flagged (and re-raises the broken-Sentinel card if a
+#           source is still broken), reusing the same tag so it replaces any existing card in
+#           place. Off by default.
+#   1.0.0-alpha.1 - Initial build. Battery mode: reads one or more Battery Sentinel
 #           sensors and reports low batteries (and optionally offline ones) by name
 #           with percentage, battery type, and area; a binary low-battery sensor, which
 #           has no percentage, is reported without one. Notifies ONLY when the flagged
@@ -29,17 +34,16 @@
 #           the stored value. Push to any number of mobile devices and/or a persistent
 #           notification, tag-replaced in place; priority scales iOS interruption-level
 #           and Android channel/importance/ttl. Loud setup errors for a wrong-family
-#           sensor, a missing helper, or the not-yet-built Entity mode, which is reserved
-#           in the same blueprint for a later release. Versioning from here: patch
-#           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major (2.0.0-beta)
-#           for breaking changes.
+#           sensor or a missing helper. (Entity mode was added in alpha.2.) Versioning from here: patch
+#           alpha.N while iterating before any live testing; it graduates to 1.0.0-beta
+#           once proven on hardware, then 1.0.0 stable.
 #
 # Design note: this companion watches ONE Sentinel family per instance (a Battery
 # or Entity mode). The change-detection engine works across families, but the
 # wording, item shape, and sensible defaults differ enough between batteries
 # (sparse, slow) and entities (dense, twitchy) that one instance per family keeps
 # each configuration and its notifications clean. The Battery mode ships in this
-# beta; the Entity mode is reserved in the same blueprint for a later beta.
+# alpha; both the Battery and Entity modes are built and under test.
 #
 # Memory note: change-detection needs to remember what was last reported across
 # restarts. The only UI-creatable, restart-surviving store is an input_text (capped
@@ -53,9 +57,9 @@
 # the store.
 
 blueprint:
-  name: Sentinel Notify (Beta)
+  name: Sentinel Notify (Alpha)
   description: |
-    # Sentinel Notify (Beta)
+    # Sentinel Notify (Alpha)
 
     *Turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications.*
 
@@ -82,15 +86,15 @@ blueprint:
 
     Send by push to any number of mobile devices, and/or as a persistent notification in the Home Assistant UI. Priority controls sound and Do Not Disturb on push.
 
-    This companion watches ONE family per instance. If you run both Sentinels, build two copies, one in each mode. This beta ships the Battery mode; the Entity mode arrives in a later beta and reports a setup error if selected today.
+    This companion watches ONE family per instance. If you run both Sentinels, build two copies, one in each mode.
 
     An optional debug switch, off by default, writes one diagnostic line to the system log on each check, for use while setting it up.
 
-    This is a beta. It requires one input_text helper, which you create first and select below. See the README.
+    This is an alpha, under active development and not yet hardware-tested. It requires one input_text helper, which you create first and select below. See the README.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.1-beta
+    1.0.0-alpha.2
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -161,22 +165,6 @@ blueprint:
             When on, batteries that are currently unavailable or unknown (the
             sensor's unavailable_entities) are reported alongside the low ones. Off
             by default, so you hear only about low batteries.
-          default: false
-          selector:
-            boolean: {}
-
-    entity_section:
-      name: Entity Settings
-      icon: mdi:lan-disconnect
-      description: Fill this in only if the mode above is Entity. Ignored for Battery. (Entity support arrives in a later beta.)
-      collapsed: true
-      input:
-        entity_placeholder:
-          name: Entity options (reserved)
-          description: >-
-            Reserved for the Entity branch, which is built in a later beta. Leave
-            as is. Setting the mode to Entity today yields a setup error directing
-            you to the Battery mode or a future release.
           default: false
           selector:
             boolean: {}
@@ -276,7 +264,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.1-beta
+  version: 1.0.0-alpha.2
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -290,10 +278,8 @@ variables:
 
   setup_error: >-
     {% set ns = namespace(err='') %}
-    {% if family_mode == 'entity' %}
-      {% set ns.err = 'Entity mode is not available in this beta. Set the mode to Battery, or watch for a later release that adds the Entity branch.' %}
-    {% elif source_sensors | length == 0 %}
-      {% set ns.err = 'No source sensors selected. Pick one or more Battery Sentinel sensors.' %}
+    {% if source_sensors | length == 0 %}
+      {% set ns.err = 'No source sensors selected. Pick one or more Sentinel sensors of the chosen family.' %}
     {% elif memory_helper in [none, ''] %}
       {% set ns.err = 'No memory helper selected. Create an input_text helper and select it.' %}
     {% else %}
@@ -334,6 +320,8 @@ variables:
             'area': d.area,
             'level': d.level,
             'battery_type': d.battery_type | default(''),
+            'reason': '',
+            'age': '',
             'kind': 'low'
           }] %}
         {% endfor %}
@@ -345,32 +333,68 @@ variables:
               'area': u.area,
               'level': none,
               'battery_type': '',
+              'reason': '',
+              'age': '',
               'kind': 'offline'
             }] %}
           {% endfor %}
         {% endif %}
       {% endfor %}
-    {% endif %}
-    {{ ns.items }}
-
-  flagged_items_unique: >-
-    {% set off = flagged_items | selectattr('kind', 'eq', 'offline')
-                 | map(attribute='entity_id') | list %}
-    {% set ns = namespace(items=[], seen=[]) %}
-    {% for d in flagged_items %}
-      {% if d.entity_id not in ns.seen %}
-        {% set ns.seen = ns.seen + [d.entity_id] %}
-        {% if d.entity_id in off and d.kind != 'offline' %}
+    {% elif ok and family_mode == 'entity' %}
+      {% for s in source_sensors %}
+        {% for d in (state_attr(s, 'devices') or []) %}
           {% set ns.items = ns.items + [{
             'entity_id': d.entity_id,
             'name': d.name,
             'area': d.area,
             'level': none,
             'battery_type': '',
-            'kind': 'offline'
+            'reason': d.reason | default('unavailable'),
+            'age': d.age | default(''),
+            'kind': d.reason | default('unavailable')
           }] %}
+        {% endfor %}
+      {% endfor %}
+    {% endif %}
+    {{ ns.items }}
+
+  flagged_items_unique: >-
+    {% if family_mode == 'entity' %}
+      {% set severe_reasons = ['unavailable', 'unknown', 'missing', 'never_reported'] %}
+      {% set severe_ids = flagged_items | selectattr('kind', 'in', severe_reasons)
+                          | map(attribute='entity_id') | list %}
+    {% else %}
+      {% set severe_ids = flagged_items | selectattr('kind', 'eq', 'offline')
+                          | map(attribute='entity_id') | list %}
+    {% endif %}
+    {% set ns = namespace(items=[], seen=[]) %}
+    {% for d in flagged_items %}
+      {% if d.entity_id not in ns.seen %}
+        {% set ns.seen = ns.seen + [d.entity_id] %}
+        {% if family_mode == 'entity' %}
+          {% if d.entity_id in severe_ids and d.kind not in ['unavailable', 'unknown', 'missing', 'never_reported'] %}
+            {% set sev = (flagged_items | selectattr('entity_id', 'eq', d.entity_id)
+                          | selectattr('kind', 'in', ['unavailable', 'unknown', 'missing', 'never_reported'])
+                          | list | first) %}
+            {% set ns.items = ns.items + [sev] %}
+          {% else %}
+            {% set ns.items = ns.items + [d] %}
+          {% endif %}
         {% else %}
-          {% set ns.items = ns.items + [d] %}
+          {% if d.entity_id in severe_ids and d.kind != 'offline' %}
+            {% set ns.items = ns.items + [{
+              'entity_id': d.entity_id,
+              'name': d.name,
+              'area': d.area,
+              'level': none,
+              'battery_type': '',
+              'reason': '',
+              'age': '',
+              'kind': 'offline'
+            }] %}
+          {% else %}
+            {% set ns.items = ns.items + [d] %}
+          {% endif %}
         {% endif %}
       {% endif %}
     {% endfor %}
@@ -413,6 +437,8 @@ variables:
   title: >-
     {% if family_mode == 'battery' %}
       Battery Sentinel: {{ flagged_count }} {{ 'battery' if flagged_count | int == 1 else 'batteries' }} to check
+    {% elif family_mode == 'entity' %}
+      Entity Sentinel: {{ flagged_count }} {{ 'entity' if flagged_count | int == 1 else 'entities' }} gone quiet
     {% else %}
       Sentinel report
     {% endif %}
@@ -423,15 +449,22 @@ variables:
       {% set nm = d.name | default('Unknown') %}
       {% set ar = d.area | default('') %}
       {% set suffix = (' - ' ~ ar) if ar not in [none, '', 'Unassigned'] else '' %}
-      {% set lvl = d.level | default(none) %}
-      {% set has_pct = lvl is not none and lvl not in ['unknown', 'unavailable', ''] and (lvl | string | float(none)) is not none %}
-      {% if d.kind == 'offline' %}
-        {% set line = nm ~ ' (offline)' ~ suffix %}
-      {% elif not has_pct %}
-        {% set line = nm ~ ' (low)' ~ suffix %}
+      {% if family_mode == 'entity' %}
+        {% set rs = d.reason | default('unavailable') %}
+        {% set ag = d.age | default('') %}
+        {% set detail = rs ~ ((', ' ~ ag) if ag not in [none, ''] else '') %}
+        {% set line = nm ~ ' (' ~ detail ~ ')' ~ suffix %}
       {% else %}
-        {% set bt = d.battery_type | default('') %}
-        {% set line = nm ~ ' (' ~ (lvl | float | round(0) | int) ~ '%' ~ ((', ' ~ bt) if bt else '') ~ ')' ~ suffix %}
+        {% set lvl = d.level | default(none) %}
+        {% set has_pct = lvl is not none and lvl not in ['unknown', 'unavailable', ''] and (lvl | string | float(none)) is not none %}
+        {% if d.kind == 'offline' %}
+          {% set line = nm ~ ' (offline)' ~ suffix %}
+        {% elif not has_pct %}
+          {% set line = nm ~ ' (low)' ~ suffix %}
+        {% else %}
+          {% set bt = d.battery_type | default('') %}
+          {% set line = nm ~ ' (' ~ (lvl | float | round(0) | int) ~ '%' ~ ((', ' ~ bt) if bt else '') ~ ')' ~ suffix %}
+        {% endif %}
       {% endif %}
       {% set lines.items = lines.items + [line] %}
     {% endfor %}

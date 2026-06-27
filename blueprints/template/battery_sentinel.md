@@ -134,7 +134,7 @@ The default `240` (four minutes) suits a fast mini-PC with a stable mesh; a slow
 
 ## Scoping: Choosing What the Sensor Watches
 
-The sensor decides what to watch through `include_target` and `exclude_target`. Each accepts entities, areas, devices, or labels, and you can mix them.
+The sensor decides what to watch through `include_target` and `exclude_target`. Each accepts entities, areas, devices, or **labels**.
 
 **Default, watch everything.** Leave `include_target` out and the sensor watches every battery device-class entity in your system. This catches phones, tablets, and watches too; those charge nightly and are rarely what you want, which is what `exclude_target` is for.
 

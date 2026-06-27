@@ -144,9 +144,9 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 
 ## Setting the Grace Period
 
-`startup_grace_seconds` is an input to set carefully because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's **full** startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in. This can only be guessed, only deliberatly timed.
+`startup_grace_seconds` is an input to set carefully because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's full startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in. This cannot be guessed, only deliberatly timed.
 
-The default `240` (four minutes) suits a fast mini-PC with a stable Zigbee mesh; a slower hub with a large Zigbee or Z-Wave network may need five or six. Set it too short and a restart can flash a brief false outage before the mesh finishes; set it generously and the only cost is that a genuine outage in the first few minutes after a restart waits until the window closes to show.
+The default `240` (four minutes) suits a fast mini-PC with a stable mesh; a slower hub with a large Zigbee or Z-Wave network may need five or six. Set it too short and a restart can flash a brief false outage before the mesh finishes; set it generously and the only cost is that a genuine outage in the first few minutes after a restart waits until the window closes to show.
 
 ## Scoping: Choosing What the Sensor Watches
 

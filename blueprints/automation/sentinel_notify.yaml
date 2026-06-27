@@ -4,6 +4,15 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.1-beta - Removed the minute-based check interval and the elapsed-time re-remind.
+#           Change-detection is now purely event-driven: the companion re-evaluates when
+#           a watched sensor changes (instant) and at Home Assistant start, with no
+#           idle polling. Added an OPTIONAL daily reminder at a configurable time of day:
+#           when enabled, at the set time it re-sends the current report if anything is
+#           still flagged (and re-raises the broken-Sentinel card if a source is still
+#           broken), reusing the same tag so it replaces any existing card in place. Off
+#           by default. This replaces the re-remind interval with a cleaner "remind me
+#           at 8am if it is still wrong" model and removes all timer overhead.
 #   1.0.0-beta - Initial release. Battery mode: reads one or more Battery Sentinel
 #           sensors and reports low batteries (and optionally offline ones) by name
 #           with percentage, battery type, and area; a binary low-battery sensor, which
@@ -19,11 +28,11 @@
 #           b={hash}|u={hash}|t={iso}, so no error text or stray delimiter can corrupt
 #           the stored value. Push to any number of mobile devices and/or a persistent
 #           notification, tag-replaced in place; priority scales iOS interruption-level
-#           and Android channel/importance/ttl. Optional re-remind interval, off by
-#           default. Loud setup errors for a wrong-family sensor, a missing helper, or
-#           the not-yet-built Entity mode, which is reserved in the same blueprint for a
-#           later release. Versioning from here: patch (1.0.1-beta) for fixes, minor
-#           (1.1.0-beta) for features, major (2.0.0-beta) for breaking changes.
+#           and Android channel/importance/ttl. Loud setup errors for a wrong-family
+#           sensor, a missing helper, or the not-yet-built Entity mode, which is reserved
+#           in the same blueprint for a later release. Versioning from here: patch
+#           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major (2.0.0-beta)
+#           for breaking changes.
 #
 # Design note: this companion watches ONE Sentinel family per instance (a Battery
 # or Entity mode). The change-detection engine works across families, but the
@@ -67,9 +76,11 @@ blueprint:
 
     ## How it works
 
-    Set the mode to Battery or Entity and point it at sensors of that family. Each check, it builds a sorted fingerprint of what the Sentinel is flagging and compares it to what it last reported, stored in a required input_text helper. If the set changed, it sends a notification listing everything currently flagged; if not, it stays quiet. Several sensors of one family combine into a single report. The notification uses a tag, so even when it fires it replaces the previous one in place rather than stacking.
+    Set the mode to Battery or Entity and point it at sensors of that family. When a watched sensor changes, it builds a sorted fingerprint of what the Sentinel is flagging and compares it to what it last reported, stored in a required input_text helper. If the set changed, it sends a notification listing everything currently flagged; if not, it stays quiet. There is no polling; it reacts to the sensor. Several sensors of one family combine into a single report. The notification uses a tag, so even when it fires it replaces the previous one in place rather than stacking.
 
-    Send by push to any number of mobile devices, and/or as a persistent notification in the Home Assistant UI. Priority controls sound and Do Not Disturb on push. An optional re-remind interval, off by default, re-sends the current report on a schedule for items you have not resolved.
+    An optional daily reminder, off by default, re-sends the current report at a time of day you set, but only if something is still flagged. It reuses the same tag, so it refreshes the existing card rather than stacking a new one. Use it as a once-a-day "this is still not fixed" nudge.
+
+    Send by push to any number of mobile devices, and/or as a persistent notification in the Home Assistant UI. Priority controls sound and Do Not Disturb on push.
 
     This companion watches ONE family per instance. If you run both Sentinels, build two copies, one in each mode. This beta ships the Battery mode; the Entity mode arrives in a later beta and reports a setup error if selected today.
 
@@ -79,7 +90,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-beta
+    1.0.1-beta
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -219,44 +230,38 @@ blueprint:
           selector:
             text: {}
 
+    reminder_section:
+      name: Daily Reminder
+      icon: mdi:calendar-clock
+      description: An optional once-a-day nudge if something is still flagged. Off by default.
+      collapsed: true
+      input:
+        daily_reminder_enabled:
+          name: Enable the daily reminder
+          description: >-
+            When on, once a day at the time below the companion re-sends the
+            current report if anything is still flagged (and re-raises the
+            broken-Sentinel card if a source is still broken). It reuses the same
+            tag, so it refreshes the existing card rather than stacking. When off,
+            the companion only ever notifies on a change.
+          default: false
+          selector:
+            boolean: {}
+        daily_reminder_time:
+          name: Reminder time
+          description: >-
+            The time of day the daily reminder fires, if enabled. For example
+            08:00:00 for 8 in the morning.
+          default: "08:00:00"
+          selector:
+            time: {}
+
     advanced_section:
       name: Advanced
       icon: mdi:tune
-      description: Cadence, reminders, and diagnostics. The defaults are sensible.
+      description: Diagnostics. Leave off for normal use.
       collapsed: true
       input:
-        scan_interval:
-          name: Check interval
-          description: >-
-            How often to re-check the sensors, in minutes. The companion checks
-            this often but only notifies when something has changed since the last
-            notification.
-          default: "/5"
-          selector:
-            select:
-              options:
-                - "/1"
-                - "/2"
-                - "/3"
-                - "/5"
-                - "/10"
-                - "/15"
-                - "/30"
-        reremind_hours:
-          name: Re-remind interval (hours)
-          description: >-
-            Optional. If greater than 0, re-send the current report this many hours
-            after the last notification even if nothing changed, a nag for items
-            you have not resolved. 0 disables it (the default), so an unchanged
-            situation stays quiet.
-          default: 0
-          selector:
-            number:
-              min: 0
-              max: 168
-              step: 1
-              unit_of_measurement: hours
-              mode: box
         debug_enabled:
           name: Debug logging
           description: >-
@@ -271,7 +276,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-beta
+  version: 1.0.1-beta
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -280,7 +285,7 @@ variables:
   persistent_enabled: !input persistent_enabled
   priority_level: !input priority_level
   notification_tag: !input notification_tag
-  reremind_hours: !input reremind_hours
+  daily_reminder_enabled: !input daily_reminder_enabled
   debug_enabled: !input debug_enabled
 
   setup_error: >-
@@ -433,10 +438,6 @@ variables:
     {{ lines.items | join('\n') }}
 
 trigger:
-  - trigger: time_pattern
-    minutes: !input scan_interval
-    id: cadence
-    alias: Scheduled re-check on the scan interval
   - trigger: homeassistant
     event: start
     id: ha_start
@@ -445,9 +446,13 @@ trigger:
     entity_id: !input source_sensors
     id: source_change
     alias: Re-evaluate when a watched sensor changes
+  - trigger: time
+    at: !input daily_reminder_time
+    id: daily_reminder
+    alias: Daily reminder at the configured time
 
 condition:
-  - alias: For a source-sensor trigger, run only if the monitored content actually changed (ignore attribute-only churn like a refreshed evaluation timestamp)
+  - alias: For a source-sensor trigger, run only if the monitored content actually changed (ignore attribute-only churn like a refreshed evaluation timestamp). Other triggers always pass.
     condition: template
     value_template: >-
       {% if trigger.id != 'source_change'
@@ -476,7 +481,7 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
 
   - alias: Stop if setup error
     if:
@@ -487,17 +492,12 @@ action:
 
   - alias: Work out what to notify this run
     variables:
-      reremind_due: >-
-        {% if reremind_hours | int(0) > 0 and previous_notified_iso != '' %}
-          {{ (as_timestamp(now()) - as_timestamp(previous_notified_iso, 0)) >= (reremind_hours | int * 3600) }}
-        {% else %}
-          {{ false }}
-        {% endif %}
-      battery_should_notify: "{{ changed or (reremind_due and flagged_count | int > 0) }}"
-      upstream_should_notify: "{{ upstream_changed or (reremind_due and upstream_broken) }}"
-      memory_needs_write: "{{ battery_should_notify or upstream_should_notify }}"
+      is_reminder: "{{ trigger.id == 'daily_reminder' and daily_reminder_enabled }}"
+      battery_should_notify: "{{ changed or (is_reminder and flagged_count | int > 0) }}"
+      upstream_should_notify: "{{ upstream_changed or (is_reminder and upstream_broken) }}"
+      memory_needs_write: "{{ changed or upstream_changed }}"
 
-  - alias: Persist both memory slots together when anything changed
+  - alias: Persist both memory slots together when content actually changed
     if:
       - condition: template
         value_template: "{{ memory_needs_write }}"
@@ -644,4 +644,4 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | flagged: {{ flagged_count }} | battery_notify: {{ battery_should_notify }} | upstream_broken: {{ upstream_broken }} | upstream_notify: {{ upstream_should_notify }} | pushed: {{ push_targets | length }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | battery_notify: {{ battery_should_notify }} | upstream_broken: {{ upstream_broken }} | upstream_notify: {{ upstream_should_notify }} | pushed: {{ push_targets | length }}

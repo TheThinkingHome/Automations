@@ -18,9 +18,27 @@ Some smart devices wedge silently. An Aqara FP2 presence sensor locks up at its 
 
 **[Full directions and one-click import ->](automation/sensor_watchdog.md)**
 
+### Sentinel Notify
+
+A [Battery Sentinel](template/battery_sentinel.md) or [Entity Sentinel](template/entity_sentinel.md) sensor knows what is wrong, but it does not tell you, that is by design, each is a signal, not a notifier. Sentinel Notify is the companion built specifically to be their mouthpiece. Point it at one or more Sentinel sensors and it turns their output into a notification: the low batteries by name, level, and area, or the entities that have gone quiet, sent to any number of mobile devices and an optional dashboard card. It notifies when the flagged set changes rather than every cycle, so a battery that stays low does not nag you nightly. A device flagged by two overlapping sensors collapses to one entry. And a separate alert fires if a source Sentinel itself stops working, so a broken monitor surfaces instead of failing silently.
+
+**[Full directions and one-click import ->](automation/sentinel_notify.md)**
+
 ## Template Blueprints
 
 Blueprints that build derived sensors and helpers from your existing entities. After import, these do not get a Create button. You build entities from them by adding a short `use_blueprint` block under your `template:` configuration. The full walkthrough is [below the lists](#turning-a-template-blueprint-into-an-entity).
+
+### Battery Sentinel
+
+A house full of battery devices means a steady trickle of dying batteries, and the ones you forget are the ones that fail when you need them. Battery Sentinel watches the battery devices you choose and reports, as a sensor, which are running low against a threshold you set, with hysteresis so a battery hovering at the line does not flip the alert on and off. Its state is the count and its attributes list each low device by name, level, and area. It is the sister of [Entity Sentinel](template/entity_sentinel.md): this one answers "what is running low," the other answers "what stopped reporting." Build either or both, and pair them with [Sentinel Notify](automation/sentinel_notify.md) to turn their signals into alerts.
+
+**[Full directions and one-click import ->](template/battery_sentinel.md)**
+
+### Entity Sentinel
+
+Some devices do not go offline cleanly. They lock up at their last reading, and the entity sits there showing a healthy value while the device behind it has gone quiet. A scheduled whole-house scan that only looks for `unavailable` never sees it. Entity Sentinel watches the specific entities you choose and reports, as a sensor, any that have stopped reporting, both the ones marked `unavailable` and the ones frozen at a stale value, by comparing how long each has been silent against a grace period you set. Its state is the count and its attributes list exactly which entities are quiet, so a dashboard, an automation, or its notification companion can read the same signal. It is the sister of [Battery Sentinel](template/battery_sentinel.md): this one answers "what stopped reporting," the other answers "what is running low." Pair either with [Sentinel Notify](automation/sentinel_notify.md) to turn the signal into alerts.
+
+**[Full directions and one-click import ->](template/entity_sentinel.md)**
 
 ### Recently Active
 
@@ -48,7 +66,7 @@ Some states are not one sensor's job. Whether the house is at bedtime, whether a
 
 ---
 
-Everything below is the general guide for importing and using the blueprints here. Importing works the same way no matter what kind of blueprint it is. After import, an automation blueprint behaves like any other automation, while a template blueprint needs one extra step to become a working entity. Each blueprint's own page, linked above, adds the specifics unique to it.
+Everything below is the general guide for importing and using the blueprints here. The act of importing is the same for both kinds, but what happens after diverges: an automation blueprint behaves like any other automation right away, while a template blueprint lands on disk and needs one extra step to become a working entity. Each blueprint's own page, linked above, adds the specifics unique to it.
 
 ## How the blueprints are organized
 
@@ -63,15 +81,15 @@ Every blueprint page has a one-click import button. To do it by hand instead:
 3. Paste the blueprint's raw URL, listed on its page, and click Preview.
 4. Confirm and import.
 
-Importing only registers the blueprint. What you do with it next depends on the kind.
+Importing only registers the blueprint, and what you see afterward depends on the kind. An automation blueprint now appears in the Blueprints tab. A template blueprint does not show up there at all; it lands on disk instead, and you build an entity from it with one more step described below.
 
 **Automation blueprints** appear on the Blueprints page with a Create Automation button beside them. Click it, fill in the inputs the blueprint asks for, save, and the automation is running. That is the whole flow.
 
-**Template blueprints** do not get a Create button and never show up in the Create Helper list. They land at `config/blueprints/template/<author>/<name>.yaml`. Open that folder and note the exact `<author>` subfolder Home Assistant assigned, because you point at it when you build an entity. The next section walks through that.
+**Template blueprints** do not appear in the Blueprints list at all, and they never show up in the Create Helper list either. They land on disk at `config/blueprints/template/<author>/<name>.yaml`, and that file is what runs. Open that folder and note the exact `<author>` subfolder Home Assistant assigned, because you point at it when you build an entity. The next section walks through that.
 
 ## Turning a template blueprint into an entity
 
-This is the step that catches people. Automation blueprints get a Create automation button on the Blueprints page. Template blueprints do not, and they never show up in the Create Helper list. That is expected, not a fault. You build a template entity from a blueprint with a short piece of YAML called `use_blueprint`:
+This is the step that catches people. Because a template blueprint never appears in the Blueprints list and gets no Create button, there is no UI flow to turn it into an entity. You do it with a short piece of YAML called `use_blueprint`:
 
 ```yaml
 use_blueprint:
@@ -119,6 +137,16 @@ If you already keep template entities in `configuration.yaml` under a `template:
 ## Loading your changes
 
 A brand-new package file needs a full Home Assistant restart to register the first time. After that, adding more `use_blueprint` blocks to the same file only needs Developer Tools, YAML, Reload Template Entities.
+
+## Updating a blueprint to a newer version
+
+How you update depends on the kind, because the two kinds live in different places.
+
+**Template blueprints** update by importing again. Go to the repository, find the import link for the blueprint you want to update, and click it. It overwrites the old version on your system with the new version from the repository. Then reload with Developer Tools, YAML, Reload Template Entities so the change takes effect.
+
+**Automation blueprints** appear in the Blueprints list (Settings, Automations & Scenes, Blueprints). To update one, click the three dots beside it and choose Re-import Blueprint, which overwrites your copy with the current version. Then reload automations or restart Home Assistant.
+
+One more thing worth knowing for either kind: just after a new version is published, the raw file can take a few minutes to update on GitHub's side, so a re-import that still pulls the old version right after a release is usually that delay. Wait a few minutes and try again rather than repeating it back to back.
 
 ## License
 

@@ -1,34 +1,32 @@
 # Entity Sentinel (Beta)
 
-A Home Assistant template blueprint that watches your critical entities and reports any that have gone quiet, the device that dropped offline and the one frozen at its last value, as a sensor anything in your system can read.
+A Home Assistant template blueprint that watches a list of your critical entities and reports any that have gone quiet, the device that dropped offline and the one frozen at its last value, as a sensor anything in your system can read.
 
 ## What This Solves
 
-A device going quiet is rarely announced. A Zigbee sensor drops off the mesh, an integration stops serving one entity, a device hangs and freezes at its last value while still showing a healthy state. None of these throws an error, and a plain value check sails right past the frozen one, because the value still looks fine.
+A device going quiet is never announced. A Zigbee sensor drops off the mesh, an integration that stops serving a depreciated entity, a device hangs and freezes at its last value while still showing a healthy state. None of these throws an error, and a plain value check sails right past the frozen one, because the value still looks fine.
 
-Home Assistant has no built-in answer for this, and the common approaches each miss a case: a simple `unavailable` check never catches the device that is frozen but still "present," and a value-change check wrongly flags a steady-but-healthy sensor that simply has not changed. What people keep asking for is one question that catches all of it: has this entity actually reported lately, and is it still here?
+Home Assistant has no built-in answer for this, and the common approaches each miss a case: a simple `unavailable` check never catches the device that is actually "frozen" but still "present," and a value-change check wrongly flags a steady-but-healthy sensor that simply has not changed. What people keep asking for is one question that catches all of it: has this entity actually reported lately, and is it still alive?
 
-That is the question Entity Sentinel asks, by two checks chosen automatically per entity.
+That is the question Entity Sentinel asks and answers.
 
 Its companion, **Battery Sentinel**, counts the batteries running low. Battery Sentinel answers "what is running low," Entity Sentinel answers "what stopped reporting." Build both for full coverage, or just the one you want. They are separate blueprints and do not depend on each other.
 
-Plenty of blueprints already scan the whole house on a timer and list whatever is offline. Those are good at "set it up in two minutes and get a daily list of everything that is dead," and this does not replace them. Entity Sentinel is for the narrower request: watch the specific entities that matter, catch the frozen ones a state scan misses, and hear about it without polling the whole system on a schedule.
+Plenty of blueprints already scan the whole house on a timer and list whatever is offline. Those are good at "set it up in two minutes and get a daily list of everything that is dead," and this does not replace them. Entity Sentinel is for the narrower request: it watches the specific entities that matter to you, it catches the frozen ones a state scan misses, and it works without polling the whole system on a schedule.
 
 ## Built on Request, and Why It Is a Beta
 
 Every other blueprint from The Thinking Home grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job was to generalize what already worked: make it configurable, document it, smooth the edges, and hand over something I already trusted.
 
-This one is different. It did not run quietly in my walls for years before release. It was asked for, by the community, for a problem the existing tools did not solve. So I built it: imagined, drafted, edited, debugged, and tested as hard as one house and an adversarial test suite allow. I believe in it, but I cannot yet claim what years of uneventful running would let me claim.
+This one is different. It did not run quietly for years in my walls. It was asked for, by the community, for a problem the existing tools cannot solve. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allow.
 
-That is why this is a beta, not a stable release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I cannot produce here. If you hit something, the [community thread](https://xeazy.com/logbook/) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
+That is why this is a beta release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I did not imagine and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
 
 ## Why a Sensor, Not an Automation
 
-Most blueprints for this kind of job are automations: they run on a schedule, fire a notification, and that is the entire product. You get one alert and nothing in your system can read the result afterward.
+This builds a `sensor` which has a state and attributes that persist. Anything in Home Assistant can read it and that difference is is powerful. One sensor, many listeners:
 
-This builds a `sensor` instead. A sensor has a state and attributes that persist, and anything in Home Assistant can read it. That one difference is what puts the rest within reach. One sensor, many listeners:
-
-- **A notification** when a critical sensor goes quiet, so you find out before you need it.
+- **A notification automation** when a critical sensor goes quiet, so you find out before you need it.
 - **A dashboard card** listing every entity that is offline or frozen, with how long it has been quiet.
 - **A gate on another automation**, holding back logic that leans on a sensor that has stopped reporting, so a stale reading never drives an action.
 - **A health badge** for the whole house, one number that is zero when everything is reporting.
@@ -41,24 +39,22 @@ Entity Sentinel watches the entities you name and flags any that have stopped re
 It asks two questions at two levels, because the right level differs for each:
 
 - **Unavailable or unknown, at the entity level.** The named entity has gone `unavailable` or `unknown`. This is universal: it works on every entity, and it is the only signal for WiFi and cloud devices that expose no timestamp. Asked at the entity level, an integration dropping one specific entity is caught even when the rest of the device is fine. It reports after a short debounce, so a brief blip does not flag.
-- **Freeze, at the device level.** The device behind the named entity has not reported anything within a lookback window, even though it may still show a healthy value. This is the frozen-at-its-last-value case a state check cannot see. It is asked at the device level on purpose: a single entity can sit unchanged for days and be healthy, but a live device always has something reporting, link quality, motion, a temperature tick, so the freshest report across the whole device is the honest heartbeat.
+- **Freeze, at the device level.** The device behind the named entity has not reported anything within a lookback window, even though it may still show a healthy value. This is the frozen-at-its-last-value case a state check cannot see. It is asked at the device level on purpose: a single entity can sit unchanged for days and still be healthy, but a live device always has something reporting, link quality, motion, a temperature tick, so the freshest report across the whole device is the honest heartbeat.
 
 The two run together, picked per entity with no configuration. Unavailable always applies. Freeze applies when the device exposes something whose timestamp advances; if nothing does, unavailable covers it alone. An entity can be flagged by both.
 
 - **Structured output.** Each flagged entity carries its name, area, the `reason`, how long it has been in that state, and its last-seen time with a human-readable age.
 - **A grace period after a restart**, measured from a required uptime sensor (see below), so a restart does not report a false fleet-wide outage.
-- **A loud error if set up wrong.** A missing or misconfigured uptime sensor yields a `setup_error` state with a distinct icon and a message naming the problem. An `ok` attribute lets automations tell a working sensor from a broken one.
-- **Scope by entity, label, area, or device**, with include and exclude, and exclude always wins.
+- **A loud error if set up wrong.** A missing or misconfigured parameter yields a `setup_error` state with a distinct icon and a message naming the problem. An `ok` attribute lets automations tell a working sensor from a broken one.
+- **Scope by entity, label, area, or device**, with include and exclude. Exclude is always given priority.
 
 The full design, the reasoning behind each choice, and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 
 ## How It Decides
 
-A watched entity is judged by both checks, and either one flags it.
-
 The **unavailable** check reads the entity's own state. If it is `unavailable` or `unknown` past the debounce, it is flagged. This is the precise, entity-level question: did this exact entity stop being served.
 
-The **freeze** check reads timestamps, not states. It resolves the device behind the entity and takes the freshest report across all of that device's entities. If even the freshest is older than the lookback, the device is frozen. Reading the whole device defeats the sticky-entity trap: a contact shut for two days has not changed, but its link-quality entity is still checking in, so the device reads alive. What freeze reads is "did the device send anything," not "did its value change," so a temperature sensor reporting the same reading every minute stays off the list.
+The **freeze** check reads timestamps, not states. It resolves the device behind the entity and takes the freshest report across all of that device's entities. If even the freshest is older than the lookback, the device is reported frozen. Reading the whole device solves the sticky-entity trap: a contact shut for two days has not changed, but its link-quality entity is still checking in, so the device reads alive. What freeze reads is "did the device send anything," not "did its value change," so a temperature sensor reporting the same reading every minute stays off the list.
 
 ## Before You Start: the Uptime Requirement
 
@@ -66,7 +62,7 @@ Entity Sentinel measures its startup grace from a Home Assistant **uptime sensor
 
 The startup grace needs to know how long the system has been up. The obvious way to track that, reading the sensor's own boot time from its attributes, is unreliable: Home Assistant has a long-standing bug ([#115585](https://github.com/home-assistant/core/issues/115585)) where a trigger-based template sensor sometimes cannot read its own attributes during evaluation. The uptime sensor sidesteps it: an independent entity, read fresh every evaluation, reliable across restarts and reloads.
 
-Most systems already have it. If yours does not, add the **Uptime** integration (Settings, Devices & Services, Add Integration, Uptime). It creates `sensor.uptime`, whose state is a timestamp like `2026-06-26T14:56:59+00:00`. Confirm it is in **timestamp** mode, not a number of days.
+Most systems already have it. If yours does not, add the **[Uptime Integration](https://www.home-assistant.io/integrations/uptime/)** (Settings, Devices & Services, Add Integration, Uptime). It creates `sensor.uptime`, whose state is a timestamp like `2026-06-26T14:56:59+00:00`. Confirm it is in **timestamp** mode, not a number of days.
 
 If the uptime sensor is missing, unavailable, or not a timestamp, Entity Sentinel reports a `setup_error` state with a message naming the problem, watches nothing, and starts working the moment you fix it.
 
@@ -148,15 +144,15 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 
 ## Setting the Grace Period
 
-`startup_grace_seconds` is the one input to set deliberately, because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's **full** startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in, plus a margin.
+`startup_grace_seconds` is an input to set carefully because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's **full** startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in. This can only be guessed, only deliberatly timed.
 
-The default `240` (four minutes) suits a fast mini-PC; a slower hub with a large Z-Wave network may need five or six. Set it too short and a restart can flash a brief false outage before the mesh finishes; set it generously and the only cost is that a genuine outage in the first few minutes after a restart waits until the window closes to show.
+The default `240` (four minutes) suits a fast mini-PC with a stable Zigbee mesh; a slower hub with a large Zigbee or Z-Wave network may need five or six. Set it too short and a restart can flash a brief false outage before the mesh finishes; set it generously and the only cost is that a genuine outage in the first few minutes after a restart waits until the window closes to show.
 
 ## Scoping: Choosing What the Sensor Watches
 
-Entity Sentinel requires a scope, set through `include_target` and `exclude_target`. Each accepts entities, labels, areas, or devices. There are two tiers, and the difference matters.
+Entity Sentinel requires a scope, set through `include_target` and `exclude_target`. Each accepts entities, labels, areas, or devices. There are two tiers and understanding them is important.
 
-**Explicit entities and labels are precise, and watched for both checks.** Name entities directly, or tag them with a label such as `liveness_watch`, and each is watched exactly as given. Use this for the things you care about, your locks, leak sensors, the freezer probe. A label is the natural way to run this: tag your critical entities once and the sensor follows the tag. Labels expand fully, on an entity, a device, or an area, on both the include and exclude side.
+**Explicit entities and labels are precise, and watched for both freeze and `unavailable`checks.** Name entities directly, or tag them with a label such as `entity_watch`, and each is watched exactly as given. Use this for the things you care about, your locks, leak sensors, the freezer probe. A label is the natural way to run this: label your critical entities once and the sensor follows the tag. Labels expand fully, on an entity, a device, or an area, on both the include and exclude side.
 
 **Areas and devices are convenient, and tuned for freeze.** Point the scope at an area or device and the sensor sweeps it, picking one representative entity per device. A device class with a clear behavioral meaning wins first (occupancy, motion, door, window, lock, smoke, and so on), then the device's primary function (light, switch, lock, cover, and the rest), then telemetry, then any ordinary entity. So a smart plug or bulb is represented rather than skipped; only a device whose entire entity set is configuration, diagnostic, or event entities is skipped, since it offers no honest liveness signal. This is correct for freeze, which resolves to the device anyway. For the unavailable check it is approximate: the sweep watches the representative as a stand-in, so if the integration drops a different entity on that device, the sweep does not see it.
 
@@ -167,7 +163,7 @@ A standalone helper, virtual boolean, or template sensor with no device behind i
 ```yaml
         include_target:
           label_id:
-            - liveness_watch
+            - entity_watch
         exclude_target:
           entity_id:
             - sensor.nursery_humidity
@@ -209,7 +205,7 @@ The state is the count of flagged entities, or the string `setup_error` if misco
 - **`state`** the count of flagged entities, or `setup_error`.
 - **`ok`** `true` when the sensor is functioning, `false` only in `setup_error`. The safe field to gate automations on.
 - **`error`** empty normally; carries the reason and fix when in `setup_error`.
-- **`uptime_status`** what the engine read from the uptime sensor: the timestamp when valid, the bad value when not. A diagnostic.
+- **`uptime_status`** what the engine read from the uptime sensor. A diagnostic.
 - **`total_monitored`** how many entities fell within the scope after include, exclude, and the per-device sweep.
 - **`unavailable_count`** / **`frozen_count`** how many failed each check; they sum to the state.
 - **`devices`** the flagged entities, each with the fields below.
@@ -229,13 +225,15 @@ The first three and `never_reported` come from the entity-level check (`unavaila
 
 ### The `setup_error` State
 
-If the uptime sensor is missing, unavailable, or not a timestamp, the state reads `setup_error` with a distinct `mdi:cog-off` icon. In that state the sensor watches nothing, so it never produces a false reading off a broken clock. The `error` attribute names the cause, the entity not found, or the value not a timestamp, and the sensor heals itself the moment the uptime sensor is fixed. If you build a dashboard badge on the state, treat any non-numeric value as "needs attention."
+If the uptime sensor is missing, unavailable, or not a timestamp, the state reads `setup_error` with a distinct `mdi:cog-off` icon. In that state the sensor does not function, so it never produces a false reading off a broken clock. The `error` attribute names the cause, the entity not found, or the value not a timestamp, and the sensor heals itself the moment the uptime sensor is fixed. If you build a dashboard badge on the state, treat any non-numeric value as "needs attention."
 
 ## The Sticky-Entity Caveat
 
 Freeze reads the freshest report across a whole device, which handles most sticky entities on its own: a quiet contact is vouched for by its livelier siblings. The caveat is a device whose every entity is sticky, a sensor in a room where nothing happens, where even the freshest report can be old while the device is healthy. That device can read as frozen when it is not.
 
 The best fix is to enable one always-advancing entity on the device, Zigbee2MQTT's `last_seen` (off by default, turn it on) or a ZHA link-quality sensor, so the device's heartbeat is always honest. Otherwise, widen the freeze lookback for that scope, or drop the device from freeze scope and let the unavailable check cover it.
+
+Some battery powered Zigbee and Z-Wave devices wake very infrequently if they have nothing new to report. For instance, a leak sensor that is dry. Some sensors may only report on a 25 hours schedule to extend battery life. Choose the `freeze_lookback` parameter carefully so that the sensor doesn't trigger on false positives.
 
 ## Putting the Signal to Work
 

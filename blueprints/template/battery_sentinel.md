@@ -16,15 +16,15 @@ Every other blueprint from _The Thinking Home_ series grew out of my own house. 
 
 This one is different. It was not refined over years while it ran quietly within my walls. It was asked for, by the community, for a problem the existing tools never solved. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allowed. I believe in it, but I cannot yet claim what years of uneventful running will allow me claim.
 
-That is why this is a beta release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
+That is why this is a beta release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
 
 ## Why a Sensor, Not an Automation
 
 Most blueprints for this kind of job are automations: they run on a schedule, fire a notification, and that is the entire product. You get one alert and nothing in your system can read the result afterward.
 
-This builds a `sensor` instead. A sensor has a state and attributes that persist, and anything in Home Assistant can read it. That one difference is what puts the rest within reach. One sensor, many listeners:
+This builds a `sensor` instead. A sensor has a state and attributes that persist, and anything in Home Assistant can read it. One sensor, many listeners:
 
-- **A notification**, the obvious one. A companion automation blueprint for this is planned.
+- **A notification automation**, the obvious one. A companion automation blueprint for this in the works.
 - **A dashboard card** that lists the low devices with area and battery type, so a glance tells you what to grab from the drawer.
 - **A to-do or shopping list**, each low cell dropped onto a list so the right battery is bought before the swap.
 - **A voice summary** through Assist, asking which batteries need attention before you head out.
@@ -34,14 +34,14 @@ The notification is the least of what the signal can drive. It is just the first
 
 ## What It Does
 
-Battery Sentinel counts the batteries at or below a threshold and lists each one, with its percentage, area, and battery type, in a `devices` attribute. The state is the count; the detail is in the attributes.
+Battery Sentinel counts the batteries at or below a threshold and lists each one, with its percentage, area, and battery type if available, in a `devices` attribute. The state is the count; the detail is in the attributes.
 
-- **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. A binary sensor has no number, so its `level` comes through as `null`.
-- **Hysteresis so it does not flap.** A flagged device stays low until it climbs above the threshold plus a margin, which for a battery only happens when a fresh cell is fitted. A cell hovering at the line does not bounce in and out of the list.
-- **Offline batteries surfaced separately.** An in-scope battery sitting at `unavailable` or `unknown` is not a low battery, so it never lands in the low list. It is reported in a separate `unavailable_entities` attribute instead, so the low state stays clean while you still see what is offline.
+- **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. 
+- **Hysteresis so it does not flap.** A flagged device usually stays low. But it can fluctuate slightly as a load is removed when the device goes to sleep.
+- **Offline batteries surfaced separately.** An in-scope battery sitting at `unavailable` or `unknown` is not a low battery, so it never lands in the low list. It is reported in a separate `unavailable_entities` attribute, so the low state stays clean while you still see what is offline.
 - **A grace period after a restart.** For a window after Home Assistant starts, the unavailable list is held empty so a restart does not report a false fleet-wide outage. The window is measured from a required uptime sensor (see below). The low count is never held; it works the entire time.
-- **A loud error if set up wrong.** If the uptime sensor is missing or misconfigured, or a threshold or margin is invalid, the sensor reports a `setup_error` state and does nothing until you fix it, rather than failing quietly. An `ok` attribute lets automations tell a working sensor from a broken one.
-- **Scope by label, area, device, or entity**, with include and exclude, and exclude always wins.
+- **A loud error if set up wrong.** If a required parameter is missing or misconfigured, or a threshold or margin is invalid, the sensor reports a `setup_error` state and does nothing until you fix it, rather than failing quietly. An `ok` attribute lets automations tell a working sensor from a broken one.
+- **Scope by label, area, device, or entity**, with include and exclude, and exclude has priority.
 
 The full design, the reasoning behind each choice, and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 

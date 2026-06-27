@@ -129,11 +129,13 @@ blueprint:
       input:
         scan_interval:
           name: Re-evaluation interval
-          description: 'How often the sensor re-scans. During testing this is in
-            minutes (/2 is every 2 minutes). It reverts to hours for production.
+          description: 'How often the sensor re-scans, in hours. The sensor fires at
+            the top of the hour every Nth hour (Every 1 is hourly, Every 6 is four
+            times a day). Battery levels drift slowly, so hourly or slower is plenty;
+            the manual refresh button forces an immediate check when you need one.
 
             '
-          default: /2
+          default: /1
           selector:
             select:
               options:
@@ -143,14 +145,16 @@ blueprint:
                 value: /2
               - label: Every 3
                 value: /3
-              - label: Every 5
-                value: /5
-              - label: Every 10
-                value: /10
-              - label: Every 15
-                value: /15
-              - label: Every 30
-                value: /30
+              - label: Every 4
+                value: /4
+              - label: Every 6
+                value: /6
+              - label: Every 8
+                value: /8
+              - label: Every 12
+                value: /12
+              - label: Every 24
+                value: /24
               sort: false
               custom_value: false
               multiple: false
@@ -432,8 +436,8 @@ variables:
 
 trigger:
 - trigger: time_pattern
-  hours: '*'
-  minutes: !input scan_interval
+  hours: !input scan_interval
+  minutes: 0
   alias: Scheduled re-evaluation on the scan interval
 - trigger: homeassistant
   event: start

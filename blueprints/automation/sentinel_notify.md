@@ -1,31 +1,31 @@
 # Sentinel Notify (Alpha)
 
-A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications: it tells you what is actually wrong, by name, and does not SPAM your notifications.
+A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications: it tells you what is wrong, by name, and does not SPAM your notifications.
 
 ## What This Solves
 
-The Sentinels produce a sensor with a rich set of attributes: not just a count, but a list of exactly which batteries are low (with percentage, battery type, and area) or which entities have gone quiet (with the reason and how long). That detail is the whole point of building a sensor instead of a one-shot notifier. But a sensor does not notify you on its own; you need something that reads it and decides when and how to alert you.
+The Sentinels produce a sensor with a rich set of attributes: not just a count, but a list of exactly which batteries are low (with percentage, battery type, and area) or which entities have gone quiet (with the reason and how long). That detail is the whole point of building a sensor instead of a one-shot notifier. But a sensor does not notify you on its own; it needs something that reads it and decides when and how to alert you.
 
-This is a companion to the two Sentinel sensor blueprints, and it does nothing on its own. Build a Sentinel first, it creates the sensor, then build this to notify from it:
+This is a companion to the two Sentinel sensor blueprints, and does nothing on its own. Build a Sentinel first, it creates the sensor, then build this to notify it:
 
 - [**Battery Sentinel**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) counts the batteries running low.
 - [**Entity Sentinel**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) catches entities that have gone quiet, unavailable or frozen at their last value.
 
-Because it reads the structured attributes, it can do two things the common notifier blueprints cannot. It can name what is wrong, "Master Bath Motion (12%, CR2450)", not just "3 batteries low." And it can notify you only when the situation has changed, so it does not nag you every cycle about the same three batteries or entities you already know about. This companion comes from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/).
+Because it reads the structured attributes, it can do two things the common notifier blueprints cannot. It can name what is wrong, "Master Bath Motion (12%, CR2450)", not just "3 batteries low." It can notify you only when the situation has changed, so it does not repeat every cycle about the same three batteries or entities you already know about. This companion comes from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/).
 
 ## Built on Request, and Why It Is an Alpha
 
-Every other blueprint from The Thinking Home grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job was to generalize what already worked: make it configurable, document it, smooth the edges, and hand over something I already trusted.
+Every other blueprint from The Thinking Home grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. I generalized what already worked: made it configurable, documented it, smoothed the edges, and handed over something I already trusted.
 
-This one is different. It did not run quietly for years in my walls. It was asked for, by the community, for a problem the existing tools cannot solve. So I built it: imagined, drafted, edited, reimagined, debugged, and am still testing it as hard as I can in one house and an adversarial test suite allows.
+This one is different. It did not run quietly for years in my walls. It was asked for, by the community, for a problem that existing tools cannot solve. So I built it: imagined, drafted, edited, reimagined, debugged, and am still testing it as hard as I can in one house and on an adversarial test suite.
 
-That is why this is an **alpha** release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I did not imagine and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
+That is why this is an **alpha** release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping to test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I did not imagine and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
 
-> **The Entity mode is the newest and least-proven part.** The Battery mode has had the most testing and is the more settled of the two. The Entity mode was built most recently, has had the least time on real systems, and is the part most likely to change between releases, in its wording, its behavior, and its options. If you run Entity mode, treat it as the leading edge of this alpha: it is where bugs are most likely to surface and where your feedback has the most influence on what it becomes. Expect it to move.
+> **The Entity mode is the newest and least-proven part.** The Battery mode has had the most testing and is the more settled of the two. The Entity mode was built most recently, has had the least time on real systems, and is the part most likely to change between releases in its wording, its behavior, and its options. If you run Entity mode, treat it as the leading edge of this alpha: it is where bugs are most likely to surface and where your feedback has the most influence on what it becomes. Expect it to move.
 
 ## How it Works
 
-This companion watches one Sentinel family at a time. You set a mode, _Battery or Entity_, and point it at sensors from that family. If you run both Sentinels, build two copies of this companion. They behave differently enough, batteries are sparse and slow, entities are denser and twitchier, that keeping them separate makes each one simpler to configure and its notifications cleaner to read.
+This companion watches one Sentinel family at a time. You set a mode, _Battery or Entity_, and point it at sensors from that family. If you run both Sentinels, build two copies of this companion. They behave differently, batteries are sparse and slow, entities are denser and twitchier, and keeping them separate makes each one simpler to configure and its notifications cleaner to read.
 
 It does not poll. It re-evaluates the moment a watched Sentinel sensor changes, and once when Home Assistant starts. There is no check interval to tune, and no idle timer running in the background. The only scheduled event is the optional daily reminder, described below.
 
@@ -107,19 +107,19 @@ The Battery Settings section applies only to Battery mode; in Entity mode, leave
 
 ## How "Notify Only on Change" Works
 
-The companion keeps a small fingerprint of what it last reported, in the memory helper. When a watched sensor changes, it builds the same kind of fingerprint from what the Sentinel is flagging right now, sorted so the order never matters, and compares the two. If they differ, the situation has changed: it sends a notification listing everything currently flagged, and stores the new fingerprint. If they match, it stays silent.
+The companion keeps a small fingerprint of what it last reported in the memory helper. When a watched sensor changes, it builds the same kind of fingerprint from what the Sentinel is flagging right now, sorted so the order never matters, and compares the two. If they differ, the situation has changed: it sends a notification listing everything currently flagged, and stores the new fingerprint. If they match, it stays silent.
 
-So a battery dropping below the threshold, or one being replaced, changes the fingerprint and you hear about it. The same three batteries sitting low for a week do not re-notify you every cycle, you were told once. In Entity mode, the same applies: an entity going quiet, or coming back, changes the fingerprint; an entity that stays quiet does not re-notify. The reason is part of the fingerprint, so an entity that shifts from `frozen` to `unavailable` counts as a change and you hear about it.
+A battery dropping below the threshold, or one being replaced, changes the fingerprint and you hear about it. The same three batteries sitting low for a week do not re-notify you every cycle, you were told once. In Entity mode, the same applies: an entity going quiet, or coming back, changes the fingerprint; an entity that stays quiet does not re-notify. The reason is part of the fingerprint, so an entity that shifts from `frozen` to `unavailable` counts as a change and you hear about it.
 
-By design, in Battery mode the change is tracked at the level of which batteries are low, not their exact percentage. A battery that keeps draining while staying below the threshold (say 15% down to 5%) will not send a fresh alert, you were already told it is low. This is deliberate: tracking the exact percentage would re-notify on every reading and bring back the flood the change detection exists to prevent. If you want to be nudged about something you have not yet dealt with, use the daily reminder.
+By design, in Battery mode, the change is tracked at the level of which batteries are low, not their exact percentage. A battery that keeps draining while staying below the threshold (say 15% down to 5%) will not send a fresh alert, you were already told it is low. This is deliberate: tracking the exact percentage would re-notify on every reading and bring back the flood the change detection exists to prevent. If you want to be nudged about something you have not yet dealt with, use the daily reminder.
 
-Because the notification uses a tag, even when it does fire it replaces the previous one in place rather than stacking a pile of alerts.
+Because the notification uses a tag, even when it does fire, it replaces the previous one in place rather than stacking a pile of alerts.
 
 If one of the source Sentinels is itself broken (its uptime sensor was deleted, or it has gone unavailable), the companion sends a separate "Sentinel not working" notification, on its own tag, so it does not interfere with the main report. A broken monitor never silences the healthy ones: the items on the working Sentinels are still reported in the same run.
 
 ## The Daily Reminder
 
-Change-detection tells you when something changes. The daily reminder is for the opposite case: something that has not changed, but that you keep meaning to deal with, a battery you have not replaced, an entity still offline. Off by default.
+Change-detection tells you when something changes. The daily reminder is for the opposite case: something that has not changed, but that you keep meaning to deal with; a battery you have not replaced, an entity still offline or Off by default.
 
 When you enable it and set a time, then once a day at that time the companion checks whether anything is still flagged. If so, it re-sends the current report. Because it reuses the same notification tag, it refreshes the card already on your phone rather than stacking a second one, and if you had dismissed it, a fresh one appears. If nothing is flagged at that time, the reminder does nothing.
 

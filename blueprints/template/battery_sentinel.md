@@ -47,13 +47,13 @@ The full design, the reasoning behind each choice, and worked examples are in th
 
 ## Before You Start: the Uptime Requirement
 
-Entity Sentinel measures its startup grace from a Home Assistant **uptime sensor in timestamp mode**, so it needs one in place before it will work.
+Battery Sentinel measures its startup grace from a Home Assistant **uptime sensor in timestamp mode**, so it needs one in place before it will work.
 
 The startup grace needs to know how long the system has been up. The obvious way to track that, reading the sensor's own boot time from its attributes, is unreliable: Home Assistant has a long-standing bug ([#115585](https://github.com/home-assistant/core/issues/115585)) where a trigger-based template sensor sometimes cannot read its own attributes during evaluation. The uptime sensor sidesteps it: an independent entity, read fresh every evaluation, reliable across restarts and reloads.
 
 Most systems already have it. If yours does not, add the **[Uptime Integration](https://www.home-assistant.io/integrations/uptime/)** (Settings, Devices & Services, Add Integration, Uptime). It creates `sensor.uptime`, whose state is a timestamp like `2026-06-26T14:56:59+00:00`. Confirm it is in **timestamp** mode, not a number of days.
 
-If the uptime sensor is missing, unavailable, or not a timestamp, Entity Sentinel reports a `setup_error` state with a message naming the problem, watches nothing, and starts working the moment you fix it.
+If the uptime sensor is missing, unavailable, or not a timestamp, Battery Sentinel reports a `setup_error` state with a message naming the problem, watches nothing, and starts working the moment you fix it.
 
 ## Import the Blueprint
 
@@ -97,7 +97,7 @@ template:
         low_clear_margin: 2
         startup_grace_seconds: 240
         uptime_sensor: sensor.uptime
-        scan_interval: "/2"
+        scan_interval: "/1"
         sensor_name: Battery Sentinel
         unique_id: battery_sentinel
 ```
@@ -120,7 +120,7 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 | `low_clear_margin` | No | `2` | 0 or greater | How far above the threshold a flagged device must climb before it clears. The hysteresis band. Negative yields `setup_error`. |
 | `include_target` | No | empty | entities, areas, devices, or **labels** | Which devices to watch. Empty watches every battery device-class entity. Areas and devices are filtered to batteries; labels expand on entity, device, or area. |
 | `exclude_target` | No | empty | entities, areas, devices, or labels | Which to leave out. Exclude always wins over include. |
-| `scan_interval` | No | `/2` | `/1`, `/2`, `/3`, `/6`, `/12` | How often the sensor re-scans, in hours. /2 means that it will trigger every even hour. /5 means every hour divisible by 5. |
+| `scan_interval` | No | `/1` | `/1`, `/2`, `/3`, `/4`, `/6`, `/8`, `/12`, `/24` | How often the sensor re-scans, in hours. `/1` is hourly, `/2` every two hours, `/6` four times a day. Battery levels drift slowly, so hourly or slower is plenty. |
 | `startup_grace_seconds` | No | `240` | 0 or greater (seconds) | How long after Home Assistant starts to hold the unavailable list empty while the mesh repopulates, measured from the uptime sensor. |
 | `refresh_button` | No | `input_button.none` | an `input_button` | Optional. Pressing it re-evaluates immediately. Point several Sentinels at one button to refresh them together. It re-scans; it cannot force a device to report. |
 | `sensor_name` | No | `Battery Sentinel` | any text | The friendly name, and what the entity id is built from. |
@@ -128,7 +128,7 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 
 ## Setting the Grace Period
 
-`startup_grace_seconds` is an input to set carefully because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's full startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in. This cannot be guessed, only deliberatly timed.
+`startup_grace_seconds` is an input to set carefully because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's full startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in. This cannot be guessed, only deliberately timed.
 
 The default `240` (four minutes) suits a fast mini-PC with a stable mesh; a slower hub with a large Zigbee or Z-Wave network may need five or six. Set it too short and a restart can flash a brief false outage before the mesh finishes; set it generously and the only cost is that a genuine outage in the first few minutes after a restart waits until the window closes to show.
 
@@ -196,6 +196,7 @@ The state is the number you badge or trigger on, or the string `setup_error` if 
 - **`devices`** the low batteries, each with `name`, `entity_id`, `area`, `level` (null for binary), and `battery_type` if exposed.
 - **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace.
 - **`boot_time`** the start time the grace is measured from, or null in `setup_error`.
+- **`last_evaluated`** the timestamp of the most recent evaluation, a heartbeat you can watch to confirm the sensor is still running.
 
 ### The `setup_error` State
 
@@ -238,6 +239,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.1-beta | Re-evaluation cadence moved to hours, the production setting (minutes was a development affordance for fast testing). The `scan_interval` selector now offers 1, 2, 3, 4, 6, 8, 12, and 24 hours, defaulting to hourly, and the sensor fires at the top of the chosen hour. |
 | 1.0.0-beta | First beta. Counts batteries at or below a threshold with a hysteresis deadband, handles percentage and binary battery entities, reports unavailable and missing batteries in a parallel `unavailable_entities` attribute. Scope by entity, label, area, or device with include and exclude (exclude wins; labels expand to entities, devices, and areas on both sides). Startup grace measured from a required uptime sensor in timestamp mode. Loud `setup_error` state with `error` and `uptime_status` attributes when the uptime sensor is missing or not a timestamp, or when `low_threshold`, `low_clear_margin`, or `startup_grace_seconds` is invalid; the sensor fails safe and self-heals. Added an `ok` boolean so automations can gate on it rather than doing integer math on a state that may read `setup_error`. Timezone-safe grace math. Debug log carries the version, state, uptime status, and both arrays. |
 
 ## License

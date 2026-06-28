@@ -4,7 +4,7 @@ A Home Assistant template blueprint that watches a list of your critical entitie
 
 ## What This Solves
 
-A device going quiet is never announced. A Zigbee sensor drops off the mesh, an integration that stops serving a depreciated entity, a device hangs and freezes at its last value while still showing a healthy state. None of these throws an error, and a plain value check sails right past the frozen one, because the value still looks fine.
+A device going quiet is never announced. A Zigbee sensor drops off the mesh, an integration that stops serving a deprecated entity, a device hangs and freezes at its last value while still showing a healthy state. None of these throws an error, and a plain value check sails right past the frozen one, because the value still looks fine.
 
 Home Assistant has no built-in answer for this, and the common approaches each miss a case: a simple `unavailable` check never catches the device that is actually "frozen" but still "present," and a value-change check wrongly flags a steady-but-healthy sensor that simply has not changed. What people keep asking for is one question that catches all of it: has this entity actually reported lately, and is it still alive?
 
@@ -24,7 +24,7 @@ That is why this is a beta release. It is genuinely useful today, and I run it o
 
 ## Why a Sensor, Not an Automation
 
-This builds a `sensor` which has a state and attributes that persist. Anything in Home Assistant can read it and that difference is is powerful. One sensor, many listeners:
+This builds a `sensor` which has a state and attributes that persist. Anything in Home Assistant can read it, and that difference is powerful. One sensor, many listeners:
 
 - **A notification automation** when a critical sensor goes quiet, so you find out before you need it.
 - **A dashboard card** listing every entity that is offline or frozen, with how long it has been quiet.
@@ -144,7 +144,7 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 
 ## Setting the Grace Period
 
-`startup_grace_seconds` is an input to set carefully because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's full startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in. This cannot be guessed, only deliberatly timed.
+`startup_grace_seconds` is an input to set carefully because the right value depends on your hardware. Measured from the uptime sensor (the moment the Home Assistant process started), it has to cover your hub's full startup: boot time, plus the time your Zigbee or Z-Wave mesh takes to re-route and report in. This cannot be guessed, only deliberately timed.
 
 The default `240` (four minutes) suits a fast mini-PC with a stable mesh; a slower hub with a large Zigbee or Z-Wave network may need five or six. Set it too short and a restart can flash a brief false outage before the mesh finishes; set it generously and the only cost is that a genuine outage in the first few minutes after a restart waits until the window closes to show.
 
@@ -152,7 +152,7 @@ The default `240` (four minutes) suits a fast mini-PC with a stable mesh; a slow
 
 Entity Sentinel requires a scope, set through `include_target` and `exclude_target`. Each accepts entities, labels, areas, or devices. There are two tiers and understanding them is important.
 
-**Explicit entities and labels are precise, and watched for both freeze and `unavailable`checks.** Name entities directly, or tag them with a label such as `entity_watch`, and each is watched exactly as given. Use this for the things you care about, your locks, leak sensors, the freezer probe. A label is the natural way to run this: label your critical entities once and the sensor follows the tag. Labels expand fully, on an entity, a device, or an area, on both the include and exclude side.
+**Explicit entities and labels are precise, and watched for both freeze and `unavailable` checks.** Name entities directly, or tag them with a label such as `entity_watch`, and each is watched exactly as given. Use this for the things you care about, your locks, leak sensors, the freezer probe. A label is the natural way to run this: label your critical entities once and the sensor follows the tag. Labels expand fully, on an entity, a device, or an area, on both the include and exclude side.
 
 **Areas and devices are convenient, and tuned for freeze.** Point the scope at an area or device and the sensor sweeps it, picking one representative entity per device. A device class with a clear behavioral meaning wins first (occupancy, motion, door, window, lock, smoke, and so on), then the device's primary function (light, switch, lock, cover, and the rest), then telemetry, then any ordinary entity. So a smart plug or bulb is represented rather than skipped; only a device whose entire entity set is configuration, diagnostic, or event entities is skipped, since it offers no honest liveness signal. This is correct for freeze, which resolves to the device anyway. For the unavailable check it is approximate: the sweep watches the representative as a stand-in, so if the integration drops a different entity on that device, the sweep does not see it.
 
@@ -273,6 +273,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.3-beta | Exclude-by-label now expands to devices and areas, not just entities. The include path already treated a label as expanding three ways (entities, devices, areas), but the exclude path only expanded the entities tagged directly, so a label applied to a device or an area and used in the Exclude field silently failed to remove the entities it covered. The exclude path now expands a label the same three ways, so "exclude always wins" holds for device- and area-applied labels, matching the include path and Battery Sentinel. |
 | 1.0.2-beta | Excluded event entities from the area and device sweep. A device whose only entities are event entities (an NSPanel exposing just touch and button entities, for example) was flagged with a false `unknown` because an event entity sits at `unknown` until it fires. Event entities are not a usable liveness signal, so the sweep now skips them; a device that offers nothing else is skipped, and an event entity never displaces a real sensor when one is present. |
 | 1.0.1-beta | Three fixes from the pre-public review. Area and device sweeps no longer silently skip a device that exposes no priority device class: the representative election falls back through the device's primary domain (light, switch, lock, cover, and the rest), then mains telemetry, then any ordinary entity, so smart plugs, bulbs, and relays are caught. An entity that has genuinely never reported is now flagged `never_reported` rather than mislabeled `frozen`. Added an `ok` boolean so automations can gate on it rather than doing integer math on a state that may read `setup_error`. |
 | 1.0.0-beta | First beta. The two-mode liveness engine: entity-level unavailable/unknown/missing with a duration debounce, device-level freeze against the freshest device report over a lookback, auto-routed per entity. Scope by entity, label, area, or device, with include and exclude (exclude wins, labels expand on both sides), and device-level dedupe so an entity reached by both a name and a sweep is watched once. Representative-per-device sweeping by a `device_class` priority order. Startup grace measured from a required uptime sensor (timestamp mode); a missing or non-timestamp uptime sensor yields a loud `setup_error` state with `error` and `uptime_status` attributes, and the sensor fails safe until fixed. Timezone-safe grace math. Optional refresh button. Structured `devices` output with `reason`, `since`, `last_seen`, and a human-readable `age`. Hardened across an extensive adversarial test suite and proven on a live system, including a real power-loss outage, the device-dedupe collapse, the full grace cycle off the uptime clock, and the `setup_error` path end to end. |

@@ -4,6 +4,11 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.0-alpha.4 - Cleanup, no behavior change. Removed two redundant if-true wrappers
+#           that guarded each push action inside the repeat loops; continue_on_error on
+#           the action already makes a dead target non-fatal, so the action is now called
+#           directly. Fixed a stray double apostrophe in the memory-helper description
+#           (other''s rendered literally in the folded description block; now reads other's).
 #   1.0.0-alpha.3 - Fixed push targets. The selector previously offered the new notify
 #           ENTITY (notify.your_phone), which cannot be called as an action and triggered
 #           an "unknown action" error on real systems. It now takes the mobile_app notify
@@ -105,7 +110,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.3
+    1.0.0-alpha.4
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -157,7 +162,7 @@ blueprint:
             (Settings, Devices & Services, Helpers, Create Helper, Text) and select
             it here. CRITICAL: every copy of this companion must have its OWN
             dedicated helper. Two copies sharing one helper will overwrite each
-            other''s memory and cross-fire endless notifications. One helper per copy.
+            other's memory and cross-fire endless notifications. One helper per copy.
           selector:
             entity:
               filter:
@@ -276,7 +281,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-alpha.3
+  version: 1.0.0-alpha.4
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -584,30 +589,26 @@ action:
               - repeat:
                   for_each: "{{ push_targets }}"
                   sequence:
-                    - alias: Push to this target (continue_on_error makes a dead target non-fatal)
-                      if:
-                        - condition: template
-                          value_template: "{{ true }}"
-                      then:
-                        - action: "{{ repeat.item }}"
-                          continue_on_error: true
-                          data:
-                            title: Sentinel not working
-                            message: >-
-                              A source Sentinel is reporting a problem and is not monitoring. Detail: {{ upstream_error }}
-                            data:
-                              tag: "{{ notification_tag }}_upstream"
-                              priority: >-
-                                {{ 'high' if priority_level == 'high' else 'normal' }}
-                              ttl: >-
-                                {{ 0 if priority_level == 'high' else 3600 }}
-                              channel: >-
-                                {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
-                              importance: >-
-                                {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
-                              push:
-                                interruption-level: >-
-                                  {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
+                    - alias: Push to this target; continue_on_error makes a dead target non-fatal
+                      action: "{{ repeat.item }}"
+                      continue_on_error: true
+                      data:
+                        title: Sentinel not working
+                        message: >-
+                          A source Sentinel is reporting a problem and is not monitoring. Detail: {{ upstream_error }}
+                        data:
+                          tag: "{{ notification_tag }}_upstream"
+                          priority: >-
+                            {{ 'high' if priority_level == 'high' else 'normal' }}
+                          ttl: >-
+                            {{ 0 if priority_level == 'high' else 3600 }}
+                          channel: >-
+                            {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
+                          importance: >-
+                            {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
+                          push:
+                            interruption-level: >-
+                              {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
 
   - alias: Dismiss the broken-Sentinel card once all source Sentinels are healthy again
     if:
@@ -654,29 +655,25 @@ action:
           - repeat:
               for_each: "{{ push_targets }}"
               sequence:
-                - alias: Push to this target (continue_on_error makes a dead target non-fatal)
-                  if:
-                    - condition: template
-                      value_template: "{{ true }}"
-                  then:
-                    - action: "{{ repeat.item }}"
-                      continue_on_error: true
-                      data:
-                        title: "{{ title | trim }}"
-                        message: "{{ body }}"
-                        data:
-                          tag: "{{ notification_tag }}"
-                          priority: >-
-                            {{ 'high' if priority_level == 'high' else 'normal' }}
-                          ttl: >-
-                            {{ 0 if priority_level == 'high' else 3600 }}
-                          channel: >-
-                            {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
-                          importance: >-
-                            {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
-                          push:
-                            interruption-level: >-
-                              {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
+                - alias: Push to this target; continue_on_error makes a dead target non-fatal
+                  action: "{{ repeat.item }}"
+                  continue_on_error: true
+                  data:
+                    title: "{{ title | trim }}"
+                    message: "{{ body }}"
+                    data:
+                      tag: "{{ notification_tag }}"
+                      priority: >-
+                        {{ 'high' if priority_level == 'high' else 'normal' }}
+                      ttl: >-
+                        {{ 0 if priority_level == 'high' else 3600 }}
+                      channel: >-
+                        {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
+                      importance: >-
+                        {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
+                      push:
+                        interruption-level: >-
+                          {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
 
   - alias: Log the result
     if:

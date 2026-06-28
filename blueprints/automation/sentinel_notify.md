@@ -62,7 +62,7 @@ Create it first: Settings, Devices & Services, Helpers, Create Helper, Text. Giv
 
 > **Critical: one dedicated helper per copy.** Every copy of this companion must have its own input_text helper. Two copies (say a Battery one and an Entity one) sharing a single helper will overwrite each other's memory and cross-fire endless notifications, each thinking the situation changed on every other check. If you build more than one copy, create a separate helper for each.
 
-You do not need to set a maximum length or any options on the helper; the default is fine. The companion stores a compact fingerprint there, which fits comfortably regardless of how many devices you watch.
+When you create the helper, open advanced options and set the maximum length to 255. The default of 100 is too short: the companion stores two fingerprints plus a marker, which can run past 100 characters when something is flagged, and if the helper is too short the write fails silently and change-detection stops working. Setting it to 255 is all the helper needs.
 
 ## Import the Blueprint
 

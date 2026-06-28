@@ -4,6 +4,12 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
 # Changelog:
+#   1.0.1-beta - Re-evaluation cadence is now measured in HOURS, the production
+#           setting (the minute-based cadence was a development affordance for fast
+#           testing). The scan_interval selector now offers 1, 2, 3, 4, 6, 8, 12, and
+#           24 hours, defaulting to hourly, and the trigger fires at the top of the
+#           chosen hour. Battery levels drift slowly, so hourly or slower is right;
+#           the refresh button still forces an immediate check.
 #   1.0.0-beta - First beta. Counts batteries at or below a threshold, with a
 #           value-hysteresis deadband (a low_clear_margin so a cell hovering at the
 #           line does not flap). Handles percentage and binary battery entities.
@@ -27,6 +33,20 @@
 #           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major (2.0.0-beta)
 #           for breaking changes.
 #
+#   Alpha history (1.0.0-alpha through 1.0.0-alpha.6) is preserved in the project
+#   document, not carried here.
+#
+# Design note on hysteresis and HA #115585: the startup grace was moved to the
+# uptime sensor specifically to avoid depending on this.attributes, which trigger
+# templates can intermittently fail to read (#115585). The low-clear hysteresis,
+# however, reads the previous low set from this.attributes.devices, and that
+# dependency is irreducible: whether an entity was low on the prior render is
+# self-referential state, and this is the only channel HA gives a template sensor
+# to read its own prior output. If #115585 strikes on a given render, the previous
+# set reads empty and a battery sitting inside the clear margin (for example 21
+# with threshold 20 and margin 2) loses its was-low status for that one tick and
+# briefly drops off the low list. It returns on the next clean render. This is an
+# accepted, self-correcting degradation; the alternative is no hysteresis at all.
 
 blueprint:
   name: Battery Sentinel (Beta)
@@ -60,7 +80,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-beta
+    1.0.1-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -457,7 +477,7 @@ action:
       level: info
       logger: battery_sentinel
       message: >-
-        Battery Sentinel v1.0.0-beta @ {{ result.last_evaluated }} | state: {{
+        Battery Sentinel v1.0.1-beta @ {{ result.last_evaluated }} | state: {{
         result.state }} | uptime_status: {{ result.uptime_status }}{% if
         result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
         result.settled }} | boot: {{ result.boot_time }} | monitored: {{

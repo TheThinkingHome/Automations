@@ -16,9 +16,9 @@ Plenty of blueprints already scan the whole house on a timer and list whatever i
 
 ## Built on Request, and Why It Is a Beta
 
-Every other blueprint from The Thinking Home grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job was to generalize what already worked: make it configurable, document it, smooth the edges, and hand over something I already trusted.
+Every other blueprint from _The Thinking Home_ grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job generalized what already worked: made it configurable, documented it, smoothed the edges, and handed over something I already trusted.
 
-This one is different. It did not run quietly for years in my walls. It was asked for, by the community, for a problem the existing tools cannot solve. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allow.
+This one is different. It did not run quietly for years in my walls. It was asked for, by the community, for a problem the existing tools cannot solve. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allows.
 
 That is why this is a beta release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I did not imagine and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
 
@@ -82,11 +82,11 @@ Importing only registers a blueprint. It does not create a sensor yet. After imp
 
 ### The Catch with Template Blueprints
 
-Automation blueprints get a Create automation button on the Blueprints page. Template blueprints do not, and that is expected, not a fault. They become real entities through a short piece of YAML called `use_blueprint`, which takes a path and a set of inputs. Unlike Battery Sentinel, a scope is required: Entity Sentinel does not default to watching everything, since "every entity in the house" is thousands of them. You tell it what is critical.
+Automation blueprints get a Create automation button on the Blueprints page. Template blueprints do not, and that is expected, not a fault. They become real entities through a short piece of YAML called `use_blueprint`, which takes a path and a set of inputs. Unlike Battery Sentinel, a scope is required: Entity Sentinel does not default to watching everything, since "every entity in the house" is hundreds. You tell it what is critical.
 
 ### What a Package Is, and How to Create One
 
-A package is a single YAML file holding a bundle of related configuration that Home Assistant folds in at startup. Packages are optional, but they keep related things together.
+A package is a single YAML file holding a bundle of related configurations that Home Assistant folds in at startup. Packages are optional, but they keep related things together.
 
 If you have never used packages, switch them on once. In `configuration.yaml`, add the `packages:` line (under your existing `homeassistant:` section if you have one):
 
@@ -140,7 +140,7 @@ When it comes up you will have a sensor named after `sensor_name`. Watch it in D
 | `startup_grace_seconds` | No | `240` | 0 to 1800 seconds | Measured from the uptime sensor, how long after Home Assistant starts to hold flagging back. Must cover your full boot plus mesh-settle plus a margin. See "Setting the Grace Period." |
 | `refresh_button` | No | `input_button.none` | an `input_button` | Optional. Pressing it re-evaluates immediately. Point several Sentinels at one button to refresh them together. It re-scans; it cannot force a device to report. |
 | `sensor_name` | No | `Entity Sentinel` | any text | The friendly name, and what the entity id is built from. |
-| `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, with the version, state, uptime status, and the flagged entities and why. |
+| `debug_enabled` | No | `false` | on or off | When on, writes one diagnostic line to the system log each evaluation, with the version, state, uptime status, the flagged entities and why. |
 
 ## Setting the Grace Period
 

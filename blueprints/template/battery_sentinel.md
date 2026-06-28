@@ -4,17 +4,17 @@ A Home Assistant template blueprint that watches the battery devices you choose 
 
 ## What This Solves
 
-Battery monitoring in Home Assistant has looked the same for years. The common blueprints check every device's battery percentage on a schedule and push a notification to your phone. The notification is the entire product: a one-time alert, and nothing else in your system can read the result.
+Battery monitoring in Home Assistant has looked the same for years. The common blueprints check every device's battery percentage on a schedule and push a notification to your phone. The notification is the entire product: a one-time alert where nothing else in your system can read the result.
 
-The forums carry a steady run of requests a notification-only design cannot reach: list the actual battery type so the alert tells you what to buy, create a list of devices with a label, send the result somewhere other than a phone, detect devices that are currently offline rather than only the ones that are low. None of these are hard. They are simply out of reach for a blueprint whose only output is a notification.
+The forums carry a steady run of requests a notification-only design cannot reach: listing the actual battery type so the alert tells you what to buy, creating a list of devices with a label, sending the result somewhere other than a phone, detecting devices that are currently offline rather than only the ones that are low. None of these are hard. They are simply out of reach for a blueprint whose only output is a notification.
 
 Battery Sentinel starts with a different perspective. Instead of building down from a notification, it builds up from a sensor.
 
 ## Built on Request, and Why it is a Beta
 
-Every other blueprint from _The Thinking Home_ series grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job was to generalize what already worked: make it configurable, document it, smooth the edges, and hand over something I already trusted.
+Every other blueprint from _The Thinking Home_ series grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job generalized what already worked: made it configurable, documented it, smoothed the edges, and handed over something I already trusted.
 
-This one is different. It was not refined over years while it ran quietly within my walls. It was asked for, by the community, for a problem the existing tools never solved. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allowed. I believe in it, but I cannot yet claim what years of uneventful running will allow me claim.
+This one is different. It was not refined over years while it ran quietly within my walls. It was asked for, by the community, for a problem the existing tools never solved. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allowed. I believe in it, but I cannot yet claim what years of uneventful running will allow me to claim.
 
 That is why this is a beta release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
 
@@ -24,7 +24,7 @@ Most blueprints for this kind of job are automations: they run on a schedule, fi
 
 This builds a `sensor` instead. A sensor has a state and attributes that persist, and anything in Home Assistant can read it. One sensor, many listeners:
 
-- **A notification automation**, the obvious one. A companion automation blueprint for this in the works.
+- **A notification automation**, the obvious one. A companion automation blueprint for this is in the works.
 - **A dashboard card** that lists the low devices with area and battery type, so a glance tells you what to grab from the drawer.
 - **A to-do or shopping list**, each low cell dropped onto a list so the right battery is bought before the swap.
 - **A voice summary** through Assist, asking which batteries need attention before you head out.
@@ -34,7 +34,7 @@ The notification is the least of what the signal can drive. It is just the first
 
 ## What It Does
 
-Battery Sentinel counts the batteries at or below a threshold and lists each one, with its percentage, area, and battery type if available, in a `devices` attribute. The state is the count; the detail is in the attributes.
+Battery Sentinel counts the batteries at or below a threshold and lists each one, with its percentage, area, and battery type if available, in a `devices` attribute. The state is the count; the detail is in the attribute.
 
 - **Percentage and binary, both handled.** A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads `on`. 
 - **Hysteresis so it does not flap.** A flagged device usually stays low. But it can fluctuate slightly as a load is removed when the device goes to sleep.
@@ -65,7 +65,7 @@ Or paste this URL into Settings, Automations & Scenes, Blueprints, Import Bluepr
 https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/battery_sentinel.yaml
 ```
 
-Importing only registers a blueprint. It does not create a sensor yet. After import, the file lands at `config/blueprints/template/TheThinkingHome/battery_sentinel.yaml`. Verify it is there, you will need that path next.
+Importing only registers a blueprint. It does not create a sensor. After import, the file lands at `config/blueprints/template/TheThinkingHome/battery_sentinel.yaml`. Verify it is there, you will need that path next.
 
 ## Setting Up the Sensor
 
@@ -75,7 +75,7 @@ Automation blueprints get a Create automation button on the Blueprints page. Tem
 
 ### What a Package Is, and How to Create One
 
-A package is a single YAML file holding a bundle of related configuration that Home Assistant folds in at startup. Packages are optional, but they keep related things together.
+A package is a single YAML file holding a bundle of related configurations that Home Assistant folds in at startup. Packages are optional, but they keep related things together.
 
 If you have never used packages, switch them on once. In `configuration.yaml`, add the `packages:` line (under your existing `homeassistant:` section if you have one):
 

@@ -4,6 +4,17 @@
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
 # Changelog:
+#   1.0.0-alpha.3 - Fixed push targets. The selector previously offered the new notify
+#           ENTITY (notify.your_phone), which cannot be called as an action and triggered
+#           an "unknown action" error on real systems. It now takes the mobile_app notify
+#           ACTION name (notify.mobile_app_your_phone) as text, the form that carries the
+#           full priority/sound/Do-Not-Disturb payload this companion sends. The modern
+#           notify.send_message action cannot carry that payload (message and title only),
+#           so the per-action call is correct until Home Assistant's entity schema gains
+#           rich-data support. Also dropped a now-meaningless per-target availability check
+#           (a service name has no state); continue_on_error already makes a dead target
+#           non-fatal. Found on live hardware; the simulation suite never exercised real
+#           action dispatch.
 #   1.0.0-alpha.2 - Added the ENTITY family. Entity mode reads one or more Entity Sentinel
 #           sensors and reports the entities that have gone quiet, by name, with the reason
 #           (unavailable, frozen, missing, never_reported) and how long since each last
@@ -94,7 +105,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.2
+    1.0.0-alpha.3
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -177,16 +188,17 @@ blueprint:
         push_targets:
           name: Push notification targets
           description: >-
-            The mobile_app notify targets to push to, as notify entities (for
-            example notify.mobile_app_your_phone). Leave empty to send no push and
-            rely on the persistent notification only.
+            The mobile_app notify ACTIONS to push to, one per line, each in the
+            form notify.mobile_app_your_phone. Use the action name (notify.mobile_app_...),
+            NOT the notify entity (notify.your_phone): only the action carries the
+            priority and sound options this companion sends. Find the exact name in
+            Settings, Developer tools, Actions, search mobile_app. Leave empty to send
+            no push and rely on the persistent notification only.
           default: []
           selector:
-            entity:
-              filter:
-                - integration: mobile_app
-                  domain: notify
+            text:
               multiple: true
+              multiline: false
         persistent_enabled:
           name: Create a persistent notification
           description: >-
@@ -264,7 +276,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-alpha.2
+  version: 1.0.0-alpha.3
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -572,10 +584,10 @@ action:
               - repeat:
                   for_each: "{{ push_targets }}"
                   sequence:
-                    - alias: Push to this target unless it is unavailable
+                    - alias: Push to this target (continue_on_error makes a dead target non-fatal)
                       if:
                         - condition: template
-                          value_template: "{{ states(repeat.item) != 'unavailable' }}"
+                          value_template: "{{ true }}"
                       then:
                         - action: "{{ repeat.item }}"
                           continue_on_error: true
@@ -642,10 +654,10 @@ action:
           - repeat:
               for_each: "{{ push_targets }}"
               sequence:
-                - alias: Push to this target unless it is unavailable
+                - alias: Push to this target (continue_on_error makes a dead target non-fatal)
                   if:
                     - condition: template
-                      value_template: "{{ states(repeat.item) != 'unavailable' }}"
+                      value_template: "{{ true }}"
                   then:
                     - action: "{{ repeat.item }}"
                       continue_on_error: true

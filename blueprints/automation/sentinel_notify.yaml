@@ -3,7 +3,108 @@
 # Sentinel Notify - a Home Assistant automation blueprint from The Thinking Home (xeazy.com)
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprints/
 #
+# Sentinel Notify is the notification companion to the Sentinel sensors. It does
+# nothing on its own: it reads a Battery Sentinel or an Entity Sentinel and turns
+# its rich output into change-aware notifications, by two independent streams:
+#
+#   THE ALERT (normal). Reads the source sensors' "devices" list and reports what is
+#       flagged, low batteries with percentage, type, and area in Battery mode, or
+#       entities gone quiet with reason and age in Entity mode. It fires only when
+#       the flagged SET changes, judged by a sorted, md5-hashed fingerprint, so it
+#       does not notify every cycle. Several sensors of one family combine into one
+#       report, and a device reached by two overlapping sensors is de-duped to one
+#       entry (offline wins over low, a genuinely-gone reason wins over frozen).
+#   THE BROKEN-SENTINEL ALERT. A second, independent stream on its own card and its
+#       own memory slot. It fires when a source Sentinel is itself not working,
+#       setup_error, ok:false, or the sensor gone unavailable/unknown, so a silently
+#       dead Sentinel cannot leave you thinking all is well. It rides alongside the
+#       normal alert rather than suppressing it, so the healthy sensors still report.
+#
+# Scope: one Sentinel FAMILY per instance. Set the mode to Battery or Entity and
+#   point it at sensors of that family; pointing at the wrong family is a setup
+#   error. Several sensors of the chosen family combine into a single report. To
+#   cover both families, build two copies, one in each mode, each with its OWN
+#   memory helper (a shared helper cross-fires endless notifications).
+#
+# Triggering: event-driven, no polling. It re-evaluates at Home Assistant start, when
+#   a watched sensor changes, at an optional daily reminder time, and at the optional
+#   quiet-hours end time. The normal alert fires on a CHANGE; the daily reminder and
+#   the quiet-hours end re-send whatever currently persists rather than a diff.
+#
+# DESIGN CHOICE (one family per instance): the change-detection engine works across
+# families, but the wording, item shape, and sensible defaults differ enough between
+# batteries (sparse, slow) and entities (dense, twitchy) that one instance per family
+# keeps each configuration and its notifications clean.
+#
+# DESIGN CHOICE (memory): change-detection has to remember what was last reported
+# across restarts. The only UI-creatable, restart-surviving store is an input_text
+# (capped at 255 characters). That cap is not a constraint: the companion stores two
+# md5 fingerprints (one for the alert, one for the broken-Sentinel state) plus a
+# timestamp, as b={hash}|u={hash}|t={iso}. Hashing both before storage keeps the
+# value short regardless of fleet size and means no device name or error text (and no
+# stray delimiter) can land in the stored value and corrupt the parse. Persistent
+# notifications cannot be read back from templates since HA 2023.6, and a shell or
+# file store is too much to ask of a non-advanced user, so input_text is the store.
+#
+# DESIGN CHOICE (quiet hours and per-device priority): priority is set per device by
+# which list it is in, high_priority_targets or normal_priority_targets. A HIGH target
+# pierces quiet hours (pushed whenever something is flagged, day or night); a NORMAL
+# target respects quiet hours (held during the window, then delivered at the end). The
+# gate is one per-entry test, push if the entry is high OR we are outside quiet hours,
+# so the two rules fall out of a single expression. Quiet hours never gates the
+# persistent card or the memory write, so state tracking survives the night and the
+# only thing held back is the sound on a normal-priority phone. The quiet-hours END
+# time re-sends whatever currently persists to BOTH lists, sharing the daily reminder's
+# "send the current set, not a diff" path: a high phone sees a refreshed card under the
+# same tag, a normal phone gets the held report for the first time. The in_quiet_hours
+# test compares the wall clock as a zero-padded HH:MM:SS string (which sorts
+# chronologically), start-inclusive and end-exclusive, and treats a window whose start
+# is later than its end as crossing midnight. A target in both lists is deduped to high.
+#
+# THE ACTION FLOW: documented here, in the header. Unlike the Sentinel sensors there
+# is no single result: engine; the work is the variables block plus the action steps,
+# which run top to bottom in this order:
+#
+#   1. Compute. The variables block builds setup_error/ok, the upstream (broken)
+#      state, the flagged list, the de-duped list, the fingerprints, the previous
+#      values read back from the memory helper, and in_quiet_hours.
+#   2. Log the check (debug only), then stop if setup_error.
+#   3. Decide. Work out battery_should_notify and upstream_should_notify (a change,
+#      or a daily-reminder/quiet-end re-send), and whether memory needs writing.
+#   4. Persist. Write both memory slots together when the content actually changed.
+#      Not gated by quiet hours, so state tracking survives the night.
+#   5. Broken-Sentinel stream. Raise its card and push it to the plan: high targets
+#      always, normal targets only outside quiet hours. Dismiss the card once every
+#      source is healthy again.
+#   6. Normal stream. Dismiss the card when nothing is flagged; otherwise raise the
+#      card and push it to the plan: high targets always, normal targets only outside
+#      quiet hours.
+#   7. Log the result (debug only).
+#
 # Changelog:
+#   1.0.0-alpha.5 - Two features in one release.
+#           (1) QUIET HOURS. An optional daily window during which NORMAL-priority pushes
+#           are held; HIGH-priority pushes pierce the window and go through immediately.
+#           Persistent notifications and the change-detection memory still update through
+#           the window, so the UI card stays accurate and no state is lost. At the
+#           quiet-hours END time the automation wakes and re-sends the CURRENT persisting
+#           condition to BOTH lists (the same "what is flagged now" logic the daily reminder
+#           uses, not a diff): a high target that already got the alert live sees a refreshed
+#           card under the same tag, a normal target that was held gets it for the first time.
+#           A problem raised overnight is delivered in the morning, one that self-cleared is
+#           not, and a partially-cleared list reports only what remains. The window is
+#           start-inclusive and end-exclusive and handles a window that crosses midnight.
+#           Independent of the daily reminder; both can run. Off by default.
+#           (2) PER-DEVICE PRIORITY. The single push-target list and the global priority
+#           selector are replaced by two lists, high_priority_targets and
+#           normal_priority_targets. Priority is now per device: a phone on the high list
+#           gets high-priority pushes that pierce quiet hours, a phone on the normal list
+#           gets normal-priority pushes that respect quiet hours. A target in both lists is
+#           treated as high (pushed once). Both lists feed both alert streams (the normal
+#           alert and the broken-Sentinel alert) at the device's own priority. The "low"
+#           (silent) option is removed; the floor is now normal. This is a breaking input
+#           change, acceptable because the blueprint is pre-release alpha. The
+#           change-detection engine, memory format, dedup, and message builders are untouched.
 #   1.0.0-alpha.4 - Cleanup, no behavior change. Removed two redundant if-true wrappers
 #           that guarded each push action inside the repeat loops; continue_on_error on
 #           the action already makes a dead target non-fatal, so the action is now called
@@ -53,25 +154,6 @@
 #           sensor or a missing helper. (Entity mode was added in alpha.2.) Versioning from here: patch
 #           alpha.N while iterating before any live testing; it graduates to 1.0.0-beta
 #           once proven on hardware, then 1.0.0 stable.
-#
-# Design note: this companion watches ONE Sentinel family per instance (a Battery
-# or Entity mode). The change-detection engine works across families, but the
-# wording, item shape, and sensible defaults differ enough between batteries
-# (sparse, slow) and entities (dense, twitchy) that one instance per family keeps
-# each configuration and its notifications clean. The Battery mode ships in this
-# alpha; both the Battery and Entity modes are built and under test.
-#
-# Memory note: change-detection needs to remember what was last reported across
-# restarts. The only UI-creatable, restart-surviving store is an input_text (capped
-# at 255 characters). That cap is not a constraint: the companion stores two md5
-# fingerprints, one for the battery report and one for the broken-Sentinel state,
-# plus a timestamp, as b={hash}|u={hash}|t={iso}. Hashing both before storage keeps
-# the value short regardless of fleet size and means no device name or error text
-# (and no stray delimiter) can ever land in the stored value and corrupt the parse.
-# Persistent notifications cannot be read back from templates since HA 2023.6, and a
-# shell or file store is too much to ask of a non-advanced user, so input_text is
-# the store.
-
 blueprint:
   name: Sentinel Notify (Alpha)
   description: |
@@ -100,7 +182,9 @@ blueprint:
 
     An optional daily reminder, off by default, re-sends the current report at a time of day you set, but only if something is still flagged. It reuses the same tag, so it refreshes the existing card rather than stacking a new one. Use it as a once-a-day "this is still not fixed" nudge.
 
-    Send by push to any number of mobile devices, and/or as a persistent notification in the Home Assistant UI. Priority controls sound and Do Not Disturb on push.
+    Optional quiet hours, off by default, hold phone pushes during a window you set, for example overnight. The persistent card still updates silently, so nothing is lost; only the push waits. At the end of the window the companion re-sends whatever is still flagged, so a problem raised overnight reaches you in the morning and one that already cleared does not.
+
+    Send by push to two lists of mobile devices, a high-priority list and a normal-priority list, and/or as a persistent notification in the Home Assistant UI. Priority is per device: high-priority devices get an attention-grabbing alert that pierces quiet hours, normal-priority devices get standard delivery that respects quiet hours. A device in both lists is treated as high.
 
     This companion watches ONE family per instance. If you run both Sentinels, build two copies, one in each mode.
 
@@ -110,7 +194,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.4
+    1.0.0-alpha.5
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -190,15 +274,32 @@ blueprint:
       icon: mdi:bell-ring
       description: How and where to send. Shared by both families.
       input:
-        push_targets:
-          name: Push notification targets
+        high_priority_targets:
+          name: High-priority push targets
           description: >-
-            The mobile_app notify ACTIONS to push to, one per line, each in the
-            form notify.mobile_app_your_phone. Use the action name (notify.mobile_app_...),
-            NOT the notify entity (notify.your_phone): only the action carries the
-            priority and sound options this companion sends. Find the exact name in
-            Settings, Developer tools, Actions, search mobile_app. Leave empty to send
-            no push and rely on the persistent notification only.
+            The mobile_app notify ACTIONS that should receive HIGH-priority pushes,
+            one per line, each in the form notify.mobile_app_your_phone. High
+            priority bypasses Do Not Disturb (an alarm sound on Android, a
+            time-sensitive alert on iOS) AND pierces quiet hours: a high-priority
+            target is pushed the moment something is flagged, day or night. Use the
+            ACTION name (notify.mobile_app_...), NOT the notify entity
+            (notify.your_phone): only the action carries the priority and sound
+            options. Find the exact name in Settings, Developer tools, Actions,
+            search mobile_app. Leave empty for no high-priority pushes.
+          default: []
+          selector:
+            text:
+              multiple: true
+              multiline: false
+        normal_priority_targets:
+          name: Normal-priority push targets
+          description: >-
+            The mobile_app notify ACTIONS that should receive NORMAL-priority pushes,
+            one per line, same notify.mobile_app_your_phone form. Normal priority is
+            standard delivery AND respects quiet hours: a normal-priority target is
+            held during the quiet window and receives whatever is still flagged when
+            the window ends. A target listed in both lists is treated as high
+            (pushed once, at high priority). Leave empty for no normal-priority pushes.
           default: []
           selector:
             text:
@@ -212,19 +313,6 @@ blueprint:
           default: true
           selector:
             boolean: {}
-        priority_level:
-          name: Priority
-          description: >-
-            Controls sound and Do Not Disturb behavior on push. Normal is standard
-            delivery. High bypasses DND with an alarm sound on Android and a
-            time-sensitive alert on iOS. Low is silent.
-          default: normal
-          selector:
-            select:
-              options:
-                - normal
-                - high
-                - low
         notification_tag:
           name: Notification tag
           description: >-
@@ -234,6 +322,43 @@ blueprint:
           default: sentinel_notify
           selector:
             text: {}
+
+    quiet_hours_section:
+      name: Quiet Hours
+      icon: mdi:sleep
+      description: An optional daily window during which phone pushes are held back. The persistent card still updates, and at the end of the window anything still flagged is pushed. Off by default.
+      collapsed: true
+      input:
+        quiet_hours_enabled:
+          name: Enable quiet hours
+          description: >-
+            When on, phone pushes (both the normal alert and the broken-Sentinel
+            alert) are held during the window below. The persistent notification
+            still updates silently and the change-detection memory still tracks, so
+            nothing is lost; only the push waits. At the end time the companion
+            re-sends whatever is still flagged. When off, pushes go out as soon as
+            something changes, at any hour.
+          default: false
+          selector:
+            boolean: {}
+        quiet_hours_start:
+          name: Quiet hours start
+          description: >-
+            When the quiet window begins. For example 22:00:00 for 10 in the
+            evening. A window whose start is later than its end is treated as
+            crossing midnight.
+          default: "22:00:00"
+          selector:
+            time: {}
+        quiet_hours_end:
+          name: Quiet hours end
+          description: >-
+            When the quiet window ends. At this time the companion wakes, re-checks,
+            and pushes anything still flagged. For example 08:00:00 for 8 in the
+            morning.
+          default: "08:00:00"
+          selector:
+            time: {}
 
     reminder_section:
       name: Daily Reminder
@@ -281,17 +406,52 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-alpha.4
+  version: 1.0.0-alpha.5
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
   battery_report_offline: !input battery_report_offline
-  push_targets: !input push_targets
+  high_priority_targets: !input high_priority_targets
+  normal_priority_targets: !input normal_priority_targets
   persistent_enabled: !input persistent_enabled
-  priority_level: !input priority_level
   notification_tag: !input notification_tag
+  quiet_hours_enabled: !input quiet_hours_enabled
+  quiet_hours_start: !input quiet_hours_start
+  quiet_hours_end: !input quiet_hours_end
   daily_reminder_enabled: !input daily_reminder_enabled
   debug_enabled: !input debug_enabled
+
+  in_quiet_hours: >-
+    {% if not quiet_hours_enabled %}
+      {{ false }}
+    {% else %}
+      {% set n = now().strftime('%H:%M:%S') %}
+      {% set s = quiet_hours_start %}
+      {% set e = quiet_hours_end %}
+      {% if s == e %}
+        {{ false }}
+      {% elif s < e %}
+        {{ s <= n and n < e }}
+      {% else %}
+        {{ n >= s or n < e }}
+      {% endif %}
+    {% endif %}
+
+  push_plan: >-
+    {%- set ns = namespace(plan=[], seen=[]) -%}
+    {%- for t in high_priority_targets -%}
+      {%- if t not in ns.seen -%}
+        {%- set ns.plan = ns.plan + [{'target': t, 'priority': 'high'}] -%}
+        {%- set ns.seen = ns.seen + [t] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- for t in normal_priority_targets -%}
+      {%- if t not in ns.seen -%}
+        {%- set ns.plan = ns.plan + [{'target': t, 'priority': 'normal'}] -%}
+        {%- set ns.seen = ns.seen + [t] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ ns.plan }}
 
   setup_error: >-
     {% set ns = namespace(err='') %}
@@ -500,6 +660,10 @@ trigger:
     at: !input daily_reminder_time
     id: daily_reminder
     alias: Daily reminder at the configured time
+  - trigger: time
+    at: !input quiet_hours_end
+    id: quiet_hours_end
+    alias: Quiet hours end, re-send anything still flagged
 
 condition:
   - alias: For a source-sensor trigger, run only if the monitored content actually changed (ignore attribute-only churn like a refreshed evaluation timestamp). Other triggers always pass.
@@ -531,7 +695,7 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | quiet: {{ in_quiet_hours }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
 
   - alias: Stop if setup error
     if:
@@ -543,8 +707,9 @@ action:
   - alias: Work out what to notify this run
     variables:
       is_reminder: "{{ trigger.id == 'daily_reminder' and daily_reminder_enabled }}"
-      battery_should_notify: "{{ changed or (is_reminder and flagged_count | int > 0) }}"
-      upstream_should_notify: "{{ upstream_changed or (is_reminder and upstream_broken) }}"
+      is_quiet_end: "{{ trigger.id == 'quiet_hours_end' and quiet_hours_enabled }}"
+      battery_should_notify: "{{ changed or (is_reminder and flagged_count | int > 0) or (is_quiet_end and flagged_count | int > 0) }}"
+      upstream_should_notify: "{{ upstream_changed or (is_reminder and upstream_broken) or (is_quiet_end and upstream_broken) }}"
       memory_needs_write: "{{ changed or upstream_changed }}"
 
   - alias: Persist both memory slots together when content actually changed
@@ -581,34 +746,38 @@ action:
                   title: Sentinel not working
                   message: >-
                     A source Sentinel is reporting a problem and is not monitoring. Fix it, then this clears. Detail: {{ upstream_error }}
-          - alias: Push for the broken Sentinel
+          - alias: Push for the broken Sentinel; high pierces quiet hours, normal waits
             if:
               - condition: template
-                value_template: "{{ push_targets | length > 0 }}"
+                value_template: "{{ push_plan | length > 0 }}"
             then:
               - repeat:
-                  for_each: "{{ push_targets }}"
+                  for_each: "{{ push_plan }}"
                   sequence:
-                    - alias: Push to this target; continue_on_error makes a dead target non-fatal
-                      action: "{{ repeat.item }}"
-                      continue_on_error: true
-                      data:
-                        title: Sentinel not working
-                        message: >-
-                          A source Sentinel is reporting a problem and is not monitoring. Detail: {{ upstream_error }}
-                        data:
-                          tag: "{{ notification_tag }}_upstream"
-                          priority: >-
-                            {{ 'high' if priority_level == 'high' else 'normal' }}
-                          ttl: >-
-                            {{ 0 if priority_level == 'high' else 3600 }}
-                          channel: >-
-                            {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
-                          importance: >-
-                            {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
-                          push:
-                            interruption-level: >-
-                              {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
+                    - alias: Push to this target only if high priority or outside quiet hours; continue_on_error makes a dead target non-fatal
+                      if:
+                        - condition: template
+                          value_template: "{{ repeat.item.priority == 'high' or not in_quiet_hours }}"
+                      then:
+                        - action: "{{ repeat.item.target }}"
+                          continue_on_error: true
+                          data:
+                            title: Sentinel not working
+                            message: >-
+                              A source Sentinel is reporting a problem and is not monitoring. Detail: {{ upstream_error }}
+                            data:
+                              tag: "{{ notification_tag }}_upstream"
+                              priority: >-
+                                {{ 'high' if repeat.item.priority == 'high' else 'normal' }}
+                              ttl: >-
+                                {{ 0 if repeat.item.priority == 'high' else 3600 }}
+                              channel: >-
+                                {{ 'alarm_stream' if repeat.item.priority == 'high' else 'default' }}
+                              importance: >-
+                                {{ 'high' if repeat.item.priority == 'high' else 'default' }}
+                              push:
+                                interruption-level: >-
+                                  {{ 'time-sensitive' if repeat.item.priority == 'high' else 'active' }}
 
   - alias: Dismiss the broken-Sentinel card once all source Sentinels are healthy again
     if:
@@ -647,33 +816,37 @@ action:
               title: "{{ title | trim }}"
               message: "{{ body }}"
 
-      - alias: Push notifications
+      - alias: Push notifications; high pierces quiet hours, normal waits
         if:
           - condition: template
-            value_template: "{{ push_targets | length > 0 and flagged_count | int > 0 }}"
+            value_template: "{{ push_plan | length > 0 and flagged_count | int > 0 }}"
         then:
           - repeat:
-              for_each: "{{ push_targets }}"
+              for_each: "{{ push_plan }}"
               sequence:
-                - alias: Push to this target; continue_on_error makes a dead target non-fatal
-                  action: "{{ repeat.item }}"
-                  continue_on_error: true
-                  data:
-                    title: "{{ title | trim }}"
-                    message: "{{ body }}"
-                    data:
-                      tag: "{{ notification_tag }}"
-                      priority: >-
-                        {{ 'high' if priority_level == 'high' else 'normal' }}
-                      ttl: >-
-                        {{ 0 if priority_level == 'high' else 3600 }}
-                      channel: >-
-                        {{ 'alarm_stream' if priority_level == 'high' else ('low_priority' if priority_level == 'low' else 'default') }}
-                      importance: >-
-                        {{ 'high' if priority_level == 'high' else ('min' if priority_level == 'low' else 'default') }}
-                      push:
-                        interruption-level: >-
-                          {{ 'time-sensitive' if priority_level == 'high' else ('passive' if priority_level == 'low' else 'active') }}
+                - alias: Push to this target only if high priority or outside quiet hours; continue_on_error makes a dead target non-fatal
+                  if:
+                    - condition: template
+                      value_template: "{{ repeat.item.priority == 'high' or not in_quiet_hours }}"
+                  then:
+                    - action: "{{ repeat.item.target }}"
+                      continue_on_error: true
+                      data:
+                        title: "{{ title | trim }}"
+                        message: "{{ body }}"
+                        data:
+                          tag: "{{ notification_tag }}"
+                          priority: >-
+                            {{ 'high' if repeat.item.priority == 'high' else 'normal' }}
+                          ttl: >-
+                            {{ 0 if repeat.item.priority == 'high' else 3600 }}
+                          channel: >-
+                            {{ 'alarm_stream' if repeat.item.priority == 'high' else 'default' }}
+                          importance: >-
+                            {{ 'high' if repeat.item.priority == 'high' else 'default' }}
+                          push:
+                            interruption-level: >-
+                              {{ 'time-sensitive' if repeat.item.priority == 'high' else 'active' }}
 
   - alias: Log the result
     if:
@@ -686,4 +859,4 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | battery_notify: {{ battery_should_notify }} | upstream_broken: {{ upstream_broken }} | upstream_notify: {{ upstream_should_notify }} | pushed: {{ push_targets | length }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | battery_notify: {{ battery_should_notify }} | upstream_broken: {{ upstream_broken }} | upstream_notify: {{ upstream_should_notify }} | quiet: {{ in_quiet_hours }} | targets: {{ push_plan | length }} (high {{ high_priority_targets | length }}, normal {{ normal_priority_targets | length }})

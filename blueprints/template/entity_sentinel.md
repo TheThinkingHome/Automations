@@ -26,7 +26,7 @@ That is why this is a beta release. It is genuinely useful today, and I run it o
 
 This builds a `sensor` which has a state and attributes that persist. Anything in Home Assistant can read it, and that difference is powerful. One sensor, many listeners:
 
-- **A notification automation** when a critical sensor goes quiet, so you find out before you need it.
+- **A notification automation** when a critical sensor goes quiet, so you find out before you need it. The [Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) companion blueprint does exactly this.
 - **A dashboard card** listing every entity that is offline or frozen, with how long it has been quiet.
 - **A gate on another automation**, holding back logic that leans on a sensor that has stopped reporting, so a stale reading never drives an action.
 - **A health badge** for the whole house, one number that is zero when everything is reporting.
@@ -274,6 +274,20 @@ condition:
 Do not gate on `int()` math alone: `int('setup_error')` evaluates to 0, which would read a broken Sentinel as "all healthy." Always check `ok` first.
 
 More worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
+
+## Now What? What Can Read This Sensor
+
+You have a sensor that always knows which of your critical entities have gone quiet. The question is what reads it, and that list is open by design.
+
+The first consumer is built and ready: **[Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md)**, a companion automation blueprint that turns this sensor into change-aware notifications, telling you the moment an entity goes quiet, and again when it comes back, by name and with the reason and how long it has been silent, without nagging you in between.
+
+Beyond notifying, the same `devices` attribute can drive anything. A couple of ideas are on the drawing board, named here because they came up often enough to be worth building:
+
+A **health-badge or dashboard companion** that surfaces the count and the list at a glance, one number that is zero when everything is reporting, so the state of the whole house is visible without opening anything.
+
+A **logging companion** that records a timestamped history as entities go quiet and recover, so "this sensor has dropped four times this month" becomes a record you can look back on rather than a thing you half-remember.
+
+Neither is built yet. If there is enough interest, I will build them, or you can build them yourself. Reading a Sentinel sensor is straightforward, and its attributes are all documented above, so a consumer that does exactly what you want is well within reach. That is the whole point of a sensor over a sealed automation: the list of what can consume it is never closed, and the next useful reader is whatever you need.
 
 ## Changelog
 

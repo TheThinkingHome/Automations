@@ -30,7 +30,7 @@ This builds a `sensor` instead. A sensor has a state and attributes that persist
 - **A voice summary** through Assist, asking which batteries need attention before you head out.
 - **A gate on another automation**, logic that only runs when the list is empty or not.
 
-The notification is the least of what the signal can drive. It is just the first most people reach for.
+The notification is the least of what the signal can drive. It is just the first thing most people reach for. Building a sensor asks a little more setup than importing a fire-and-forget automation, but that small extra step is exactly what buys everything above: a result your whole system can read, reuse, and act on, instead of a single alert that vanishes after it fires.
 
 ## What It Does
 

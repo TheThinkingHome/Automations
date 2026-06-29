@@ -76,13 +76,14 @@
 #   5. Broken-Sentinel stream. Raise its card and push it to the plan: high targets
 #      always, normal targets only outside quiet hours. Dismiss the card once every
 #      source is healthy again.
-#   6. Normal stream. Dismiss the card when nothing is flagged; otherwise raise the
-#      card and push it to the plan: high targets always, normal targets only outside
-#      quiet hours.
+#   6. Normal stream. Dismiss the card when nothing is flagged (unless the optional
+#      daily all-clear should show, in which case post the persistent "all clear" card
+#      instead); otherwise raise the card and push it to the plan: high targets always,
+#      normal targets only outside quiet hours.
 #   7. Log the result (debug only).
 #
 # Changelog:
-#   1.0.0-alpha.5 - Two features in one release.
+#   1.0.0-alpha.5 - Three features in one release.
 #           (1) QUIET HOURS. An optional daily window during which NORMAL-priority pushes
 #           are held; HIGH-priority pushes pierce the window and go through immediately.
 #           Persistent notifications and the change-detection memory still update through
@@ -105,6 +106,14 @@
 #           (silent) option is removed; the floor is now normal. This is a breaking input
 #           change, acceptable because the blueprint is pre-release alpha. The
 #           change-detection engine, memory format, dedup, and message builders are untouched.
+#           (3) DAILY ALL-CLEAR. An optional persistent-only all-clear, off by default. On
+#           the daily reminder, when nothing is flagged, it posts an "all clear" card under
+#           the same tag, so a clean fleet shows reassurance rather than no card, and a card
+#           left from an overnight alert is overwritten by the all-clear once things recover.
+#           It never pushes to a phone, so there is no quiet-hours interaction and it cannot
+#           wake anyone. It fires only on the daily reminder (not on a change, not at
+#           quiet-hours end), requires the daily reminder and a persistent notification to be
+#           on, and is worded per family.
 #   1.0.0-alpha.4 - Cleanup, no behavior change. Removed two redundant if-true wrappers
 #           that guarded each push action inside the repeat loops; continue_on_error on
 #           the action already makes a dead target non-fatal, so the action is now called
@@ -180,7 +189,7 @@ blueprint:
 
     Set the mode to Battery or Entity and point it at sensors of that family. When a watched sensor changes, it builds a sorted fingerprint of what the Sentinel is flagging and compares it to what it last reported, stored in a required input_text helper. If the set changed, it sends a notification listing everything currently flagged; if not, it stays quiet. There is no polling; it reacts to the sensor. Several sensors of one family combine into a single report. The notification uses a tag, so even when it fires it replaces the previous one in place rather than stacking.
 
-    An optional daily reminder, off by default, re-sends the current report at a time of day you set, but only if something is still flagged. It reuses the same tag, so it refreshes the existing card rather than stacking a new one. Use it as a once-a-day "this is still not fixed" nudge.
+    An optional daily reminder, off by default, re-sends the current report at a time of day you set, but only if something is still flagged. It reuses the same tag, so it refreshes the existing card rather than stacking a new one. Use it as a once-a-day "this is still not fixed" nudge. An optional daily all-clear, also off by default, posts a persistent "all clear" card on that same daily run when nothing is flagged, so a clean fleet shows reassurance rather than no card. The all-clear is persistent only and never pushes to a phone.
 
     Optional quiet hours, off by default, hold phone pushes during a window you set, for example overnight. The persistent card still updates silently, so nothing is lost; only the push waits. At the end of the window the companion re-sends whatever is still flagged, so a problem raised overnight reaches you in the morning and one that already cleared does not.
 
@@ -385,6 +394,19 @@ blueprint:
           default: "08:00:00"
           selector:
             time: {}
+        all_clear_enabled:
+          name: Send a daily all-clear
+          description: >-
+            When on, the daily reminder also posts a persistent all-clear card when
+            nothing is flagged, so a clean fleet shows "all clear" rather than no
+            card at all. It is persistent only and never pushes to a phone, so it
+            cannot wake you. It uses the same card as the alert, so an alert from
+            overnight is overwritten by the all-clear when the fleet is clean again.
+            Requires the daily reminder above to be on, and a persistent notification
+            to be enabled. Off by default.
+          default: false
+          selector:
+            boolean: {}
 
     advanced_section:
       name: Advanced
@@ -419,6 +441,7 @@ variables:
   quiet_hours_start: !input quiet_hours_start
   quiet_hours_end: !input quiet_hours_end
   daily_reminder_enabled: !input daily_reminder_enabled
+  all_clear_enabled: !input all_clear_enabled
   debug_enabled: !input debug_enabled
 
   in_quiet_hours: >-
@@ -708,6 +731,7 @@ action:
     variables:
       is_reminder: "{{ trigger.id == 'daily_reminder' and daily_reminder_enabled }}"
       is_quiet_end: "{{ trigger.id == 'quiet_hours_end' and quiet_hours_enabled }}"
+      is_all_clear: "{{ trigger.id == 'daily_reminder' and daily_reminder_enabled and all_clear_enabled and flagged_count | int == 0 }}"
       battery_should_notify: "{{ changed or (is_reminder and flagged_count | int > 0) or (is_quiet_end and flagged_count | int > 0) }}"
       upstream_should_notify: "{{ upstream_changed or (is_reminder and upstream_broken) or (is_quiet_end and upstream_broken) }}"
       memory_needs_write: "{{ changed or upstream_changed }}"
@@ -789,15 +813,29 @@ action:
         data:
           notification_id: "{{ notification_tag }}_upstream"
 
-  - alias: Dismiss the battery card whenever nothing is flagged
+  - alias: Dismiss the battery card whenever nothing is flagged, unless the all-clear should show
     if:
       - condition: template
-        value_template: "{{ persistent_enabled and flagged_count | int == 0 }}"
+        value_template: "{{ persistent_enabled and flagged_count | int == 0 and not is_all_clear }}"
     then:
       - action: persistent_notification.dismiss
         continue_on_error: true
         data:
           notification_id: "{{ notification_tag }}"
+
+  - alias: All-clear card on the daily reminder when the fleet is clean; persistent only, never pushes
+    if:
+      - condition: template
+        value_template: "{{ persistent_enabled and is_all_clear }}"
+    then:
+      - action: persistent_notification.create
+        continue_on_error: true
+        data:
+          notification_id: "{{ notification_tag }}"
+          title: >-
+            {% if family_mode == 'battery' %}Battery Sentinel: all clear{% elif family_mode == 'entity' %}Entity Sentinel: all clear{% else %}Sentinel: all clear{% endif %}
+          message: >-
+            {% if family_mode == 'battery' %}All monitored batteries OK.{% elif family_mode == 'entity' %}All monitored entities reporting.{% else %}All monitored entities OK.{% endif %}
 
   - alias: Battery notification, runs independently of any broken Sentinel
     if:

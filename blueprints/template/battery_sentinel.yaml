@@ -83,6 +83,14 @@
 #      stage 1 or 2 failed.
 #
 # Changelog:
+#   1.0.2-beta - Debug log line now prints timestamps (boot and last_evaluated) in
+#           local time instead of UTC. Display only: the stored attributes are
+#           unchanged and remain ISO-8601 with the UTC offset, the portable form any
+#           dashboard, automation, or companion reads. The log line had been stamping
+#           its own wall-clock time in local while printing those fields in UTC, so
+#           reading the two together miscounted by the UTC offset. The engine, the
+#           detection logic, and the hysteresis are untouched. Matches the same fix
+#           in Entity Sentinel 1.0.4-beta.
 #   1.0.1-beta - Re-evaluation cadence is now measured in HOURS, the production
 #           setting (the minute-based cadence was a development affordance for fast
 #           testing). The scan_interval selector now offers 1, 2, 3, 4, 6, 8, 12, and
@@ -147,7 +155,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.1-beta
+    1.0.2-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -544,10 +552,12 @@ action:
       level: info
       logger: battery_sentinel
       message: >-
-        Battery Sentinel v1.0.1-beta @ {{ result.last_evaluated }} | state: {{
+        {%- macro loc(v) -%}{{ (v | as_datetime(none) | as_local).strftime('%Y-%m-%d
+        %H:%M:%S') if (v | as_datetime(none)) is not none else v }}{%- endmacro -%}
+        Battery Sentinel v1.0.2-beta @ {{ loc(result.last_evaluated) }} | state: {{
         result.state }} | uptime_status: {{ result.uptime_status }}{% if
         result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
-        result.settled }} | boot: {{ result.boot_time }} | monitored: {{
+        result.settled }} | boot: {{ loc(result.boot_time) }} | monitored: {{
         result.total_monitored }} | low: {{ result.devices | length }} | unavailable: {{
         result.unavailable_count }}{% for d in result.devices %} | LOW {{ d.name
         }} ({{ d.entity_id }}) {{ ('(' ~ d.level | round(0) ~ '%)') if d.level

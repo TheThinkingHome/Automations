@@ -3,6 +3,85 @@
 # Battery Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
 #   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
+# Battery Sentinel watches the battery devices you name and counts the ones running
+# low, by either of two states, classified automatically per entity:
+#
+#   LOW (value level). A percentage battery entity at or below the threshold, or a
+#       binary battery sensor reading on, counts as low. A value-hysteresis deadband
+#       (low_clear_margin) holds a flagged cell on the list until it climbs above the
+#       threshold PLUS the margin, so a battery hovering at the line does not flap on
+#       and off every render. A binary sensor has no percentage and is reported low
+#       without one.
+#   OFFLINE (entity level). An in-scope battery sitting at unavailable, unknown, or
+#       missing is not a low battery, so it never lands in the low list. It is
+#       reported separately in the unavailable_entities attribute, so the low count
+#       stays clean while you still see what is offline. The offline list is held
+#       empty during the startup grace; the low list is never held.
+#
+# Scope: include and exclude by entity, label, area, or device.
+#   - Named entities are TRUSTED: taken as given. Areas, devices, and
+#     labels-on-devices/areas are SWEPT: expanded and then re-filtered to
+#     device_class battery, so pointing at a room watches only its batteries, not
+#     its motion or temperature entities.
+#   - Labels expand three ways (entities, devices, areas) on BOTH the include and
+#     the exclude side, so a device-labeled exclude actually suppresses its battery
+#     rather than silently failing.
+#   - With no include scope at all, it watches every battery device-class entity in
+#     the system. This is the sensible default for batteries; phones and tablets
+#     charge nightly and are what exclude is for.
+#   - Exclude is applied last and always wins.
+#
+# Triggering: a time_pattern on an hourly cadence, plus a Home Assistant start
+# trigger that only latches the startup grace boot time. Battery levels drift
+# slowly, so hourly or slower is right; the refresh button forces an immediate check.
+#
+# DESIGN CHOICE (startup grace): the grace window holds the OFFLINE list empty only,
+# NOT the LOW count. Rationale: a restart briefly reads the mesh as unavailable
+# (a false fleet-wide outage the grace exists to hide), but a battery's percentage
+# is a real value the moment it reports, so the low check is safe to run the whole
+# time. Measured from a required uptime sensor, not this.attributes, so it is immune
+# to the trigger-template this-unreliability (HA #115585).
+#
+# DESIGN CHOICE (hysteresis and HA #115585): the low-clear hysteresis reads the
+# previous low set from this.attributes.devices, and that dependency is irreducible.
+# Whether an entity was low on the prior render is self-referential state, and this
+# is the only channel HA gives a template sensor to read its own prior output. The
+# startup grace was deliberately moved off this.attributes to the uptime sensor to
+# avoid #115585, but hysteresis cannot be. If #115585 strikes on a given render, the
+# previous set reads empty and a battery sitting inside the clear margin (for example
+# 21 with threshold 20 and margin 2) loses its was-low status for that one tick and
+# briefly drops off the low list. It returns on the next clean render. This is an
+# accepted, self-correcting degradation; the alternative is no hysteresis at all.
+#
+# THE result: ENGINE: is documented here, in the header, rather than inline. Its
+# value is a YAML block scalar whose contents are Jinja, so a # inside it is not a
+# comment but literal text rendered into the output, and a Jinja {# #} comment can
+# shift whitespace and corrupt the dict the template builds. So the map lives here,
+# where comments are free and cannot touch the rendered result.
+#
+# The stages run top to bottom and each depends on the ones above it. Computed once
+# per evaluation, the template returns one dict; the sensor state and every
+# attribute are read out of it.
+#
+#   1. Remember and validate. Read the previous output (needed for hysteresis), then
+#      validate the inputs: threshold 0 to 100, clear margin >= 0, grace >= 0. A bad
+#      input skips to the setup_error return at the bottom and does nothing else.
+#   2. Clock check and grace gate. Read and parse the uptime sensor; from the boot
+#      time, compute "settled". A missing or non-timestamp uptime sensor is a setup
+#      error. Settled gates the offline list, never the low count.
+#   3. Find and scope (include). Collect every battery device-class entity, then
+#      narrow to the include scope (devices, areas, and labels re-filtered to their
+#      battery entities). No include scope means watch every battery.
+#   4. Exclude and subtract. Expand the exclude scope three ways (entities, devices,
+#      areas), then monitored = scoped batteries minus excluded. Exclude always wins.
+#   5. Detection loop with hysteresis. Per battery: unavailable/unknown/missing goes
+#      to the offline list, not the low list; a binary sensor reading on is low; a
+#      percentage uses the deadband (an already-low battery must climb above threshold
+#      PLUS margin to clear) so the list does not flicker.
+#   6. Return. The healthy dict (low count, devices, unavailable_entities held empty
+#      until settled, boot_time, settled, last_evaluated), or the setup_error dict if
+#      stage 1 or 2 failed.
+#
 # Changelog:
 #   1.0.1-beta - Re-evaluation cadence is now measured in HOURS, the production
 #           setting (the minute-based cadence was a development affordance for fast
@@ -35,18 +114,6 @@
 #
 #   Alpha history (1.0.0-alpha through 1.0.0-alpha.6) is preserved in the project
 #   document, not carried here.
-#
-# Design note on hysteresis and HA #115585: the startup grace was moved to the
-# uptime sensor specifically to avoid depending on this.attributes, which trigger
-# templates can intermittently fail to read (#115585). The low-clear hysteresis,
-# however, reads the previous low set from this.attributes.devices, and that
-# dependency is irreducible: whether an entity was low on the prior render is
-# self-referential state, and this is the only channel HA gives a template sensor
-# to read its own prior output. If #115585 strikes on a given render, the previous
-# set reads empty and a battery sitting inside the clear margin (for example 21
-# with threshold 20 and margin 2) loses its was-low status for that one tick and
-# briefly drops off the low list. It returns on the next clean render. This is an
-# accepted, self-correcting degradation; the alternative is no hysteresis at all.
 
 blueprint:
   name: Battery Sentinel (Beta)

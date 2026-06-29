@@ -44,6 +44,33 @@
 # restart (for example an integration that restores entities with a stale
 # last_reported), revisit this and gate freeze during grace as well.
 #
+# THE result: ENGINE: is documented here, in the header, rather than inline. Its
+# value is a YAML block scalar whose contents are Jinja, so a # inside it is not a
+# comment but literal text rendered into the output, and a Jinja {# #} comment can
+# shift whitespace and corrupt the dict the template builds. So the map lives here,
+# where comments are free and cannot touch the rendered result.
+#
+# The stages run top to bottom and each depends on the ones above it. Computed once
+# per evaluation, the template returns one dict; the sensor state and every
+# attribute are read out of it.
+#
+#   1. Clock check. Read and parse the uptime sensor. If it is missing or not a
+#      timestamp, skip to the setup_error return at the bottom and do nothing else.
+#   2. Grace gate. From the boot time, compute "settled" (true once past the
+#      startup grace). Settled gates the unavailable check, never freeze.
+#   3. Trusted set (include). Named entities and labels-on-entities go to "trusted"
+#      (watched as given); devices, areas, and labels-on-devices/areas go to "swept".
+#   4. Representative election. For each swept device, pick one entity to stand in,
+#      by device_class priority, then primary domain, then telemetry, then any.
+#   5. Exclude and subtract. Expand the exclude scope three ways (entities, devices,
+#      areas), then monitored = (trusted + representatives) minus excluded. Dedupe
+#      so a named entity beats its swept stand-in. Exclude always wins.
+#   6. Detection loop. Per monitored entity: unavailable/unknown/missing past the
+#      debounce (entity level), else freshest report across the device older than
+#      the lookback is "frozen", else "never_reported".
+#   7. Return. The healthy dict (count, devices, sub-counts, boot_time, settled,
+#      last_evaluated), or the setup_error dict if stage 1 failed.
+#
 # Changelog:
 #   1.0.3-beta - Exclude-by-label now expands to devices and areas, not just entities.
 #           Previously a label applied to a device or an area and used in the Exclude

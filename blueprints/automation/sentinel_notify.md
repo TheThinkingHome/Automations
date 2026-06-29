@@ -36,8 +36,10 @@ It does not poll. It re-evaluates the moment a watched Sentinel sensor changes, 
 - **Combines several sensors into one report.** Point it at all your Battery Sentinel sensors (or all your Entity Sentinel sensors) and a single notification covers them all.
 - **De-duplicates an item flagged by two sensors.** If overlapping Sentinel scopes flag the same thing twice, it collapses to one entry. In Battery mode, offline wins over low. In Entity mode, a genuinely-gone reason (`unavailable`, `unknown`, `missing`, `never_reported`) wins over `frozen`.
 - **Sends where you want.** Push to any number of mobile devices, and optionally a persistent notification in the Home Assistant UI, replaced in place so it never stacks.
-- **Respects priority.** Normal, high (bypasses Do Not Disturb, alarm sound on Android, time-sensitive on iOS), or low (silent).
-- **Optional daily reminder.** Off by default. If you want a nudge about items you have not dealt with, set a time of day and, once a day at that time, it re-sends the current report if anything is still flagged. It reuses the same notification, so it refreshes the existing one rather than stacking.
+- **Priority is per device**. Two lists, high and normal. High bypasses Do Not Disturb (alarm sound on Android, time-sensitive on iOS); normal is standard delivery.
+- **Optional quiet hours**. Off by default. Hold normal-priority pushes during a daily window, for example overnight; high-priority pushes still come through. The persistent card keeps updating, and anything still flagged is re-sent when the window ends.
+- **Optional daily reminder**. Off by default. If you want a nudge about items you have not dealt with, set a time of day and, once a day at that time, it re-sends the current report if anything is still flagged. It reuses the same notification, so it refreshes the existing one rather than stacking.
+- **Optional daily all-clear**. Off by default. On the daily reminder, when nothing is flagged, post a persistent "all clear" card so a clean fleet shows reassurance. Persistent only, it never pushes.
 - **Fails loud if set up wrong.** A wrong-family sensor or a missing memory helper stops with a clear log message rather than failing quietly.
 
 The full design and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
@@ -83,9 +85,10 @@ The form is organized into sections:
 1. **Mode**, choose Battery or Entity.
 2. **Sensors to Watch**, pick your Sentinel sensor(s) of the chosen family, and select the memory helper you created.
 3. **Battery Settings**, an optional toggle used only in Battery mode.
-4. **Notification Targets and Style**, where and how to send.
-5. **Daily Reminder**, the optional once-a-day nudge and its time of day.
-6. **Advanced**, debug logging.
+4. **Notification Targets** and Style, where and how to send, including the high- and normal-priority lists.
+5. **Quiet Hours**, an optional window that holds normal-priority pushes overnight.
+6. **Daily Reminder**, the optional once-a-day nudge, its time, and the optional all-clear.
+7. **Advanced, debug logging**.
 
 The Battery Settings section applies only to Battery mode; in Entity mode, leave it alone. Entity mode has no extra options of its own, the sensor decides what is flagged, and this companion reports it.
 
@@ -97,12 +100,16 @@ The Battery Settings section applies only to Battery mode; in Entity mode, leave
 | Sentinel sensors | Yes | none | One or more Sentinel sensors of the chosen family. Combined into one report. Pointing at the wrong family stops with a setup error. |
 | Memory helper | Yes | none | The `input_text` the companion uses to remember what it last reported. One per copy. |
 | Also report offline batteries | No | off | Battery mode only. When on, also reports batteries that are currently unavailable, alongside the low ones. |
-| Push notification targets | No | none | The mobile_app notify action(s) to push to, one per line, each in the form `notify.mobile_app_yourphone` (the action name, not the `notify.yourphone` entity, which cannot carry the priority and sound payload). Find the exact name in Developer Tools, Actions, search mobile_app. Leave empty to use only the persistent notification. |
+| High-priority push targets | No | none | The mobile_app notify action(s) to receive high-priority pushes, one per line, in the form `notify.mobile_app_yourphone` (the action name, not the `notify.yourphone` entity, which cannot carry the priority and sound payload). High bypasses Do Not Disturb and pierces quiet hours. Find the exact name in Developer Tools, Actions, search mobile_app. |
+| Normal-priority push targets | No | none | The mobile_app notify action(s) to receive normal-priority pushes, same form. Normal is standard delivery and respects quiet hours. A target in both lists is treated as high. Leave both lists empty to use only the persistent notification. |
 | Create a persistent notification | No | on | Also creates or updates a persistent notification in the HA UI, replaced in place. |
-| Priority | No | normal | Push urgency. High bypasses Do Not Disturb; low is silent. |
 | Notification tag | No | `sentinel_notify` | The tag that replaces this companion's push in place. Give each copy a distinct tag if several push to one device. |
+| Enable quiet hours | No | off | When on, normal-priority pushes are held during the window below; high-priority pushes still come through. The persistent card and memory keep updating. |
+| Quiet hours start | No | `22:00:00` | When the quiet window begins. A start later than the end is treated as crossing midnight. |
+| Quiet hours end | No | `08:00:00` | When the quiet window ends. At this time anything still flagged is re-sent. |
 | Enable the daily reminder | No | off | When on, once a day at the time below, re-sends the current report if anything is still flagged. |
 | Reminder time | No | `08:00:00` | The time of day the daily reminder fires, if enabled. |
+| Send a daily all-clear | No | off | When on, the daily reminder posts a persistent "all clear" card when nothing is flagged. Persistent only, never pushes. Requires the daily reminder and a persistent notification to be on. |
 | Debug logging | No | off | Writes one diagnostic line per check. Needs a `logger` entry at info level to appear. |
 
 ## How "Notify Only on Change" Works
@@ -125,19 +132,35 @@ When you enable it and set a time, then once a day at that time the companion ch
 
 The reminder only re-sends; it never disturbs change-detection. The stored fingerprint is updated only on a real change, never by a reminder, so a daily nudge cannot confuse the "notify only on change" logic.
 
+You can also turn on a daily all-clear. Then, when nothing is flagged, the daily run leaves a quiet "all clear" card in the UI instead of saying nothing, so you know everything is reporting. It never pushes to your phone.
+
+## Quiet Hours
+
+Quiet hours hold your phone alerts during a window you set, for example 10 at night to 8 in the morning, so a low battery at 2 AM does not wake you. Off by default.
+
+It is built around the per-device priority lists. A normal-priority target is held during the window; a high-priority target pierces it and is alerted at any hour. So you can keep your own phone on the high list to be woken by something genuinely urgent, while the rest of the household, on the normal list, waits until morning.
+
+Two things keep working through the window: the persistent notification still updates silently, so the dashboard card is always current, and the change-detection memory still tracks, so nothing is lost. Only the normal-priority phone push waits.
+
+At the end time, the companion re-sends whatever is still flagged, to both lists. A problem that appeared overnight reaches you in the morning; one that cleared on its own does not; and a list that partly cleared reports only what remains. A high-priority phone that already got the alert live overnight simply sees the card refresh under the same tag, rather than a second alert.
+
+The window may cross midnight: a start later than the end (22:00 to 08:00) is read as an overnight window. Quiet hours is independent of the daily reminder; you can run either, both, or neither.
+
 ## Keeping It Calm
 
 The companion is only as quiet as the sensor you point it at. For batteries this is rarely an issue, batteries cross the threshold one at a time, so notifications are naturally infrequent. The advice matters more for the Entity mode: watch the handful of things whose silence is a real problem, not every entity in the house, because a sensor flagging dozens of flapping entities will notify you about churn no matter how good the change detection is. A tight, deliberate scope on the Sentinel is what keeps the notifications meaningful.
 
 ## Putting It to Work
 
-The simplest setup: Battery mode, point it at your Battery Sentinel sensor, select a memory helper, add your phone as a push target, and leave the rest at defaults. You will get a notification when a battery drops below the threshold, named and with its battery type, and another when you replace it, with nothing in between.
+The simplest setup: Battery mode, point it at your Battery Sentinel sensor, select a memory helper, add your phone to the normal-priority list, and leave the rest at defaults. You will get a notification when a battery drops below the threshold, named and with its battery type, and another when you replace it, with nothing in between.
 
 For Entity mode, point it at your Entity Sentinel sensor with its own dedicated memory helper. You will get a notification naming each entity that has gone quiet and why, the moment the set changes, and again when one comes back.
 
 For a quieter, dashboard-only setup, leave the push targets empty and keep the persistent notification on; the report lives in the Home Assistant UI and updates itself, with no phone alerts at all.
 
-For the "remind me about what I keep ignoring" setup, enable the daily reminder and set a time, and anything still flagged nudges you once a day until you deal with it.
+For the "remind me about what I keep ignoring" setup, enable the daily reminder and set a time, and anything still flagged nudges you once a day until you deal with it. Turn on the all-clear too, and that same daily run confirms when everything is healthy.
+
+For the "do not wake me" setup, put your own phone on the high-priority list and everyone else on the normal list, then enable quiet hours for overnight. Urgent alerts still reach your phone; the rest waits until the window ends in the morning.
 
 More worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 
@@ -145,6 +168,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.0-alpha.5 | Three features. Quiet hours: an optional daily window that holds normal-priority pushes; high-priority pushes pierce it. The persistent card and memory keep updating through the window, and at the end time anything still flagged is re-sent, so a problem raised overnight reaches you in the morning and one that cleared does not. Handles a window crossing midnight. Per-device priority: the single push-target list and the global priority selector are replaced by two lists, high-priority and normal-priority push targets, so priority is set per device; a target in both is treated as high. The "low" (silent) option is removed. This is a breaking input change, acceptable while the blueprint is pre-release alpha. Daily all-clear: an optional persistent-only "all clear" card on the daily reminder when nothing is flagged, so a clean fleet shows reassurance; it never pushes. The change-detection engine, memory format, and message builders are unchanged. |
 | 1.0.0-alpha.4 | Cleanup, no behavior change. Removed two redundant always-true wrappers around the push actions (`continue_on_error` on the action already handles a dead target), and fixed a stray double apostrophe in the memory-helper description. |
 | 1.0.0-alpha.3 | Fixed push targets. The input now takes the mobile_app notify action name (`notify.mobile_app_yourphone`) as text, the form that carries the full priority and sound payload; the previous notify-entity form (`notify.yourphone`) could not be called as an action and raised an "unknown action" error on real systems. Also dropped a now-meaningless per-target availability check; `continue_on_error` already makes a dead target non-fatal. |
 | 1.0.0-alpha.2 | Added the Entity mode: reads Entity Sentinel sensors and reports the entities that have gone quiet, by name, with the raw reason (`unavailable`, `unknown`, `missing`, `frozen`, `never_reported`) and how long since each last reported, and the area. When two overlapping Entity Sentinels flag the same entity, a genuinely-gone reason wins over `frozen`. Also in this release: removed the minute-based check interval and the elapsed-time re-remind in favor of pure event-driven change-detection (re-evaluates when a watched sensor changes, and at Home Assistant start, with no polling), and added an optional daily reminder at a configurable time of day that re-sends the current report if anything is still flagged, without disturbing change-detection. The Entity mode is the newest and least-proven part and is most likely to change. |

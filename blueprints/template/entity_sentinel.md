@@ -211,7 +211,7 @@ The state is the count of flagged entities, or the string `setup_error` if misco
 - **`devices`** the flagged entities, each with the fields below.
 - **`boot_time`** the timestamp the grace is measured from, null in `setup_error`.
 
-**Each flagged entity carries** `name`, `entity_id`, `area`, `reason`, `since` (when it entered the bad state), `last_seen`, and a human-readable `age`.
+**Each flagged entity carries** `name`, `entity_id`, `area`, `reason`, `since` (when it entered the bad state), `last_seen`, and a human-readable `age`. The `since` and `last_seen` timestamps are stored in UTC; see the timestamp note below.
 
 **The `reason` values:**
 
@@ -222,6 +222,12 @@ The state is the count of flagged entities, or the string `setup_error` if misco
 - **`never_reported`** the entity exists but has no report on record at all. A freshly added entity, or one its integration has never served.
 
 The first three and `never_reported` come from the entity-level check (`unavailable_count`); `frozen` is the device-level check (`frozen_count`).
+
+### A Note on Timestamps
+
+Every timestamp the sensor reports is stored in **UTC**, in ISO-8601 form with the offset, for example `2026-06-28T23:26:05+00:00`. That holds for the top-level fields (`uptime_status`, `boot_time`) and for the `since` and `last_seen` inside each flagged entry. UTC is the portable, unambiguous form, and it is what an automation, a dashboard, or a companion blueprint reads. To show one in local time on a dashboard, convert it, for example `{{ state_attr('sensor.entity_sentinel', 'boot_time') | as_datetime | as_local }}`.
+
+The optional **debug log line** is the one exception. As of 1.0.4-beta it prints its timestamps in your system's local time, since the log is for a person reading it, not for a machine. So a time in the log will not match the same field read raw from the attribute: the log is local, the attribute is UTC, and both point at the same instant. This split is deliberate, and it is why a quick mental subtraction of a log time against a UTC attribute, comparing a flagged entry's `last_seen` against the line's own timestamp, can look off by your timezone offset.
 
 ### The `setup_error` State
 
@@ -273,6 +279,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.4-beta | Debug log line now prints its timestamps (`since`, `last_seen`, `boot_time`, and `last_evaluated`) in local time for readability. Display only: the stored attributes are unchanged and remain ISO-8601 UTC, the portable form anything downstream reads. |
 | 1.0.3-beta | Exclude-by-label now expands to devices and areas, not just entities. The include path already treated a label as expanding three ways (entities, devices, areas), but the exclude path only expanded the entities tagged directly, so a label applied to a device or an area and used in the Exclude field silently failed to remove the entities it covered. The exclude path now expands a label the same three ways, so "exclude always wins" holds for device- and area-applied labels, matching the include path and Battery Sentinel. |
 | 1.0.2-beta | Excluded event entities from the area and device sweep. A device whose only entities are event entities (an NSPanel exposing just touch and button entities, for example) was flagged with a false `unknown` because an event entity sits at `unknown` until it fires. Event entities are not a usable liveness signal, so the sweep now skips them; a device that offers nothing else is skipped, and an event entity never displaces a real sensor when one is present. |
 | 1.0.1-beta | Three fixes from the pre-public review. Area and device sweeps no longer silently skip a device that exposes no priority device class: the representative election falls back through the device's primary domain (light, switch, lock, cover, and the rest), then mains telemetry, then any ordinary entity, so smart plugs, bulbs, and relays are caught. An entity that has genuinely never reported is now flagged `never_reported` rather than mislabeled `frozen`. Added an `ok` boolean so automations can gate on it rather than doing integer math on a state that may read `setup_error`. |

@@ -24,7 +24,7 @@ Most blueprints for this kind of job are automations: they run on a schedule, fi
 
 This builds a `sensor` instead. A sensor has a state and attributes that persist, and anything in Home Assistant can read it. One sensor, many listeners:
 
-- **A notification automation**, the obvious one. A companion automation blueprint for this is in the works.
+- **A notification automation**, the obvious one. The [Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) companion blueprint does exactly this, in this repository.
 - **A dashboard card** that lists the low devices with area and battery type, so a glance tells you what to grab from the drawer.
 - **A to-do or shopping list**, each low cell dropped onto a list so the right battery is bought before the swap.
 - **A voice summary** through Assist, asking which batteries need attention before you head out.
@@ -241,6 +241,20 @@ Do not gate on `int()` math alone: `int('setup_error')` evaluates to 0, which wo
 
 More worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
 
+## Now What? 
+
+You have a sensor that always knows which batteries are low. The question is what reads it, and that list is open by design.
+
+The first consumer is built and ready: **[Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md)**, a companion automation blueprint that turns this sensor into change-aware notifications, telling you the moment a battery drops below the threshold and again when you replace it, by name and with its type, without nagging you in between. It is a separate blueprint in this same repository.
+
+Beyond notifying, the same `devices` attribute can drive anything. Two companions are on the drawing board, named here because they came up often enough to be worth building:
+
+A **shopping-list companion** that keeps a to-do list in sync with the batteries currently low, one checkable item per battery with its type, so the right battery is bought before the swap and ticked off once it is. Because the sensor already knows what is low, this is a clean reader: it adds what is new, skips what is already listed, and can clear an item when the battery is replaced.
+
+A **logging companion** that records a timestamped history as batteries go low and recover, so "this device has needed a new battery three times this year" becomes a record you can look back on rather than a thing you half-remember.
+
+Neither is built yet. If there is enough interest, I will build them, or you can build them yourself. Reading a Sentinel sensor is straightforward, and its attributes are all documented above, so a consumer that does exactly what you want is well within reach. That is the whole point of a sensor over a sealed automation: the list of what can consume it is never closed, and the next useful reader is whatever you need.
+
 ## Changelog
 
 | Version | Notes |
@@ -252,11 +266,3 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 ## License
 
 Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>). This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.
-
-You will find the full YAML, this README, and the one-click import badge at the [Thinking Home blueprints repository](https://github.com/TheThinkingHome/Automations).
-
-
-
-
-
-Its companion, **Entity Sentinel**, watches any critical entity for going quiet, unavailable or frozen at its last value. Battery Sentinel answers "what is running low," Entity Sentinel answers "what stopped reporting." Build both for full coverage, or just the one you want. They are separate blueprints and do not depend on each other.

@@ -12,7 +12,7 @@ That is the question Entity Sentinel asks and answers.
 
 Its companion, **Battery Sentinel**, counts the batteries running low. Battery Sentinel answers "what is running low," Entity Sentinel answers "what stopped reporting." Build both for full coverage, or just the one you want. They are separate blueprints and do not depend on each other.
 
-Plenty of blueprints already scan the whole house on a timer and list whatever is offline. Those are good at "set it up in two minutes and get a daily list of everything that is dead," and this does not replace them. Entity Sentinel is for the narrower request: it watches the specific entities that matter to you, it catches the frozen ones a state scan misses, and it works without polling the whole system on a schedule.
+Other blueprints handle the simpler half of this. They scan every device on a timer and hand you a daily list of whatever is fully offline, and for that job they are quick to set up and they work. What they do not do is catch the frozen device, the one still showing a value while it has quietly stopped reporting, and they watch everything whether you care about it or not, so the freezer probe and the leak sensor get the same attention as a light you would never miss. Entity Sentinel is built for the devices you actually worry about. You name them, it watches each one closely, and it catches the frozen ones a plain scan reads as healthy. That focus asks a little more of you at setup than a one-tap blueprint does, you build a sensor rather than import a finished automation, but it is what lets the result catch the failure a state check cannot see and be read by anything in your system, not just fired once at your phone.
 
 ## Built on Request, and Why It Is a Beta
 

@@ -1,6 +1,6 @@
 # Sentinel Notify (Alpha)
 
-A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications: it tells you what is wrong, by name, and does not SPAM your notifications.
+A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into smart, change-aware notifications: it tells you what is wrong, by name, and does not spam your notifications every cycle.
 
 ## What This Solves
 
@@ -85,10 +85,10 @@ The form is organized into sections:
 1. **Mode**, choose Battery or Entity.
 2. **Sensors to Watch**, pick your Sentinel sensor(s) of the chosen family, and select the memory helper you created.
 3. **Battery Settings**, an optional toggle used only in Battery mode.
-4. **Notification Targets** and Style, where and how to send, including the high- and normal-priority lists.
+4. **Notification Targets and Style**, where and how to send, including the high- and normal-priority lists.
 5. **Quiet Hours**, an optional window that holds normal-priority pushes overnight.
 6. **Daily Reminder**, the optional once-a-day nudge, its time, and the optional all-clear.
-7. **Advanced, debug logging**.
+7. **Advanced**, debug logging.
 
 The Battery Settings section applies only to Battery mode; in Entity mode, leave it alone. Entity mode has no extra options of its own, the sensor decides what is flagged, and this companion reports it.
 
@@ -126,7 +126,7 @@ If one of the source Sentinels is itself broken (its uptime sensor was deleted, 
 
 ## The Daily Reminder
 
-Change-detection tells you when something changes. The daily reminder is for the opposite case: something that has not changed, but that you keep meaning to deal with; a battery you have not replaced, an entity still offline or Off by default.
+Change-detection tells you when something changes. The daily reminder is for the opposite case: something that has not changed, but that you keep meaning to deal with, a battery you have not replaced, or an entity still offline. Off by default.
 
 When you enable it and set a time, then once a day at that time the companion checks whether anything is still flagged. If so, it re-sends the current report. Because it reuses the same notification tag, it refreshes the card already on your phone rather than stacking a second one, and if you had dismissed it, a fresh one appears. If nothing is flagged at that time, the reminder does nothing.
 
@@ -156,7 +156,7 @@ The simplest setup: Battery mode, point it at your Battery Sentinel sensor, sele
 
 For Entity mode, point it at your Entity Sentinel sensor with its own dedicated memory helper. You will get a notification naming each entity that has gone quiet and why, the moment the set changes, and again when one comes back.
 
-For a quieter, dashboard-only setup, leave the push targets empty and keep the persistent notification on; the report lives in the Home Assistant UI and updates itself, with no phone alerts at all.
+For a quieter, dashboard-only setup, leave both priority lists empty and keep the persistent notification on; the report lives in the Home Assistant UI and updates itself, with no phone alerts at all.
 
 For the "remind me about what I keep ignoring" setup, enable the daily reminder and set a time, and anything still flagged nudges you once a day until you deal with it. Turn on the all-clear too, and that same daily run confirms when everything is healthy.
 
@@ -177,5 +177,3 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 ## License
 
 Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>). This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.
-
-You will find the full YAML, this README, and the one-click import badge at the [Thinking Home blueprints repository](https://github.com/TheThinkingHome/Automations).

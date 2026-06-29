@@ -196,7 +196,13 @@ The state is the number you badge or trigger on, or the string `setup_error` if 
 - **`devices`** the low batteries, each with `name`, `entity_id`, `area`, `level` (null for binary), and `battery_type` if exposed.
 - **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace.
 - **`boot_time`** the start time the grace is measured from, or null in `setup_error`.
-- **`last_evaluated`** the timestamp of the most recent evaluation, a heartbeat you can watch to confirm the sensor is still running.
+- **`last_evaluated`** the timestamp of the most recent evaluation, a heartbeat you can watch to confirm the sensor is still running. Stored in UTC; see the timestamp note below.
+
+### A Note on Timestamps
+
+The timestamp attributes (`uptime_status`, `boot_time`, `last_evaluated`) are stored in **UTC**, in ISO-8601 form with the offset, for example `2026-06-28T23:26:05+00:00`. That is the portable, unambiguous form, and it is what an automation, a dashboard, or a companion blueprint reads. To show one in local time on a dashboard, convert it, for example `{{ state_attr('sensor.battery_sentinel', 'last_evaluated') | as_datetime | as_local }}`.
+
+The optional **debug log line** is the one exception. As of 1.0.2-beta it prints its timestamps in your system's local time, since the log is for a person reading it, not for a machine. So a time in the log will not match the same field read raw from the attribute: the log is local, the attribute is UTC, and both point at the same instant. This split is deliberate, and it is why a quick mental subtraction of a log time against a UTC attribute can look off by your timezone offset.
 
 ### The `setup_error` State
 
@@ -239,6 +245,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.2-beta | Debug log line now prints its timestamps (`boot_time` and `last_evaluated`) in local time for readability. Display only: the stored attributes are unchanged and remain ISO-8601 UTC, the portable form anything downstream reads. |
 | 1.0.1-beta | Re-evaluation cadence moved to hours, the production setting (minutes was a development affordance for fast testing). The `scan_interval` selector now offers 1, 2, 3, 4, 6, 8, 12, and 24 hours, defaulting to hourly, and the sensor fires at the top of the chosen hour. |
 | 1.0.0-beta | First beta. Counts batteries at or below a threshold with a hysteresis deadband, handles percentage and binary battery entities, reports unavailable and missing batteries in a parallel `unavailable_entities` attribute. Scope by entity, label, area, or device with include and exclude (exclude wins; labels expand to entities, devices, and areas on both sides). Startup grace measured from a required uptime sensor in timestamp mode. Loud `setup_error` state with `error` and `uptime_status` attributes when the uptime sensor is missing or not a timestamp, or when `low_threshold`, `low_clear_margin`, or `startup_grace_seconds` is invalid; the sensor fails safe and self-heals. Added an `ok` boolean so automations can gate on it rather than doing integer math on a state that may read `setup_error`. Timezone-safe grace math. Debug log carries the version, state, uptime status, and both arrays. |
 

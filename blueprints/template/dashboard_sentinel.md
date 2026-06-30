@@ -14,23 +14,23 @@ That is the whole job. It does not watch anything itself; the Entity Sentinels d
 
 ## Why it is built this way, and the honest reasoning
 
-I want to be straight about what this is, because the shape of it was not the goal. It is a workaround, and a good one, but a workaround.
+First, this template sensor is a workaround, a good one, but still a workaround.
 
-The Sentinels expose clean, structured information, so building a dashboard from them is straightforward. Battery Sentinel needs only one instance in most homes, so its card is simple. Entity Sentinel is different: the way it works, you run several (different scopes, different freeze windows, different cadences), and putting each one in its own card is a poor dashboard. The same entity can appear in two cards at once, the lists sit in separate boxes instead of one view, and there is no single ordered list of everything that is quiet.
+The Sentinels expose clean, structured information, so building a dashboard from them is straightforward. _Battery Sentinel_ needs only one instance in most homes, so its card is simple. _Entity Sentinel_ is different: to reliably detect frozen entities and not false report, your home will require several (different scopes, different freeze windows, different cadences), and putting each one in its own card makes a poor dashboard. The same entity can appear in two cards at once, the lists sit in separate boxes instead of one view, and there is no single ordered list of everything that is quiet.
 
-The fix would be to combine them in the card, but a dashboard card cannot union several sensors' lists, remove the duplicates, and alphabetize the result. That has to happen outside the card. So I moved the combine-and-dedupe logic out of the card and into a sensor. That is what this blueprint is: the merge that I could not do in the dashboard, done in a template sensor instead, so the card only has to render one already-clean list. The sensor is the means; the dashboard is the end.
+The fix would be to combine them in the card, but a dashboard card cannot union several sensors' lists, remove the duplicates, and alphabetize the result. That has to happen outside the card. So I moved the combine-and-dedupe logic out of the card and into a new template sensor. That is what this blueprint is: the merge that I could not do in the dashboard, done in a sensor instead, so the card only has to render one already-clean list. The sensor is the means; the dashboard is the end.
 
-This is why it identifies itself as an aggregate (`sentinel_type: entity`, `sentinel_role: aggregate`). It is a faithful mirror of an Entity Sentinel, same state meaning, same `devices` shape, so any card or automation reads it exactly like a single Entity Sentinel. The `aggregate` role marks that it is the combined one, so anything that walks your Entity Sentinels can include it or leave it out and never double count.
+This is why it identifies itself as an aggregate (`sentinel_type: entity`, `sentinel_role: aggregate`). It is a faithful mirror of an _Entity Sentinel_, same state meaning, same `devices` shape, so any card or automation reads it exactly like a single _Entity Sentinel_. The `aggregate` role marks that it is the combined one, so anything that walks your _Entity Sentinels_ can include it or leave it out and never double count.
 
 ## The decisions that fell out of that
 
 A few choices follow directly from "this is a sensor that exists to feed a dashboard."
 
-It validates its inputs by marker, and surfaces mistakes instead of hiding them. Because a person points it at "their Entity Sentinels" by hand, they might add the wrong thing. So each source is checked: a healthy Entity Sentinel is merged, a broken one is reported as down, and anything that is not an Entity Sentinel is rejected and named, with the reason, so a misconfiguration shows up on the dashboard rather than quietly doing nothing.
+It validates its inputs by marker, and surfaces mistakes instead of hiding them. Because a person points it at "their Entity Sentinels" by hand, they might add the wrong thing. So each source is checked: a healthy _Entity Sentinel_ is merged, a broken one is reported as down, and anything that is not an _Entity Sentinel_ is rejected and named, with the reason, so a misconfiguration shows up on the dashboard rather than quietly doing nothing.
 
-A broken source never silences the healthy ones. If one Entity Sentinel is in a setup error, the others still combine, and the broken one is reported separately. The list you can build is always built; the part you cannot see is reported as missing, not pretended away.
+A broken source never silences the healthy ones. If one _Entity Sentinel_ is in a setup error, the others still combine, and the broken one is reported separately. The list you can build is always built; the part you cannot see is reported as missing, not pretended away.
 
-It does no detection of its own, on purpose. Every Entity Sentinel has already done the work and published it. This sensor only reads those finished lists and combines them, so it runs no entity scan and no detection engine. It re-evaluates only when one of its named sources changes. Keeping it a light reader, not a second engine, was a deliberate line.
+It does no detection of its own, on purpose. Each _Entity Sentinel_ has already done the work and published it. This sensor only reads those finished lists and combines them, so it runs no entity scan and no detection engine. It re-evaluates only when one of its named sources changes. Keeping it a light reader, not a second engine, was a deliberate line.
 
 Down sources and rejected inputs are kept as two separate lists. A down monitor is an operational problem that will clear on its own; a rejected input is a configuration mistake that persists until you fix it. They are different kinds of trouble for different audiences, so the dashboard can treat them differently.
 

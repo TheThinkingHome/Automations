@@ -44,6 +44,15 @@
 # restart (for example an integration that restores entities with a stale
 # last_reported), revisit this and gate freeze during grace as well.
 #
+# DESIGN CHOICE (identity attributes): the sensor carries two constant attributes,
+# sentinel_type (entity) and sentinel_version, so any consumer (a dashboard, a
+# companion, a person filing a bug report) can identify what the sensor is and what
+# version it runs without opening the blueprint. They are plain attributes on the
+# sensor block, not threaded through the result dict, so they are present even in
+# setup_error, which is exactly when support needs them. The version is defined once
+# as a variable and read into both the debug line and the attribute, so a bump
+# touches one runtime source instead of two.
+#
 # THE result: ENGINE: is documented here, in the header, rather than inline. Its
 # value is a YAML block scalar whose contents are Jinja, so a # inside it is not a
 # comment but literal text rendered into the output, and a Jinja {# #} comment can
@@ -72,6 +81,13 @@
 #      last_evaluated), or the setup_error dict if stage 1 failed.
 #
 # Changelog:
+#   1.0.5-beta - Added two constant identity attributes: sentinel_type (entity) and
+#           sentinel_version (the running version string). They let a dashboard, a
+#           companion, or a bug report identify the sensor and its version without
+#           opening the blueprint, and they are present even in setup_error. The
+#           version is now defined once as a variable and read into both the debug
+#           line and the new attribute, so a future bump updates one runtime source
+#           rather than two literals. No detection, engine, or fingerprint change.
 #   1.0.4-beta - Debug log line now prints timestamps (since, last_seen, boot, and
 #           last_evaluated) in local time instead of UTC. Display only: the stored
 #           attributes are unchanged and remain ISO-8601 with the UTC offset, the
@@ -169,7 +185,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.4-beta
+    1.0.5-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.yaml
@@ -351,6 +367,7 @@ blueprint:
           selector:
             boolean: {}
 variables:
+  sentinel_version: 1.0.5-beta
   freeze_lookback: !input freeze_lookback
   unavailable_debounce: !input unavailable_debounce
   include_target: !input include_target
@@ -613,7 +630,7 @@ action:
       message: >-
         {%- macro loc(v) -%}{{ (v | as_datetime(none) | as_local).strftime('%Y-%m-%d
         %H:%M:%S') if (v | as_datetime(none)) is not none else v }}{%- endmacro -%}
-        Entity Sentinel v1.0.4-beta @ {{ loc(result.last_evaluated) }} | state: {{
+        Entity Sentinel v{{ sentinel_version }} @ {{ loc(result.last_evaluated) }} | state: {{
         result.state }} | uptime_status: {{ result.uptime_status }}{% if
         result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
         result.settled }} | boot: {{ loc(result.boot_time) }} | monitored: {{
@@ -632,6 +649,8 @@ sensor:
   attributes:
     ok: '{{ result.ok }}'
     error: '{{ result.error }}'
+    sentinel_type: entity
+    sentinel_version: '{{ sentinel_version }}'
     uptime_status: '{{ result.uptime_status }}'
     total_monitored: '{{ result.total_monitored }}'
     devices: '{{ result.devices }}'

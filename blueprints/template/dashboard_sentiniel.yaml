@@ -1,0 +1,342 @@
+# Copyright (C) 2026 James Lander, The Thinking Home
+# Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
+# Dashboard Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+#   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
+#
+# Dashboard Sentinel reads any number of Entity Sentinel sensors and presents them
+# as ONE sensor: a single count and a single, deduped, sorted list of every entity
+# that has gone quiet across all of them. It is a clean mirror of an Entity Sentinel,
+# same state meaning, same devices shape, same vocabulary, so anything that can read
+# one Entity Sentinel reads this one with nothing new to learn. What it adds is the
+# cleanup (merge, dedupe, sort) and a health view of its sources.
+#
+# It does NOT detect anything itself. Each Entity Sentinel has already done the work
+# of scanning, electing representatives, and classifying gone-quiet entities into its
+# devices attribute. This sensor only reads those finished lists and combines them, so
+# it runs no detection engine, no entity scan, no uptime math. It is event-driven: it
+# re-evaluates when one of its named source sensors changes, and once at Home Assistant
+# start. There is no cadence and no polling.
+#
+# THE MIRROR: each merged entry keeps the exact Entity Sentinel devices shape
+# (name, entity_id, area, reason, since, last_seen, age). A consumer treats this sensor
+# exactly like an Entity Sentinel.
+#
+# SOURCE VALIDATION (three buckets per named source, decided by the marker attribute):
+#   ACCEPTED (merged): sentinel_type == 'entity', is NOT itself an aggregate, and is
+#       healthy (numeric state, ok true). Its devices are merged in.
+#   DOWN (reported in the sources list, not merged): it IS a real Entity Sentinel
+#       (sentinel_type == 'entity') but is currently broken, setup_error, unavailable,
+#       or ok false. A down source never silences the healthy ones; the others still
+#       aggregate. Status is setup_error, unavailable, or missing-attributes.
+#   REJECTED (reported in the rejected list, not merged): the input is wrong, and is
+#       surfaced, not hidden, so the user learns of the misconfiguration. Four ways:
+#         - not_a_sentinel: no sentinel_type attribute (a plain sensor).
+#         - wrong_family:   sentinel_type is something other than entity (for example
+#                           a Battery Sentinel, sentinel_type 'battery').
+#         - aggregate:      sentinel_role == 'aggregate' (another Dashboard Sentinel,
+#                           or this sensor pointed at itself). Rejected to prevent
+#                           recursion and double counting.
+#         - missing:        the entity_id does not exist (a typo or a renamed sensor).
+#
+# DEDUPE AND PRECEDENCE: across accepted sources, an entity flagged by two of them is
+# collapsed to one entry. A genuinely-gone reason (unavailable, unknown, missing,
+# never_reported) wins over frozen, the same precedence Sentinel Notify uses, so a
+# device seen frozen by one Sentinel and unavailable by another reports as unavailable.
+#
+# SORT: the merged list is sorted by entity_id. Because entity ids are domain.name,
+# this groups by domain and orders alphabetically within each domain for free (all
+# binary_sensor together, then camera, then sensor, and so on).
+#
+# HEALTH OUTPUT: ok is true only when every named source was accepted. Two separate
+# problem lists let a dashboard tell the two kinds of trouble apart: sources lists the
+# valid Entity Sentinels that are currently down (an operational alert that will clear
+# when the source recovers), and rejected lists the misconfigured inputs (a
+# configuration mistake that persists until the blueprint is edited). source_error_count
+# and rejected_count are the quick numbers for a badge or an automation gate.
+#
+# THE result: ENGINE: is documented here, in the header, rather than inline. Its value
+# is a YAML block scalar whose contents are Jinja, so a # inside it is not a comment but
+# literal text rendered into the output, and a Jinja {# #} comment can shift whitespace
+# and corrupt the dict the template builds. So the map lives here, where comments are
+# free and cannot touch the rendered result.
+#
+# The stages run top to bottom and each depends on the ones above it. Computed once per
+# evaluation, the template returns one dict; the sensor state and every attribute are
+# read out of it.
+#
+#   1. Classify each named source. Read its marker (sentinel_type, sentinel_role), its
+#      state, and its ok attribute. Route to accepted (collect its devices), down
+#      (a valid entity Sentinel that is unhealthy), or rejected (wrong input), per the
+#      buckets above.
+#   2. Merge. Concatenate the devices lists from the accepted sources.
+#   3. Dedupe with precedence. One entry per entity_id; a genuinely-gone reason wins
+#      over frozen.
+#   4. Sort by entity_id (domain-grouped, alphabetical).
+#   5. Return. The count and merged list, the unavailable and frozen sub-counts, the
+#      two problem lists with their counts, the identity markers, and last_evaluated.
+#
+# Changelog:
+#   1.0.0-alpha.1 - First build. Reads any number of Entity Sentinel sensors and
+#           presents them as one deduped, sorted mirror. Validates each source by its
+#           marker attribute: a real, healthy Entity Sentinel is merged; a real but
+#           currently broken one is reported in the sources list while the rest still
+#           aggregate; a wrong input (a non-Sentinel, a wrong-family Sentinel such as
+#           Battery, another aggregate or itself, or a missing entity) is surfaced in
+#           the rejected list rather than silently dropped. Dedupes across sources with
+#           the genuinely-gone-beats-frozen precedence used by Sentinel Notify, sorts by
+#           entity_id, and carries identity markers (sentinel_type entity, sentinel_role
+#           aggregate, sentinel_version). Event-driven off the named sources and Home
+#           Assistant start, no cadence, no detection engine of its own. Built on request,
+#           released as an alpha: useful today, and refined by real-world use. Versioning
+#           while in alpha: alpha.N for every change; it graduates to 1.0.0-beta once
+#           proven on live systems.
+
+blueprint:
+  name: Dashboard Sentinel (Alpha)
+  description: |
+    # Dashboard Sentinel (Alpha)
+
+    *One sensor that combines all your Entity Sentinels into a single, deduped list for a dashboard.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprint/) - the design and worked examples.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.md) - import instructions, parameters, and attribute reference.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Reads any number of **Entity Sentinel** sensors and presents them as one. The state is the count of gone-quiet entities across all of them, deduped, and the `devices` attribute is the merged, sorted list, ready for a single dashboard card. This is a clean mirror of an Entity Sentinel: same state meaning, same `devices` shape, so any card or automation that reads one Entity Sentinel reads this the same way.
+
+    ## How it works
+
+    It does not detect anything itself. Each Entity Sentinel has already classified its own gone-quiet entities; this sensor reads those finished lists, merges them, removes any entity flagged by two of them (keeping the more serious reason), and sorts the result by entity id so it groups by domain. It re-evaluates the moment a source changes, with no cadence to set.
+
+    Each source you name is checked by its identity marker. A healthy Entity Sentinel is merged. A real Entity Sentinel that is currently broken is listed separately as a down source, while the rest still combine. A wrong input, a sensor that is not an Entity Sentinel, a Battery Sentinel added by mistake, another aggregate, or a typo, is surfaced in a rejected list rather than silently dropped, so a misconfiguration is visible instead of hidden.
+
+    Its companions, **Entity Sentinel** and **Battery Sentinel**, are the sensors that do the watching; this one only combines Entity Sentinels for display. Build at least one Entity Sentinel first.
+
+    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation.
+
+    This is an alpha. It is genuinely useful today and runs on my own system, but real homes are more varied than any one setup, and your use is what will make it solid. If you hit something, the community thread is where it gets found and fixed.
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+
+    1.0.0-alpha.1
+  author: James Lander (xeazy.com)
+  domain: template
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.yaml
+  homeassistant:
+    min_version: 2026.5.4
+  input:
+    source_settings:
+      name: Sources to combine
+      icon: mdi:set-merge
+      input:
+        source_sensors:
+          name: Entity Sentinel sensors
+          description: 'The Entity Sentinel sensors to combine into one. Add as many
+            as you like. Only real, healthy Entity Sentinels are merged; a broken one
+            is reported as a down source while the rest still combine, and anything
+            that is not an Entity Sentinel (a Battery Sentinel, a plain sensor, another
+            aggregate, or a typo) is surfaced as a rejected input rather than silently
+            dropped.
+
+            '
+          selector:
+            entity:
+              filter:
+              - domain:
+                - sensor
+              multiple: true
+    naming_settings:
+      name: Sensor identity
+      icon: mdi:tag-outline
+      input:
+        sensor_name:
+          name: Sensor name
+          description: The name for the sensor this blueprint creates.
+          default: Dashboard Sentinel
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        unique_id:
+          name: Unique ID
+          description: 'A unique id so the sensor is registered and you can rename it
+            or place it in an area from the interface. Make it distinct for every
+            sensor you build, for example dashboard_sentinel.
+
+            '
+          selector:
+            text:
+              multiple: false
+              multiline: false
+    debug_settings:
+      name: Debugging
+      icon: mdi:bug-outline
+      input:
+        debug_enabled:
+          name: Write a debug line to the log
+          description: 'When on, the sensor writes one summary line to the system log
+            each time it evaluates, naming the merged count and any down or rejected
+            sources. Useful while setting the sensor up. Leave off for normal use so
+            the log stays quiet.
+
+            '
+          default: false
+          selector:
+            boolean: {}
+variables:
+  sentinel_version: 1.0.0-alpha.1
+  source_sensors: !input source_sensors
+  debug_enabled: !input debug_enabled
+  result: |
+    {%- set severe = ['unavailable', 'unknown', 'missing', 'never_reported'] -%}
+    {%- set sources = source_sensors if (source_sensors is iterable and source_sensors is not string) else [source_sensors] -%}
+    {%- set heal = namespace(items=[]) -%}
+    {%- set down = namespace(items=[]) -%}
+    {%- set rej = namespace(items=[]) -%}
+    {%- for sid in sources -%}
+      {%- set sobj = states[sid] -%}
+      {%- if sobj is none -%}
+        {%- set rej.items = rej.items + [{
+          'sensor': sid,
+          'name': sid,
+          'status': 'missing',
+          'note': 'this entity does not exist (check for a typo or a renamed sensor)'
+        }] -%}
+      {%- else -%}
+        {%- set sname = state_attr(sid, 'friendly_name') or sid -%}
+        {%- set stype = state_attr(sid, 'sentinel_type') -%}
+        {%- set srole = state_attr(sid, 'sentinel_role') -%}
+        {%- set sstate = sobj.state -%}
+        {%- set sok = state_attr(sid, 'ok') -%}
+        {%- if srole == 'aggregate' -%}
+          {%- set rej.items = rej.items + [{
+            'sensor': sid,
+            'name': sname,
+            'status': 'aggregate',
+            'note': 'this is itself an aggregate; combining aggregates is not allowed (it would double count or loop)'
+          }] -%}
+        {%- elif stype is none -%}
+          {%- set rej.items = rej.items + [{
+            'sensor': sid,
+            'name': sname,
+            'status': 'not_a_sentinel',
+            'note': 'this sensor is not a Sentinel (it carries no sentinel_type)'
+          }] -%}
+        {%- elif stype != 'entity' -%}
+          {%- set rej.items = rej.items + [{
+            'sensor': sid,
+            'name': sname,
+            'status': 'wrong_family',
+            'note': 'this is a ' ~ stype ~ ' Sentinel, not an Entity Sentinel'
+          }] -%}
+        {%- elif sstate in ['unavailable', 'unknown'] -%}
+          {%- set down.items = down.items + [{
+            'sensor': sid,
+            'name': sname,
+            'status': sstate,
+            'error': ''
+          }] -%}
+        {%- elif sstate == 'setup_error' or sok == false or sok == 'False' -%}
+          {%- set down.items = down.items + [{
+            'sensor': sid,
+            'name': sname,
+            'status': 'setup_error',
+            'error': (state_attr(sid, 'error') or '')
+          }] -%}
+        {%- else -%}
+          {%- set dlist = state_attr(sid, 'devices') -%}
+          {%- if dlist is iterable and dlist is not string -%}
+            {%- set heal.items = heal.items + (dlist | list) -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set severe_ids = heal.items | selectattr('reason', 'in', severe) | map(attribute='entity_id') | list -%}
+    {%- set dd = namespace(items=[], seen=[]) -%}
+    {%- for d in heal.items -%}
+      {%- if d.entity_id not in dd.seen -%}
+        {%- set dd.seen = dd.seen + [d.entity_id] -%}
+        {%- if d.entity_id in severe_ids and d.reason not in severe -%}
+          {%- set sev = (heal.items | selectattr('entity_id', 'eq', d.entity_id) | selectattr('reason', 'in', severe) | list | first) -%}
+          {%- set dd.items = dd.items + [sev] -%}
+        {%- else -%}
+          {%- set dd.items = dd.items + [d] -%}
+        {%- endif -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set merged = dd.items | sort(attribute='entity_id') -%}
+    {%- set un = merged | selectattr('reason', 'in', severe) | list | length -%}
+    {%- set fz = merged | selectattr('reason', 'eq', 'frozen') | list | length -%}
+    {%- set accepted = (sources | length) - (down.items | length) - (rej.items | length) -%}
+    {{
+      {
+        'state': merged | length,
+        'ok': (down.items | length == 0) and (rej.items | length == 0),
+        'total_monitored': accepted,
+        'devices': merged,
+        'unavailable_count': un,
+        'frozen_count': fz,
+        'source_error_count': down.items | length,
+        'rejected_count': rej.items | length,
+        'sources': down.items,
+        'rejected': rej.items,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+
+trigger:
+- trigger: state
+  entity_id: !input source_sensors
+  alias: Re-evaluate when any source sensor changes
+- trigger: homeassistant
+  event: start
+  id: ha_start
+  alias: Re-evaluate when Home Assistant starts
+action:
+- if:
+  - condition: template
+    value_template: '{{ debug_enabled }}'
+  then:
+  - action: system_log.write
+    data:
+      level: info
+      logger: dashboard_sentinel
+      message: >-
+        {%- macro loc(v) -%}{{ (v | as_datetime(none) | as_local).strftime('%Y-%m-%d
+        %H:%M:%S') if (v | as_datetime(none)) is not none else v }}{%- endmacro -%}
+        Dashboard Sentinel v{{ sentinel_version }} @ {{ loc(result.last_evaluated) }} |
+        state: {{ result.state }} | ok: {{ result.ok }} | monitored: {{
+        result.total_monitored }} | flagged: {{ result.state }} (unavailable {{
+        result.unavailable_count }}, frozen {{ result.frozen_count }}) | down: {{
+        result.source_error_count }} | rejected: {{ result.rejected_count }}{% for d
+        in result.devices %} | {{ d.name }} ({{ d.entity_id }}) [{{ d.reason }}]
+        area={{ d.area }} age={{ d.age }}{% endfor %}{% for s in result.sources %} |
+        DOWN {{ s.name }} ({{ s.sensor }}) [{{ s.status }}]{% endfor %}{% for r in
+        result.rejected %} | REJECTED {{ r.name }} ({{ r.sensor }}) [{{ r.status }}]
+        {{ r.note }}{% endfor %}
+sensor:
+- name: !input sensor_name
+  unique_id: !input unique_id
+  state: '{{ result.state }}'
+  icon: >-
+    {% if not result.ok %}mdi:alert-circle-outline{% elif result.state | int(0) > 0
+    %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
+  attributes:
+    ok: '{{ result.ok }}'
+    sentinel_type: entity
+    sentinel_role: aggregate
+    sentinel_version: '{{ sentinel_version }}'
+    total_monitored: '{{ result.total_monitored }}'
+    devices: '{{ result.devices }}'
+    unavailable_count: '{{ result.unavailable_count }}'
+    frozen_count: '{{ result.frozen_count }}'
+    source_error_count: '{{ result.source_error_count }}'
+    rejected_count: '{{ result.rejected_count }}'
+    sources: '{{ result.sources }}'
+    rejected: '{{ result.rejected }}'
+    last_evaluated: '{{ result.last_evaluated }}'

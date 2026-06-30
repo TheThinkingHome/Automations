@@ -1,155 +1,330 @@
 # Copyright (C) 2026 James Lander, The Thinking Home
 # Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
-# Dashboard Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+# Battery Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
+#   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
-# Dashboard Sentinel reads any number of Entity Sentinel sensors and presents them
-# as ONE sensor: a single count and a single, deduped, sorted list of every entity
-# that has gone quiet across all of them. It is a clean mirror of an Entity Sentinel,
-# same state meaning, same devices shape, same vocabulary, so anything that can read
-# one Entity Sentinel reads this one with nothing new to learn. What it adds is the
-# cleanup (merge, dedupe, sort) and a health view of its sources.
+# Battery Sentinel watches the battery devices you name and counts the ones running
+# low, by either of two states, classified automatically per entity:
 #
-# It does NOT detect anything itself. Each Entity Sentinel has already done the work
-# of scanning, electing representatives, and classifying gone-quiet entities into its
-# devices attribute. This sensor only reads those finished lists and combines them, so
-# it runs no detection engine, no entity scan, no uptime math. It is a state-based
-# template sensor: it re-evaluates automatically whenever one of the source sensors it
-# references changes. There is no cadence, no trigger, and no polling.
+#   LOW (value level). A percentage battery entity at or below the threshold, or a
+#       binary battery sensor reading on, counts as low. A value-hysteresis deadband
+#       (low_clear_margin) holds a flagged cell on the list until it climbs above the
+#       threshold PLUS the margin, so a battery hovering at the line does not flap on
+#       and off every render. A binary sensor has no percentage and is reported low
+#       without one.
+#   OFFLINE (entity level). An in-scope battery sitting at unavailable, unknown, or
+#       missing is not a low battery, so it never lands in the low list. It is
+#       reported separately in the unavailable_entities attribute, so the low count
+#       stays clean while you still see what is offline. The offline list is held
+#       empty during the startup grace; the low list is never held.
 #
-# THE MIRROR: each merged entry keeps the exact Entity Sentinel devices shape
-# (name, entity_id, area, reason, since, last_seen, age). A consumer treats this sensor
-# exactly like an Entity Sentinel.
+# Scope: include and exclude by entity, label, area, or device.
+#   - Named entities are TRUSTED: taken as given. Areas, devices, and
+#     labels-on-devices/areas are SWEPT: expanded and then re-filtered to
+#     device_class battery, so pointing at a room watches only its batteries, not
+#     its motion or temperature entities.
+#   - Labels expand three ways (entities, devices, areas) on BOTH the include and
+#     the exclude side, so a device-labeled exclude actually suppresses its battery
+#     rather than silently failing.
+#   - With no include scope at all, it watches every battery device-class entity in
+#     the system. This is the sensible default for batteries; phones and tablets
+#     charge nightly and are what exclude is for.
+#   - Exclude is applied last and always wins.
 #
-# SOURCE VALIDATION (three buckets per named source, decided by the marker attribute):
-#   ACCEPTED (merged): sentinel_type == 'entity', is NOT itself an aggregate, and is
-#       healthy (numeric state, ok true). Its devices are merged in.
-#   DOWN (reported in the sources list, not merged): it IS a real Entity Sentinel
-#       (sentinel_type == 'entity') but is currently broken, setup_error, unavailable,
-#       or ok false. A down source never silences the healthy ones; the others still
-#       aggregate. Status is setup_error or unavailable.
-#   REJECTED (reported in the rejected list, not merged): the input is wrong, and is
-#       surfaced, not hidden, so the user learns of the misconfiguration. Four ways:
-#         - not_a_sentinel: no sentinel_type attribute (a plain sensor).
-#         - wrong_family:   sentinel_type is something other than entity (for example
-#                           a Battery Sentinel, sentinel_type 'battery').
-#         - aggregate:      sentinel_role == 'aggregate' (another Dashboard Sentinel,
-#                           or this sensor pointed at itself). Rejected to prevent
-#                           recursion and double counting.
-#         - missing:        the entity_id does not exist (a typo or a renamed sensor).
+# Triggering: a time_pattern on an hourly cadence, plus a Home Assistant start
+# trigger that only latches the startup grace boot time. Battery levels drift
+# slowly, so hourly or slower is right; the refresh button forces an immediate check.
 #
-# DEDUPE AND PRECEDENCE: across accepted sources, an entity flagged by two of them is
-# collapsed to one entry. A genuinely-gone reason (unavailable, unknown, missing,
-# never_reported) wins over frozen, the same precedence Sentinel Notify uses, so a
-# device seen frozen by one Sentinel and unavailable by another reports as unavailable.
+# DESIGN CHOICE (startup grace): the grace window holds the OFFLINE list empty only,
+# NOT the LOW count. Rationale: a restart briefly reads the mesh as unavailable
+# (a false fleet-wide outage the grace exists to hide), but a battery's percentage
+# is a real value the moment it reports, so the low check is safe to run the whole
+# time. Measured from a required uptime sensor, not this.attributes, so it is immune
+# to the trigger-template this-unreliability (HA #115585).
 #
-# SORT: the merged list is sorted by entity_id. Because entity ids are domain.name,
-# this groups by domain and orders alphabetically within each domain for free (all
-# binary_sensor together, then camera, then sensor, and so on).
+# DESIGN CHOICE (hysteresis and HA #115585): the low-clear hysteresis reads the
+# previous low set from this.attributes.devices, and that dependency is irreducible.
+# Whether an entity was low on the prior render is self-referential state, and this
+# is the only channel HA gives a template sensor to read its own prior output. The
+# startup grace was deliberately moved off this.attributes to the uptime sensor to
+# avoid #115585, but hysteresis cannot be. If #115585 strikes on a given render, the
+# previous set reads empty and a battery sitting inside the clear margin (for example
+# 21 with threshold 20 and margin 2) loses its was-low status for that one tick and
+# briefly drops off the low list. It returns on the next clean render. This is an
+# accepted, self-correcting degradation; the alternative is no hysteresis at all.
 #
-# HEALTH OUTPUT: ok is true only when every named source was accepted. Two separate
-# problem lists let a dashboard tell the two kinds of trouble apart: sources lists the
-# valid Entity Sentinels that are currently down (an operational alert that will clear
-# when the source recovers), and rejected lists the misconfigured inputs (a
-# configuration mistake that persists until the blueprint is edited). source_error_count
-# and rejected_count are the quick numbers for a badge or an automation gate.
+# DESIGN CHOICE (identity attributes): the sensor carries two constant attributes,
+# sentinel_type (battery) and sentinel_version, so any consumer (a dashboard, a
+# companion, a person filing a bug report) can identify what the sensor is and what
+# version it runs without opening the blueprint. They are plain attributes on the
+# sensor block, not threaded through the result dict, so they are present even in
+# setup_error, which is exactly when support needs them. The version is defined once
+# as a variable and read into both the debug line and the attribute, so a bump
+# touches one runtime source instead of two.
 #
-# THE result: ENGINE: is documented here, in the header, rather than inline. Its value
-# is a YAML block scalar whose contents are Jinja, so a # inside it is not a comment but
-# literal text rendered into the output, and a Jinja {# #} comment can shift whitespace
-# and corrupt the dict the template builds. So the map lives here, where comments are
-# free and cannot touch the rendered result.
+# THE result: ENGINE: is documented here, in the header, rather than inline. Its
+# value is a YAML block scalar whose contents are Jinja, so a # inside it is not a
+# comment but literal text rendered into the output, and a Jinja {# #} comment can
+# shift whitespace and corrupt the dict the template builds. So the map lives here,
+# where comments are free and cannot touch the rendered result.
 #
-# The stages run top to bottom and each depends on the ones above it. Computed once per
-# evaluation, the template returns one dict; the sensor state and every attribute are
-# read out of it.
+# The stages run top to bottom and each depends on the ones above it. Computed once
+# per evaluation, the template returns one dict; the sensor state and every
+# attribute are read out of it.
 #
-#   1. Classify each named source. Read its marker (sentinel_type, sentinel_role), its
-#      state, and its ok attribute. Route to accepted (collect its devices), down
-#      (a valid entity Sentinel that is unhealthy), or rejected (wrong input), per the
-#      buckets above.
-#   2. Merge. Concatenate the devices lists from the accepted sources.
-#   3. Dedupe with precedence. One entry per entity_id; a genuinely-gone reason wins
-#      over frozen.
-#   4. Sort by entity_id (domain-grouped, alphabetical).
-#   5. Return. The count and merged list, the unavailable and frozen sub-counts, the
-#      two problem lists with their counts, the identity markers, and last_evaluated.
+#   1. Remember and validate. Read the previous output (needed for hysteresis), then
+#      validate the inputs: threshold 0 to 100, clear margin >= 0, grace >= 0. A bad
+#      input skips to the setup_error return at the bottom and does nothing else.
+#   2. Clock check and grace gate. Read and parse the uptime sensor; from the boot
+#      time, compute "settled". A missing or non-timestamp uptime sensor is a setup
+#      error. Settled gates the offline list, never the low count.
+#   3. Find and scope (include). Collect every battery device-class entity, then
+#      narrow to the include scope (devices, areas, and labels re-filtered to their
+#      battery entities). No include scope means watch every battery.
+#   4. Exclude and subtract. Expand the exclude scope three ways (entities, devices,
+#      areas), then monitored = scoped batteries minus excluded. Exclude always wins.
+#   5. Detection loop with hysteresis. Per battery: unavailable/unknown/missing goes
+#      to the offline list, not the low list; a binary sensor reading on is low; a
+#      percentage uses the deadband (an already-low battery must climb above threshold
+#      PLUS margin to clear) so the list does not flicker.
+#   6. Return. The healthy dict (low count, devices, unavailable_entities held empty
+#      until settled, boot_time, settled, last_evaluated), or the setup_error dict if
+#      stage 1 or 2 failed.
 #
 # Changelog:
-#   1.0.0-alpha.1.1 - Fix for the config validator error on a state-based
-#           template blueprint whose platform section was written as a list
-#           (HA core #150280). The sensor block is now a mapping, the leading
-#           dash removed, so the blueprint resolves and loads. No logic change;
-#           the validation engine is identical to 1.0.0-alpha.1.
-#   1.0.0-alpha.1 - First build. Reads any number of Entity Sentinel sensors and
-#           presents them as one deduped, sorted mirror. Validates each source by its
-#           marker attribute: a real, healthy Entity Sentinel is merged; a real but
-#           currently broken one is reported in the sources list while the rest still
-#           aggregate; a wrong input (a non-Sentinel, a wrong-family Sentinel such as
-#           Battery, another aggregate or itself, or a missing entity) is surfaced in
-#           the rejected list rather than silently dropped. Dedupes across sources with
-#           the genuinely-gone-beats-frozen precedence used by Sentinel Notify, sorts by
-#           entity_id, and carries identity markers (sentinel_type entity, sentinel_role
-#           aggregate, sentinel_version). A state-based template sensor: it re-evaluates
-#           when a source changes, with no trigger, no cadence, and no detection engine
-#           of its own. Built on request, released as an alpha: a direction under
-#           development, offered for feedback rather than as a finished tool.
+#   1.0.3-beta - Added two constant identity attributes: sentinel_type (battery) and
+#           sentinel_version (the running version string). They let a dashboard, a
+#           companion, or a bug report identify the sensor and its version without
+#           opening the blueprint, and they are present even in setup_error. The
+#           version is now defined once as a variable and read into both the debug
+#           line and the new attribute, so a future bump updates one runtime source
+#           rather than two literals. No detection, engine, or hysteresis change.
+#   1.0.2-beta - Debug log line now prints timestamps (boot and last_evaluated) in
+#           local time instead of UTC. Display only: the stored attributes are
+#           unchanged and remain ISO-8601 with the UTC offset, the portable form any
+#           dashboard, automation, or companion reads. The log line had been stamping
+#           its own wall-clock time in local while printing those fields in UTC, so
+#           reading the two together miscounted by the UTC offset. The engine, the
+#           detection logic, and the hysteresis are untouched. Matches the same fix
+#           in Entity Sentinel 1.0.4-beta.
+#   1.0.1-beta - Re-evaluation cadence is now measured in HOURS, the production
+#           setting (the minute-based cadence was a development affordance for fast
+#           testing). The scan_interval selector now offers 1, 2, 3, 4, 6, 8, 12, and
+#           24 hours, defaulting to hourly, and the trigger fires at the top of the
+#           chosen hour. Battery levels drift slowly, so hourly or slower is right;
+#           the refresh button still forces an immediate check.
+#   1.0.0-beta - First beta. Counts batteries at or below a threshold, with a
+#           value-hysteresis deadband (a low_clear_margin so a cell hovering at the
+#           line does not flap). Handles percentage and binary battery entities.
+#           Scope by entity, label, area, or device with include and exclude (exclude
+#           wins; labels expand to entities, devices, and areas on both sides, so a
+#           device-labeled exclude actually suppresses its battery instead of silently
+#           failing). Area and device scopes are re-filtered to device_class battery.
+#           Reports unavailable and missing batteries in a parallel unavailable_entities
+#           attribute (held during startup grace, never folded into the low count).
+#           Startup grace measured from a REQUIRED uptime sensor in timestamp mode,
+#           read fresh every render, immune to the trigger-template this-unreliability
+#           (HA #115585) and correct on slow-booting hubs. Loud setup_error state with
+#           error and uptime_status attributes when the uptime sensor is missing or not
+#           a timestamp, OR when low_threshold, low_clear_margin, or startup_grace_seconds
+#           is set to an invalid value (non-number, threshold out of 0 to 100, negative
+#           margin or grace); the sensor fails safe and self-heals once fixed. Added an
+#           ok boolean so downstream automations can gate on it rather than doing integer
+#           math on a state that may read setup_error. Timezone-safe grace math. Debug log
+#           line carries the version, state, uptime status, and both the low and the
+#           unavailable arrays. Optional refresh button. Versioning from here: patch
+#           (1.0.1-beta) for fixes, minor (1.1.0-beta) for features, major (2.0.0-beta)
+#           for breaking changes.
+#
+#   Alpha history (1.0.0-alpha through 1.0.0-alpha.6) is preserved in the project
+#   document, not carried here.
 
 blueprint:
-  name: Dashboard Sentinel (Alpha)
+  name: Battery Sentinel (Beta)
   description: |
-    # Dashboard Sentinel (Alpha)
+    # Battery Sentinel (Beta)
 
-    *One sensor that combines all your Entity Sentinels into a single, deduped list for a dashboard.*
+    *One sensor that counts every battery device running low.*
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.md) - the reasoning, the parameters, and the attribute reference.
+    - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprint/) - the design and worked examples.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) - import instructions, parameters, and attribute reference.
     - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
 
     ---
 
-    Reads any number of **Entity Sentinel** sensors and presents them as one. The state is the count of gone-quiet entities across all of them, deduped, and the `devices` attribute is the merged, sorted list, ready for a single dashboard card. This is a clean mirror of an Entity Sentinel: same state meaning, same `devices` shape, so any card or automation that reads one Entity Sentinel reads this the same way.
+    Creates one trigger-based template sensor whose state is the count of battery devices at or below a threshold. The flagged devices are listed in the `devices` attribute, each with its name, area, level, and battery type, for any automation, dashboard, or notification to read.
 
     ## How it works
 
-    It does not detect anything itself. Each Entity Sentinel has already classified its own gone-quiet entities; this sensor reads those finished lists, merges them, removes any entity flagged by two of them (keeping the more serious reason), and sorts the result by entity id so it groups by domain. It re-evaluates the moment a source changes, with no cadence to set.
+    A device counts as low when its battery percentage is at or below the threshold, or when a binary battery sensor reads on. A value-hysteresis band keeps a device that hovers at the threshold from flapping in and out of the list: a flagged device stays low until it climbs above the threshold plus a margin, which for a battery only happens when a fresh cell is fitted.
 
-    Each source you name is checked by its identity marker. A healthy Entity Sentinel is merged. A real Entity Sentinel that is currently broken is listed separately as a down source, while the rest still combine. A wrong input, a sensor that is not an Entity Sentinel, a Battery Sentinel added by mistake, another aggregate, or a typo, is surfaced in a rejected list rather than silently dropped, so a misconfiguration is visible instead of hidden.
+    Include and exclude accept entities, areas, devices, or labels, with exclude winning; an empty include watches every battery device-class entity. Percentage and binary battery sensors are supported. The sensor re-evaluates on a set cadence.
 
-    Its companions, **Entity Sentinel** and **Battery Sentinel**, are the sensors that do the watching; this one only combines Entity Sentinels for display. Build at least one Entity Sentinel first.
+    Its companion, **Entity Sentinel**, catches any entity that stopped reporting, went unavailable, or froze at its last value. Build both for full coverage.
 
-    This is an alpha and a direction under development. It is not warranted and not claimed to work; it is offered for feedback. The README has the full reasoning and the ask.
+    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation, for use while setting the sensor up.
+
+    This is a beta. It requires the uptime integration (timestamp mode) and a startup grace period you set to cover your own boot and mesh-settle time. See the README.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.1.1
+    1.0.3-beta
   author: James Lander (xeazy.com)
   domain: template
-  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.yaml
+  source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
-    source_settings:
-      name: Sources to combine
-      icon: mdi:set-merge
+    low_settings:
+      name: Low battery detection
+      icon: mdi:battery-low
       input:
-        source_sensors:
-          name: Entity Sentinel sensors
-          description: 'The Entity Sentinel sensors to combine into one. Add as many
-            as you like. Only real, healthy Entity Sentinels are merged; a broken one
-            is reported as a down source while the rest still combine, and anything
-            that is not an Entity Sentinel (a Battery Sentinel, a plain sensor, another
-            aggregate, or a typo) is surfaced as a rejected input rather than silently
-            dropped.
+        low_threshold:
+          name: Low battery threshold
+          description: A battery percentage at or below this counts as low. Binary
+            battery sensors reading on always count as low regardless of this value.
+          default: 20
+          selector:
+            number:
+              min: 1.0
+              max: 100.0
+              step: 1.0
+              unit_of_measurement: '%'
+              mode: slider
+        low_clear_margin:
+          name: Hysteresis clear margin
+          description: 'A device already flagged low stays low until it climbs above
+            the threshold plus this margin. Stops devices hovering at the threshold
+            from flapping. Batteries do not recover on their own, so a flagged device
+            clears only when a fresh cell pushes it well past the threshold.
 
             '
+          default: 2
+          selector:
+            number:
+              min: 0.0
+              max: 25.0
+              step: 1.0
+              unit_of_measurement: '%'
+              mode: slider
+    scope_settings:
+      name: Which devices to watch
+      icon: mdi:select-group
+      input:
+        include_target:
+          name: Include
+          description: 'Devices, areas, entities, or labels to watch. Leave empty
+            to watch every entity with a battery device class automatically. Set a
+            label here to watch only the devices you tag.
+
+            '
+          default: {}
+          selector:
+            target: {}
+        exclude_target:
+          name: Exclude
+          description: 'Devices, areas, entities, or labels to leave out. Exclude
+            always wins over include. Use it to drop phones, tablets, or a device
+            you are letting run down on purpose.
+
+            '
+          default: {}
+          selector:
+            target: {}
+    cadence_settings:
+      name: Evaluation cadence
+      icon: mdi:timer-sync-outline
+      input:
+        scan_interval:
+          name: Re-evaluation interval
+          description: 'How often the sensor re-scans, in hours. The sensor fires at
+            the top of the hour every Nth hour (Every 1 is hourly, Every 6 is four
+            times a day). Battery levels drift slowly, so hourly or slower is plenty;
+            the manual refresh button forces an immediate check when you need one.
+
+            '
+          default: /1
+          selector:
+            select:
+              options:
+              - label: Every 1
+                value: /1
+              - label: Every 2
+                value: /2
+              - label: Every 3
+                value: /3
+              - label: Every 4
+                value: /4
+              - label: Every 6
+                value: /6
+              - label: Every 8
+                value: /8
+              - label: Every 12
+                value: /12
+              - label: Every 24
+                value: /24
+              sort: false
+              custom_value: false
+              multiple: false
+        startup_grace_seconds:
+          name: Startup grace period (seconds)
+          description: 'How long after Home Assistant starts to hold the unavailable
+            list empty while the system and mesh come up, so a restart does not report
+            a false outage. Measured from the uptime sensor (process start), so it
+            must cover your hub''s FULL startup: boot time PLUS the time your Zigbee or
+            Z-Wave mesh takes to settle, plus a margin. A fast mini-PC may need 3 to 4
+            minutes; a slower hub with Z-Wave may need 5 to 6. The low-battery count is
+            never held; only the unavailable list waits. Set to 0 to disable.
+
+            '
+          default: 240
+          selector:
+            number:
+              min: 0.0
+              max: 1800.0
+              step: 10.0
+              unit_of_measurement: seconds
+              mode: box
+        uptime_sensor:
+          name: Uptime sensor (required)
+          description: 'REQUIRED. The Home Assistant uptime sensor, in TIMESTAMP mode
+            (its state is an ISO time like 2026-06-26T14:56:59+00:00, not a number).
+            The startup grace is measured from this, which is reliable across restarts
+            and reloads. Add the Uptime integration if you do not have it. If this
+            sensor is missing or is not a timestamp, the sensor reports a setup_error
+            state and does nothing until it is fixed.
+
+            '
+          default: sensor.uptime
           selector:
             entity:
               filter:
               - domain:
                 - sensor
-              multiple: true
+                device_class:
+                - timestamp
+              multiple: false
+        refresh_button:
+          name: Manual refresh button (optional)
+          description: 'An optional input_button. Press it to make the sensor re-evaluate
+            immediately, for example right after changing a battery instead of waiting
+            for the next cadence tick. The press forces the sensor to re-scan; it does
+            not force a device to report a fresh reading, so a just-replaced battery
+            still shows its old or unavailable value until the device next reports.
+            Point several Sentinel sensors at the same button to refresh them all with
+            one press. Leave blank to disable.
+
+            '
+          default: input_button.none
+          selector:
+            entity:
+              filter:
+              - domain:
+                - input_button
+              multiple: false
     naming_settings:
       name: Sensor identity
       icon: mdi:tag-outline
@@ -157,140 +332,271 @@ blueprint:
         sensor_name:
           name: Sensor name
           description: The name for the sensor this blueprint creates.
-          default: Dashboard Sentinel
+          default: Battery Sentinel
           selector:
             text:
               multiple: false
               multiline: false
         unique_id:
           name: Unique ID
-          description: 'A unique id so the sensor is registered and you can rename it
-            or place it in an area from the interface. Make it distinct for every
-            sensor you build, for example dashboard_sentinel.
+          description: 'A unique id so the sensor is registered and you can rename
+            it or place it in an area from the interface. Make it distinct for every
+            sensor you build, for example battery_sentinel.
 
             '
           selector:
             text:
               multiple: false
               multiline: false
+    debug_settings:
+      name: Debugging
+      icon: mdi:bug-outline
+      input:
+        debug_enabled:
+          name: Write a debug line to the log
+          description: 'When on, the sensor writes one summary line to the system
+            log each time it evaluates, naming the flagged devices. Useful while
+            setting the sensor up. Leave off for normal use so the log stays quiet.
+
+            '
+          default: false
+          selector:
+            boolean: {}
 variables:
-  sentinel_version: 1.0.0-alpha.1.1
-  source_sensors: !input source_sensors
+  sentinel_version: 1.0.3-beta
+  low_threshold: !input low_threshold
+  low_clear_margin: !input low_clear_margin
+  include_target: !input include_target
+  exclude_target: !input exclude_target
+  startup_grace_seconds: !input startup_grace_seconds
+  uptime_sensor: !input uptime_sensor
+  debug_enabled: !input debug_enabled
   result: |
-    {%- set severe = ['unavailable', 'unknown', 'missing', 'never_reported'] -%}
-    {%- set sources = source_sensors if (source_sensors is iterable and source_sensors is not string) else [source_sensors] -%}
-    {%- set heal = namespace(items=[]) -%}
-    {%- set down = namespace(items=[]) -%}
-    {%- set rej = namespace(items=[]) -%}
-    {%- for sid in sources -%}
-      {%- set sobj = states[sid] -%}
-      {%- if sobj is none -%}
-        {%- set rej.items = rej.items + [{
-          'sensor': sid,
-          'name': sid,
-          'status': 'missing',
-          'note': 'this entity does not exist (check for a typo or a renamed sensor)'
-        }] -%}
+    {%- set prev = this.attributes if this is defined and this.attributes is defined else {} -%}
+    {%- set setup = namespace(ok=true, error='') -%}
+    {%- set thr_raw = low_threshold -%}
+    {%- set margin_raw = low_clear_margin -%}
+    {%- set grace_raw = startup_grace_seconds -%}
+    {%- if not (thr_raw | is_number) -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_threshold is not a number (got: ' ~ thr_raw ~ ').' -%}
+    {%- elif (thr_raw | float) < 0 or (thr_raw | float) > 100 -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_threshold ' ~ thr_raw ~ ' is out of range; it must be a battery percentage between 0 and 100.' -%}
+    {%- elif not (margin_raw | is_number) -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_clear_margin is not a number (got: ' ~ margin_raw ~ ').' -%}
+    {%- elif (margin_raw | float) < 0 -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'low_clear_margin ' ~ margin_raw ~ ' is negative; it must be 0 or greater (it widens the clear threshold above the low threshold).' -%}
+    {%- elif not (grace_raw | is_number) -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'startup_grace_seconds is not a number (got: ' ~ grace_raw ~ ').' -%}
+    {%- elif (grace_raw | float) < 0 -%}
+      {%- set setup.ok = false -%}
+      {%- set setup.error = 'startup_grace_seconds ' ~ grace_raw ~ ' is negative; it must be 0 or greater.' -%}
+    {%- endif -%}
+    {%- set thr = thr_raw | float(20) -%}
+    {%- set margin = margin_raw | float(2) -%}
+    {%- set grace = grace_raw | int(120) -%}
+    {%- set uptime_raw = states(uptime_sensor) -%}
+    {%- set uptime_dt = uptime_raw | as_datetime(none) -%}
+    {%- set uptime_ok = uptime_dt is not none -%}
+    {%- if setup.ok and not uptime_ok -%}
+      {%- if uptime_raw in ['unknown', 'unavailable', none] -%}
+        {%- set uptime_status = uptime_raw if uptime_raw is not none else 'unknown' -%}
+        {%- set setup.ok = false -%}
+        {%- set setup.error = 'uptime_sensor ' ~ uptime_sensor ~ ' not found or unavailable (got: ' ~ uptime_status ~ '). This blueprint requires the uptime integration with the entity in timestamp mode.' -%}
       {%- else -%}
-        {%- set sname = state_attr(sid, 'friendly_name') or sid -%}
-        {%- set stype = state_attr(sid, 'sentinel_type') -%}
-        {%- set srole = state_attr(sid, 'sentinel_role') -%}
-        {%- set sstate = sobj.state -%}
-        {%- set sok = state_attr(sid, 'ok') -%}
-        {%- if srole == 'aggregate' -%}
-          {%- set rej.items = rej.items + [{
-            'sensor': sid,
-            'name': sname,
-            'status': 'aggregate',
-            'note': 'this is itself an aggregate; combining aggregates is not allowed (it would double count or loop)'
+        {%- set uptime_status = uptime_raw -%}
+        {%- set setup.ok = false -%}
+        {%- set setup.error = 'uptime_sensor ' ~ uptime_sensor ~ ' is not a timestamp (got: ' ~ uptime_raw ~ '). Set the uptime integration to timestamp mode.' -%}
+      {%- endif -%}
+    {%- elif uptime_ok -%}
+      {%- set uptime_status = uptime_dt.isoformat() -%}
+    {%- else -%}
+      {%- set uptime_status = uptime_raw if uptime_raw is not none else 'unknown' -%}
+    {%- endif -%}
+    {%- set boot_dt = uptime_dt if uptime_ok else now() -%}
+    {%- set settled = uptime_ok and (as_timestamp(now()) - as_timestamp(boot_dt)) >= grace -%}
+    {%- if setup.ok -%}
+    {%- set inc = include_target -%}
+    {%- set ns = namespace(ents=[]) -%}
+    {%- set batt = (states.sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list)
+                 + (states.binary_sensor | selectattr('attributes.device_class', 'defined') | selectattr('attributes.device_class', 'eq', 'battery') | map(attribute='entity_id') | list) -%}
+    {%- if inc is mapping and (inc.entity_id is defined or inc.device_id is defined or inc.area_id is defined or inc.label_id is defined) -%}
+      {%- if inc.entity_id is defined -%}
+        {%- set elist = inc.entity_id if (inc.entity_id is iterable and inc.entity_id is not string) else [inc.entity_id] -%}
+        {%- set ns.ents = ns.ents + elist -%}
+      {%- endif -%}
+      {%- if inc.device_id is defined -%}
+        {%- set dlist = inc.device_id if (inc.device_id is iterable and inc.device_id is not string) else [inc.device_id] -%}
+        {%- for d in dlist -%}{%- set ns.ents = ns.ents + (device_entities(d) | select('in', batt) | list) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if inc.area_id is defined -%}
+        {%- set alist = inc.area_id if (inc.area_id is iterable and inc.area_id is not string) else [inc.area_id] -%}
+        {%- for a in alist -%}{%- set ns.ents = ns.ents + (area_entities(a) | select('in', batt) | list) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if inc.label_id is defined -%}
+        {%- set llist = inc.label_id if (inc.label_id is iterable and inc.label_id is not string) else [inc.label_id] -%}
+        {%- for l in llist -%}
+          {%- set ns.ents = ns.ents + label_entities(l) -%}
+          {%- for d in label_devices(l) -%}{%- set ns.ents = ns.ents + (device_entities(d) | select('in', batt) | list) -%}{%- endfor -%}
+          {%- for a in label_areas(l) -%}{%- set ns.ents = ns.ents + (area_entities(a) | select('in', batt) | list) -%}{%- endfor -%}
+        {%- endfor -%}
+      {%- endif -%}
+    {%- else -%}
+      {%- set ns.ents = batt -%}
+    {%- endif -%}
+    {%- set exc = exclude_target -%}
+    {%- set xns = namespace(ents=[]) -%}
+    {%- if exc is mapping -%}
+      {%- if exc.entity_id is defined -%}
+        {%- set elist = exc.entity_id if (exc.entity_id is iterable and exc.entity_id is not string) else [exc.entity_id] -%}
+        {%- set xns.ents = xns.ents + elist -%}
+      {%- endif -%}
+      {%- if exc.device_id is defined -%}
+        {%- set dlist = exc.device_id if (exc.device_id is iterable and exc.device_id is not string) else [exc.device_id] -%}
+        {%- for d in dlist -%}{%- set xns.ents = xns.ents + device_entities(d) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.area_id is defined -%}
+        {%- set alist = exc.area_id if (exc.area_id is iterable and exc.area_id is not string) else [exc.area_id] -%}
+        {%- for a in alist -%}{%- set xns.ents = xns.ents + area_entities(a) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.label_id is defined -%}
+        {%- set llist = exc.label_id if (exc.label_id is iterable and exc.label_id is not string) else [exc.label_id] -%}
+        {%- for l in llist -%}
+          {%- set xns.ents = xns.ents + label_entities(l) -%}
+          {%- for d in label_devices(l) -%}{%- set xns.ents = xns.ents + device_entities(d) -%}{%- endfor -%}
+          {%- for a in label_areas(l) -%}{%- set xns.ents = xns.ents + area_entities(a) -%}{%- endfor -%}
+        {%- endfor -%}
+      {%- endif -%}
+    {%- endif -%}
+    {%- set monitored = ns.ents | unique | reject('in', xns.ents) | list -%}
+    {%- set prev_ids = (prev.get('devices', []) | map(attribute='entity_id') | list) if prev else [] -%}
+    {%- set low_ns = namespace(items=[]) -%}
+    {%- set un_ns = namespace(items=[]) -%}
+    {%- for eid in monitored -%}
+      {%- set st = states(eid) -%}
+      {%- set sobj = states[eid] -%}
+      {%- if sobj is none or st in ['unavailable', 'unknown', 'none'] -%}
+        {%- set un_ns.items = un_ns.items + [{
+          'name': ((device_attr(device_id(eid), 'name') if device_id(eid) else none) or state_attr(eid, 'friendly_name') or eid),
+          'entity_id': eid,
+          'area': (area_name(eid) or 'Unassigned'),
+          'state': ('missing' if sobj is none else st)
+        }] -%}
+      {%- elif eid.startswith('binary_sensor.') and st == 'on' -%}
+        {%- set low_ns.items = low_ns.items + [{
+          'name': ((device_attr(device_id(eid), 'name') if device_id(eid) else none) or state_attr(eid, 'friendly_name') or eid),
+          'entity_id': eid,
+          'area': (area_name(eid) or 'Unassigned'),
+          'level': none,
+          'battery_type': (state_attr(eid, 'battery_type') or '')
+        }] -%}
+      {%- elif st is not none and st not in ['unavailable', 'unknown', 'none'] and st | is_number -%}
+        {%- set val = st | float -%}
+        {%- set was_low = eid in prev_ids -%}
+        {%- set is_low = (val < (thr + margin)) if was_low else (val <= thr) -%}
+        {%- if is_low -%}
+          {%- set low_ns.items = low_ns.items + [{
+            'name': ((device_attr(device_id(eid), 'name') if device_id(eid) else none) or state_attr(eid, 'friendly_name') or eid),
+            'entity_id': eid,
+            'area': (area_name(eid) or 'Unassigned'),
+            'level': val,
+            'battery_type': (state_attr(eid, 'battery_type') or '')
           }] -%}
-        {%- elif stype is none -%}
-          {%- set rej.items = rej.items + [{
-            'sensor': sid,
-            'name': sname,
-            'status': 'not_a_sentinel',
-            'note': 'this sensor is not a Sentinel (it carries no sentinel_type)'
-          }] -%}
-        {%- elif stype != 'entity' -%}
-          {%- set rej.items = rej.items + [{
-            'sensor': sid,
-            'name': sname,
-            'status': 'wrong_family',
-            'note': 'this is a ' ~ stype ~ ' Sentinel, not an Entity Sentinel'
-          }] -%}
-        {%- elif sstate in ['unavailable', 'unknown'] -%}
-          {%- set down.items = down.items + [{
-            'sensor': sid,
-            'name': sname,
-            'status': sstate,
-            'error': ''
-          }] -%}
-        {%- elif sstate == 'setup_error' or sok == false or sok == 'False' -%}
-          {%- set down.items = down.items + [{
-            'sensor': sid,
-            'name': sname,
-            'status': 'setup_error',
-            'error': (state_attr(sid, 'error') or '')
-          }] -%}
-        {%- else -%}
-          {%- set dlist = state_attr(sid, 'devices') -%}
-          {%- if dlist is iterable and dlist is not string -%}
-            {%- set heal.items = heal.items + (dlist | list) -%}
-          {%- endif -%}
         {%- endif -%}
       {%- endif -%}
     {%- endfor -%}
-    {%- set severe_ids = heal.items | selectattr('reason', 'in', severe) | map(attribute='entity_id') | list -%}
-    {%- set dd = namespace(items=[], seen=[]) -%}
-    {%- for d in heal.items -%}
-      {%- if d.entity_id not in dd.seen -%}
-        {%- set dd.seen = dd.seen + [d.entity_id] -%}
-        {%- if d.entity_id in severe_ids and d.reason not in severe -%}
-          {%- set sev = (heal.items | selectattr('entity_id', 'eq', d.entity_id) | selectattr('reason', 'in', severe) | list | first) -%}
-          {%- set dd.items = dd.items + [sev] -%}
-        {%- else -%}
-          {%- set dd.items = dd.items + [d] -%}
-        {%- endif -%}
-      {%- endif -%}
-    {%- endfor -%}
-    {%- set merged = dd.items | sort(attribute='entity_id') -%}
-    {%- set un = merged | selectattr('reason', 'in', severe) | list | length -%}
-    {%- set fz = merged | selectattr('reason', 'eq', 'frozen') | list | length -%}
-    {%- set accepted = (sources | length) - (down.items | length) - (rej.items | length) -%}
+    {%- set devices = low_ns.items -%}
+    {%- set unavailable = un_ns.items if settled else [] -%}
+    {%- endif -%}
+    {%- if not setup.ok -%}
     {{
       {
-        'state': merged | length,
-        'ok': (down.items | length == 0) and (rej.items | length == 0),
-        'total_monitored': accepted,
-        'devices': merged,
-        'unavailable_count': un,
-        'frozen_count': fz,
-        'source_error_count': down.items | length,
-        'rejected_count': rej.items | length,
-        'sources': down.items,
-        'rejected': rej.items,
+        'state': 'setup_error',
+        'ok': false,
+        'error': setup.error,
+        'uptime_status': uptime_status,
+        'total_monitored': 0,
+        'devices': [],
+        'unavailable_count': 0,
+        'unavailable_entities': [],
+        'boot_time': none,
+        'settled': false,
         'last_evaluated': now().isoformat()
       }
     }}
+    {%- else -%}
+    {{
+      {
+        'state': devices | length,
+        'ok': true,
+        'error': '',
+        'uptime_status': uptime_status,
+        'total_monitored': monitored | length,
+        'devices': devices,
+        'unavailable_count': unavailable | length,
+        'unavailable_entities': unavailable,
+        'boot_time': boot_dt.isoformat(),
+        'settled': settled,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+    {%- endif -%}
 
+trigger:
+- trigger: time_pattern
+  hours: !input scan_interval
+  minutes: 0
+  alias: Scheduled re-evaluation on the scan interval
+- trigger: homeassistant
+  event: start
+  id: ha_start
+  alias: Re-evaluate when Home Assistant starts
+- trigger: state
+  entity_id: !input refresh_button
+  id: manual_refresh
+  alias: Manual refresh button press
+action:
+- if:
+  - condition: template
+    value_template: '{{ debug_enabled }}'
+  then:
+  - action: system_log.write
+    data:
+      level: info
+      logger: battery_sentinel
+      message: >-
+        {%- macro loc(v) -%}{{ (v | as_datetime(none) | as_local).strftime('%Y-%m-%d
+        %H:%M:%S') if (v | as_datetime(none)) is not none else v }}{%- endmacro -%}
+        Battery Sentinel v{{ sentinel_version }} @ {{ loc(result.last_evaluated) }} | state: {{
+        result.state }} | uptime_status: {{ result.uptime_status }}{% if
+        result.error %} | ERROR: {{ result.error }}{% endif %} | settled: {{
+        result.settled }} | boot: {{ loc(result.boot_time) }} | monitored: {{
+        result.total_monitored }} | low: {{ result.devices | length }} | unavailable: {{
+        result.unavailable_count }}{% for d in result.devices %} | LOW {{ d.name
+        }} ({{ d.entity_id }}) {{ ('(' ~ d.level | round(0) ~ '%)') if d.level
+        is not none else '(binary on)' }} area={{ d.area }}{% endfor %}{% for u
+        in result.unavailable_entities %} | UNAVAIL {{ u.name }} ({{ u.entity_id
+        }}) [{{ u.state }}] area={{ u.area }}{% endfor %}
 sensor:
-  name: !input sensor_name
+- name: !input sensor_name
   unique_id: !input unique_id
   state: '{{ result.state }}'
   icon: >-
-    {% if not result.ok %}mdi:alert-circle-outline{% elif result.state | int(0) > 0
-    %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
+    {% if result.state == 'setup_error' %}mdi:battery-off{% elif result.state |
+    int(0) > 0 %}mdi:battery-alert{% else %}mdi:battery-check{% endif %}
   attributes:
     ok: '{{ result.ok }}'
-    sentinel_type: entity
-    sentinel_role: aggregate
+    error: '{{ result.error }}'
+    sentinel_type: battery
     sentinel_version: '{{ sentinel_version }}'
+    uptime_status: '{{ result.uptime_status }}'
     total_monitored: '{{ result.total_monitored }}'
     devices: '{{ result.devices }}'
     unavailable_count: '{{ result.unavailable_count }}'
-    frozen_count: '{{ result.frozen_count }}'
-    source_error_count: '{{ result.source_error_count }}'
-    rejected_count: '{{ result.rejected_count }}'
-    sources: '{{ result.sources }}'
-    rejected: '{{ result.rejected }}'
+    unavailable_entities: '{{ result.unavailable_entities }}'
+    boot_time: '{{ result.boot_time }}'
     last_evaluated: '{{ result.last_evaluated }}'

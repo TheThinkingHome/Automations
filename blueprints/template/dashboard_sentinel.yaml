@@ -75,6 +75,11 @@
 #      two problem lists with their counts, the identity markers, and last_evaluated.
 #
 # Changelog:
+#   1.0.0-alpha.1.1 - Fix for the config validator error on a state-based
+#           template blueprint whose platform section was written as a list
+#           (HA core #150280). The sensor block is now a mapping, the leading
+#           dash removed, so the blueprint resolves and loads. No logic change;
+#           the validation engine is identical to 1.0.0-alpha.1.
 #   1.0.0-alpha.1 - First build. Reads any number of Entity Sentinel sensors and
 #           presents them as one deduped, sorted mirror. Validates each source by its
 #           marker attribute: a real, healthy Entity Sentinel is merged; a real but
@@ -118,7 +123,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.1
+    1.0.0-alpha.1.1
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.yaml
@@ -169,7 +174,7 @@ blueprint:
               multiple: false
               multiline: false
 variables:
-  sentinel_version: 1.0.0-alpha.1
+  sentinel_version: 1.0.0-alpha.1.1
   source_sensors: !input source_sensors
   result: |
     {%- set severe = ['unavailable', 'unknown', 'missing', 'never_reported'] -%}
@@ -269,7 +274,7 @@ variables:
     }}
 
 sensor:
-- name: !input sensor_name
+  name: !input sensor_name
   unique_id: !input unique_id
   state: '{{ result.state }}'
   icon: >-

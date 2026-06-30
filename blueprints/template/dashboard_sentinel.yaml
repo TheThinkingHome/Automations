@@ -1,7 +1,6 @@
 # Copyright (C) 2026 James Lander, The Thinking Home
 # Licensed under GPL-3.0-or-later. See the LICENSE file in this repository.
 # Dashboard Sentinel - a Home Assistant template blueprint from The Thinking Home (xeazy.com)
-#   Article: https://xeazy.com/battery-entity-sentinel-blueprint/
 #
 # Dashboard Sentinel reads any number of Entity Sentinel sensors and presents them
 # as ONE sensor: a single count and a single, deduped, sorted list of every entity
@@ -13,9 +12,9 @@
 # It does NOT detect anything itself. Each Entity Sentinel has already done the work
 # of scanning, electing representatives, and classifying gone-quiet entities into its
 # devices attribute. This sensor only reads those finished lists and combines them, so
-# it runs no detection engine, no entity scan, no uptime math. It is event-driven: it
-# re-evaluates when one of its named source sensors changes, and once at Home Assistant
-# start. There is no cadence and no polling.
+# it runs no detection engine, no entity scan, no uptime math. It is a state-based
+# template sensor: it re-evaluates automatically whenever one of the source sensors it
+# references changes. There is no cadence, no trigger, and no polling.
 #
 # THE MIRROR: each merged entry keeps the exact Entity Sentinel devices shape
 # (name, entity_id, area, reason, since, last_seen, age). A consumer treats this sensor
@@ -27,7 +26,7 @@
 #   DOWN (reported in the sources list, not merged): it IS a real Entity Sentinel
 #       (sentinel_type == 'entity') but is currently broken, setup_error, unavailable,
 #       or ok false. A down source never silences the healthy ones; the others still
-#       aggregate. Status is setup_error, unavailable, or missing-attributes.
+#       aggregate. Status is setup_error or unavailable.
 #   REJECTED (reported in the rejected list, not merged): the input is wrong, and is
 #       surfaced, not hidden, so the user learns of the misconfiguration. Four ways:
 #         - not_a_sentinel: no sentinel_type attribute (a plain sensor).
@@ -85,11 +84,10 @@
 #           the rejected list rather than silently dropped. Dedupes across sources with
 #           the genuinely-gone-beats-frozen precedence used by Sentinel Notify, sorts by
 #           entity_id, and carries identity markers (sentinel_type entity, sentinel_role
-#           aggregate, sentinel_version). Event-driven off the named sources and Home
-#           Assistant start, no cadence, no detection engine of its own. Built on request,
-#           released as an alpha: useful today, and refined by real-world use. Versioning
-#           while in alpha: alpha.N for every change; it graduates to 1.0.0-beta once
-#           proven on live systems.
+#           aggregate, sentinel_version). A state-based template sensor: it re-evaluates
+#           when a source changes, with no trigger, no cadence, and no detection engine
+#           of its own. Built on request, released as an alpha: a direction under
+#           development, offered for feedback rather than as a finished tool.
 
 blueprint:
   name: Dashboard Sentinel (Alpha)
@@ -100,8 +98,7 @@ blueprint:
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-    - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprint/) - the design and worked examples.
-    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.md) - import instructions, parameters, and attribute reference.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.md) - the reasoning, the parameters, and the attribute reference.
     - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
     - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
 
@@ -117,9 +114,7 @@ blueprint:
 
     Its companions, **Entity Sentinel** and **Battery Sentinel**, are the sensors that do the watching; this one only combines Entity Sentinels for display. Build at least one Entity Sentinel first.
 
-    An optional debug switch, off by default, writes one diagnostic line to the system log on each evaluation.
-
-    This is an alpha. It is genuinely useful today and runs on my own system, but real homes are more varied than any one setup, and your use is what will make it solid. If you hit something, the community thread is where it gets found and fixed.
+    This is an alpha and a direction under development. It is not warranted and not claimed to work; it is offered for feedback. The README has the full reasoning and the ask.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
@@ -173,25 +168,9 @@ blueprint:
             text:
               multiple: false
               multiline: false
-    debug_settings:
-      name: Debugging
-      icon: mdi:bug-outline
-      input:
-        debug_enabled:
-          name: Write a debug line to the log
-          description: 'When on, the sensor writes one summary line to the system log
-            each time it evaluates, naming the merged count and any down or rejected
-            sources. Useful while setting the sensor up. Leave off for normal use so
-            the log stays quiet.
-
-            '
-          default: false
-          selector:
-            boolean: {}
 variables:
   sentinel_version: 1.0.0-alpha.1
   source_sensors: !input source_sensors
-  debug_enabled: !input debug_enabled
   result: |
     {%- set severe = ['unavailable', 'unknown', 'missing', 'never_reported'] -%}
     {%- set sources = source_sensors if (source_sensors is iterable and source_sensors is not string) else [source_sensors] -%}
@@ -289,36 +268,6 @@ variables:
       }
     }}
 
-trigger:
-- trigger: state
-  entity_id: !input source_sensors
-  alias: Re-evaluate when any source sensor changes
-- trigger: homeassistant
-  event: start
-  id: ha_start
-  alias: Re-evaluate when Home Assistant starts
-action:
-- if:
-  - condition: template
-    value_template: '{{ debug_enabled }}'
-  then:
-  - action: system_log.write
-    data:
-      level: info
-      logger: dashboard_sentinel
-      message: >-
-        {%- macro loc(v) -%}{{ (v | as_datetime(none) | as_local).strftime('%Y-%m-%d
-        %H:%M:%S') if (v | as_datetime(none)) is not none else v }}{%- endmacro -%}
-        Dashboard Sentinel v{{ sentinel_version }} @ {{ loc(result.last_evaluated) }} |
-        state: {{ result.state }} | ok: {{ result.ok }} | monitored: {{
-        result.total_monitored }} | flagged: {{ result.state }} (unavailable {{
-        result.unavailable_count }}, frozen {{ result.frozen_count }}) | down: {{
-        result.source_error_count }} | rejected: {{ result.rejected_count }}{% for d
-        in result.devices %} | {{ d.name }} ({{ d.entity_id }}) [{{ d.reason }}]
-        area={{ d.area }} age={{ d.age }}{% endfor %}{% for s in result.sources %} |
-        DOWN {{ s.name }} ({{ s.sensor }}) [{{ s.status }}]{% endfor %}{% for r in
-        result.rejected %} | REJECTED {{ r.name }} ({{ r.sensor }}) [{{ r.status }}]
-        {{ r.note }}{% endfor %}
 sensor:
 - name: !input sensor_name
   unique_id: !input unique_id

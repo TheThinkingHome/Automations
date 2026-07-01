@@ -89,6 +89,91 @@ template:
         debug_enabled: false
 ```
 
+## Putting it on a Dashboard
+
+You have built the sensor. Combining and deduping was the whole reason it exists, so the payoff is the dashboard card that reads it. Here is the status board shown below, built from stock `markdown` cards so it is portable and needs nothing installed beyond the one layout helper noted after. Each card reads the two sensors directly, `sensor.battery_sentinel` and the Dashboard Sentinel you just built, and each shows a calm "all healthy" state when there is nothing to report and a formatted list when there is.
+
+![Sentinel Status dashboard showing one low battery and three quiet entities, arranged as a header summary above two columns with a footer](https://xeazy.com/wp-content/uploads/sentinel-status-detected.webp)
+
+The four cards are shown one at a time below. The responsive arrangement, the header and footer spanning the full width with the two columns side by side on a wide screen and stacked on a phone, is done with [layout-card](https://github.com/thomasloven/lovelace-layout-card), the one HACS helper this board depends on. In a `custom:grid-layout` view each card also carries a `view_layout` line naming its grid area (`header`, `battery`, `entity`, `footer`); drop a card into an ordinary dashboard without layout-card and it still renders, it simply stacks in normal order. The card content below is what matters; the layout is yours to arrange.
+
+### Header: the one-line summary
+
+Reads both sensors and states the situation in a sentence: all clear when both are healthy and empty, or the two counts when something needs attention.
+
+```yaml
+type: markdown
+content: >
+  {% set b = states('sensor.battery_sentinel') | int(0) %}
+  {% set e = states('sensor.dashboard_sentinel') | int(0) %}
+  {% set bok = is_state_attr('sensor.battery_sentinel', 'ok', true) %}
+  {% set eok = is_state_attr('sensor.dashboard_sentinel', 'ok', true) %}
+  # 🛡️ Sentinel Status
+  {% if b == 0 and e == 0 and bok and eok %}
+  ### All systems healthy. Nothing needs attention.
+  {% else %}
+  ### {{ b }} {{ 'battery' if b == 1 else 'batteries' }} low&nbsp;&nbsp;·&nbsp;&nbsp;{{ e }} {{ 'entity' if e == 1 else 'entities' }} quiet
+  {% endif %}
+```
+
+### Batteries column
+
+Reads `sensor.battery_sentinel`. When batteries are low it lists each by name, level, type if the device exposes one, and area. When none are low it shows a green check and a short reassurance.
+
+```yaml
+type: markdown
+content: >
+  {% set low = state_attr('sensor.battery_sentinel', 'devices') %}
+  ## 🔋 Batteries
+  ---
+  {% if low %}
+  {% for d in low %}
+  ### {{ d.name }}
+  {{ d.level }}%{% if d.battery_type %} · {{ d.battery_type }}{% endif %} &nbsp;·&nbsp; *{{ d.area }}*
+  {% endfor %}
+  {% else %}
+  <ha-icon icon="mdi:check-circle" style="color: var(--success-color, #4caf50); --mdc-icon-size: 32px;"></ha-icon>
+  ### All batteries healthy
+  Every monitored battery is above its threshold.
+  {% endif %}
+```
+
+### Entities column
+
+Reads your Dashboard Sentinel, the merged list from every Entity Sentinel it combines. When entities have gone quiet it lists each by name, reason, age, and area. When all are reporting it shows the same green check.
+
+```yaml
+type: markdown
+content: >
+  {% set quiet = state_attr('sensor.dashboard_sentinel', 'devices') %}
+  ## 📡 Entities
+  ---
+  {% if quiet %}
+  {% for d in quiet %}
+  ### {{ d.name }}
+  {{ d.reason }}{% if d.age and d.age != 'unknown' %} · {{ d.age }}{% endif %} &nbsp;·&nbsp; *{{ d.area }}*
+  {% endfor %}
+  {% else %}
+  <ha-icon icon="mdi:check-circle" style="color: var(--success-color, #4caf50); --mdc-icon-size: 32px;"></ha-icon>
+  ### All entities reporting
+  Every monitored entity is alive and current.
+  {% endif %}
+```
+
+### Footer
+
+A quiet attribution strip that closes the board.
+
+```yaml
+type: markdown
+content: >
+  <div style="text-align: center; opacity: 0.6; font-size: 0.85em;">
+  Battery Sentinel + Dashboard Sentinel &nbsp;·&nbsp; updates live
+  </div>
+```
+
+Because the Dashboard Sentinel is a faithful mirror of an Entity Sentinel, the Entities card reads a single Entity Sentinel just as well; the `devices` shape is the same either way, so the same card works whether you are aggregating or not.
+
 ## What I am asking for
 
 This is an alpha, and unlike the Sentinels themselves, it is the newest and least-settled idea in the set. I am putting it out because I run it, not because it is finished, and I am genuinely unsure it is the right long-term shape. I would rather hear that now than after building a lot on top of it.

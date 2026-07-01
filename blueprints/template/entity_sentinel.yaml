@@ -162,7 +162,7 @@ blueprint:
 
     A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
 
-    > **Read the [Entity Sentinel README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) before you import.** This is a template sensor, not an automation, so it does not walk you through a setup form. The README has the directions and a sample `use_blueprint:` snippet to get you started. Add it to your `configuration.yaml` or a package file, a quick one-time setup either way.
+     > **Read the [Entity Sentinel README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) before you import.** This is a template sensor, not an automation, so it does not walk you through a setup form. The README has the directions and a sample `use_blueprint:` snippet to get you started. Add it to your `configuration.yaml` or a package file, a quick one-time setup either way.
 
     - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprint/) - the design and worked examples.
     - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) - import instructions, parameters, and attribute reference.

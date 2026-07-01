@@ -93,7 +93,7 @@ template:
 
 You have built the sensor. Combining and deduping was the whole reason it exists, so the payoff is the dashboard card that reads it. Here is the status board shown below, built from stock `markdown` cards so it is portable and needs nothing installed beyond the one layout helper noted after. Each card reads the two sensors directly, `sensor.battery_sentinel` and the Dashboard Sentinel you just built, and each shows a calm "all healthy" state when there is nothing to report and a formatted list when there is.
 
-![Sentinel Status dashboard showing one low battery and three quiet entities, arranged as a header summary above two columns with a footer](https://xeazy.com/wp-content/uploads/sentinel-status-detected.webp)
+![Sentinel Status dashboard showing one low battery and three quiet entities, arranged as a header summary above two columns with a footer](https://xeazy.com/wp-content/uploads/sentinel-status-detected-1.png))
 
 The four cards are shown one at a time below. The responsive arrangement, the header and footer spanning the full width with the two columns side by side on a wide screen and stacked on a phone, is done with [layout-card](https://github.com/thomasloven/lovelace-layout-card), the one HACS helper this board depends on. In a `custom:grid-layout` view each card also carries a `view_layout` line naming its grid area (`header`, `battery`, `entity`, `footer`); drop a card into an ordinary dashboard without layout-card and it still renders, it simply stacks in normal order. The card content below is what matters; the layout is yours to arrange.
 

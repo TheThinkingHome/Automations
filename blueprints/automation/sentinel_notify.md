@@ -40,6 +40,7 @@ It does not poll. It re-evaluates the moment a watched Sentinel sensor changes, 
 - **Optional quiet hours**. Off by default. Hold normal-priority pushes during a daily window, for example overnight; high-priority pushes still come through. The persistent card keeps updating, and anything still flagged is re-sent when the window ends.
 - **Optional daily reminder**. Off by default. If you want a nudge about items you have not dealt with, set a time of day and, once a day at that time, it re-sends the current report if anything is still flagged. It reuses the same notification, so it refreshes the existing one rather than stacking.
 - **Optional daily all-clear**. Off by default. On the daily reminder, when nothing is flagged, post a persistent "all clear" card so a clean fleet shows reassurance. Persistent only, it never pushes.
+- **Rides out a restart.** A source Sentinel goes briefly unavailable during a Home Assistant reboot; the "Sentinel not working" alert is debounced so a normal restart does not fire a false alarm, and can optionally press your Sentinels' refresh button to confirm a recovery fast.
 - **Fails loud if set up wrong.** A wrong-family sensor or a missing memory helper stops with a clear log message rather than failing quietly.
 
 The full design and worked examples are in the article: <https://xeazy.com/battery-entity-sentinel-blueprints/>
@@ -88,7 +89,7 @@ The form is organized into sections:
 4. **Notification Targets and Style**, where and how to send, including the high- and normal-priority lists.
 5. **Quiet Hours**, an optional window that holds normal-priority pushes overnight.
 6. **Daily Reminder**, the optional once-a-day nudge, its time, and the optional all-clear.
-7. **Advanced**, debug logging.
+7. **Advanced**, the broken-Sentinel debounce, an optional source refresh, and debug logging.
 
 The Battery Settings section applies only to Battery mode; in Entity mode, leave it alone. Entity mode has no extra options of its own, the sensor decides what is flagged, and this companion reports it.
 
@@ -110,6 +111,9 @@ The Battery Settings section applies only to Battery mode; in Entity mode, leave
 | Enable the daily reminder | No | off | When on, once a day at the time below, re-sends the current report if anything is still flagged. |
 | Reminder time | No | `08:00:00` | The time of day the daily reminder fires, if enabled. |
 | Send a daily all-clear | No | off | When on, the daily reminder posts a persistent "all clear" card when nothing is flagged. Persistent only, never pushes. Requires the daily reminder and a persistent notification to be on. |
+| Broken-Sentinel debounce (seconds) | No | `240` | How long a source must stay unavailable before it is reported as not working. Rides out a restart. A setup error or missing source is reported immediately regardless. |
+| Source refresh button (optional) | No | none | An `input_button` that re-evaluates your source Sentinels, the same one you set as their refresh button. When set, an unavailable source is prompted to re-check and confirm recovery fast. Left unset, nothing is pressed. |
+| Source refresh timeout (seconds) | No | `15` | The most time to wait for sources to recover after a refresh press. The wait ends as soon as every source is healthy; this cap only matters on a slow, large system. Ignored when no refresh button is set. |
 | Debug logging | No | off | Writes one diagnostic line per check. Needs a `logger` entry at info level to appear. |
 
 ## How "Notify Only on Change" Works
@@ -122,7 +126,15 @@ By design, in Battery mode, the change is tracked at the level of which batterie
 
 Because the notification uses a tag, even when it does fire, it replaces the previous one in place rather than stacking a pile of alerts.
 
-If one of the source Sentinels is itself broken (its uptime sensor was deleted, or it has gone unavailable), the companion sends a separate "Sentinel not working" notification, on its own tag, so it does not interfere with the main report. A broken monitor never silences the healthy ones: the items on the working Sentinels are still reported in the same run.
+If one of the source Sentinels is itself broken (its uptime sensor was deleted, or it reports a setup error), the companion sends a separate "Sentinel not working" notification, on its own tag, so it does not interfere with the main report. A broken monitor never silences the healthy ones: the items on the working Sentinels are still reported in the same run. A source that has simply gone unavailable is held for a short debounce first, so a Home Assistant restart does not fire a false alarm; see "Riding Out a Restart" below.
+
+## Riding Out a Restart
+
+A source Sentinel goes unavailable for a minute or two every time Home Assistant restarts, as its template entity is unloaded and reloaded. Without a guard, the "Sentinel not working" alert would fire on every reboot, and a high-priority target would be woken by it overnight.
+
+So the unavailable case is debounced. A source is only reported as not working once it has stayed unavailable for at least the **broken-Sentinel debounce** (an Advanced input, default 240 seconds, four minutes). A normal restart recovers well inside that window and never fires; a source that is genuinely dead stays unavailable past it and is reported correctly. The default of 240 matches the startup grace the Sentinel sensors use and clears a normal restart with room to spare. Lower it if you want a faster broken-Sentinel alert and can accept a restart occasionally tripping it; raise it if an unstable system still trips it during reboots. A setup error, an `ok:false`, or a genuinely missing source is not debounced, since a reboot neither causes nor cures those, and is reported immediately.
+
+Optionally, you can point the **source refresh button** input at the same `input_button` your Sentinels use as their refresh button (one shared button refreshes a whole family). When a source reads unavailable, the companion presses it to make the sources re-evaluate at once, then waits for the state to recover before deciding, so a source that had only gone stale is confirmed healthy in seconds rather than waiting for its next scheduled scan. The wait ends the instant every source is healthy and is capped by the **source refresh timeout** (default 15 seconds), which only matters on a slow hub with a large mesh that needs longer to re-evaluate. The button is optional: left unset, nothing is pressed and the debounce alone handles restarts.
 
 ## The Daily Reminder
 
@@ -168,6 +180,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 1.0.0-alpha.6 | Two additions that stop a Home Assistant restart from firing a false "Sentinel not working" alert, both non-breaking. Broken-Sentinel debounce: a source Sentinel goes unavailable for a minute or two during any restart, and the broken-Sentinel alert previously fired on every reboot, piercing quiet hours to a phone overnight. The unavailable case is now debounced: a source is reported not working only after it has been unavailable for at least the debounce (new Advanced input `Broken-Sentinel debounce`, default 240 seconds). A restart recovers inside that window and never fires; a genuinely dead source stays unavailable past it and still fires. A setup error, an `ok:false`, or a genuinely missing source is reported immediately, not debounced. Optional active source refresh: a new optional `Source refresh button` input (default none). When set and a source reads unavailable, the companion presses that button (the same one your Sentinels use as their refresh button) and waits briefly, capped by `Source refresh timeout` (default 15 seconds), so a source that had only gone stale is confirmed healthy in seconds rather than at its next scheduled scan. Left unset, the debounce alone handles restarts. This shifts the timing of an existing alert and changes no saved input, so an existing automation keeps working and simply gets quiet reboots. |
 | 1.0.0-alpha.5 | Three features. Quiet hours: an optional daily window that holds normal-priority pushes; high-priority pushes pierce it. The persistent card and memory keep updating through the window, and at the end time anything still flagged is re-sent, so a problem raised overnight reaches you in the morning and one that cleared does not. Handles a window crossing midnight. Per-device priority: the single push-target list and the global priority selector are replaced by two lists, high-priority and normal-priority push targets, so priority is set per device; a target in both is treated as high. The "low" (silent) option is removed. This is a breaking input change, acceptable while the blueprint is pre-release alpha. Daily all-clear: an optional persistent-only "all clear" card on the daily reminder when nothing is flagged, so a clean fleet shows reassurance; it never pushes. The change-detection engine, memory format, and message builders are unchanged. |
 | 1.0.0-alpha.4 | Cleanup, no behavior change. Removed two redundant always-true wrappers around the push actions (`continue_on_error` on the action already handles a dead target), and fixed a stray double apostrophe in the memory-helper description. |
 | 1.0.0-alpha.3 | Fixed push targets. The input now takes the mobile_app notify action name (`notify.mobile_app_yourphone`) as text, the form that carries the full priority and sound payload; the previous notify-entity form (`notify.yourphone`) could not be called as an action and raised an "unknown action" error on real systems. Also dropped a now-meaningless per-target availability check; `continue_on_error` already makes a dead target non-fatal. |

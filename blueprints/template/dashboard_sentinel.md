@@ -22,73 +22,108 @@ Reads both sensors and states the situation in a sentence: all clear when both a
 
 ```yaml
 type: markdown
-content: >
-  {% set b = states('sensor.battery_sentinel') | int(0) %}
-  {% set e = states('sensor.dashboard_sentinel') | int(0) %}
-  {% set bok = is_state_attr('sensor.battery_sentinel', 'ok', true) %}
-  {% set eok = is_state_attr('sensor.dashboard_sentinel', 'ok', true) %}
+content: |
+  {%- set b = states('sensor.battery_sentinel') | int(0) %}
+  {%- set e = states('sensor.dashboard_sentinel') | int(0) %}
+  {%- set bok = is_state_attr('sensor.battery_sentinel', 'ok', true) %}
+  {%- set eok = is_state_attr('sensor.dashboard_sentinel', 'ok', true) %}
   # 🛡️ Sentinel Status
-  {% if b == 0 and e == 0 and bok and eok %}
+
+  {% if b == 0 and e == 0 and bok and eok -%}
   ### All systems healthy. Nothing needs attention.
-  {% else %}
+  {%- else -%}
   ### {{ b }} {{ 'battery' if b == 1 else 'batteries' }} low&nbsp;&nbsp;·&nbsp;&nbsp;{{ e }} {{ 'entity' if e == 1 else 'entities' }} quiet
-  {% endif %}
+  {%- endif %}
 ```
 
 ### Batteries column
 
-Reads `sensor.battery_sentinel`. When batteries are low it lists each by name, level, type if the device exposes one, and area. When none are low it shows a green check and a short reassurance.
+Reads `sensor.battery_sentinel`. When batteries are low it lists each by name, level, type if the device exposes one, and area. When none are low it shows a green check and a short reassurance. The last line shows when the sensor last evaluated, so the refresh button below the board has a visible effect.
 
 ```yaml
 type: markdown
-content: >
-  {% set low = state_attr('sensor.battery_sentinel', 'devices') %}
+content: |
   ## 🔋 Batteries
+
   ---
+
+  {% set low = state_attr('sensor.battery_sentinel', 'devices') -%}
   {% if low %}
-  {% for d in low %}
+  {% for d in low -%}
   ### {{ d.name }}
-  {{ d.level }}%{% if d.battery_type %} · {{ d.battery_type }}{% endif %} &nbsp;·&nbsp; *{{ d.area }}*
-  {% endfor %}
+  {{ d.level }}%{% if d.battery_type %} · {{ d.battery_type }}{% endif %} · *{{ d.area }}*
+
+  {% endfor -%}
   {% else %}
   <ha-icon icon="mdi:check-circle" style="color: var(--success-color, #4caf50); --mdc-icon-size: 32px;"></ha-icon>
+
   ### All batteries healthy
+
   Every monitored battery is above its threshold.
   {% endif %}
+  {%- set t = state_attr('sensor.battery_sentinel', 'last_evaluated') %}
+  <div style="opacity: 0.55; font-size: 0.8em; margin-top: 8px;">{% if t and t not in ['unknown', 'unavailable'] %}Last checked {{ (t | as_datetime | as_local).strftime('%-I:%M:%S %p') }}{% else %}Last checked: unknown{% endif %}</div>
 ```
 
 ### Entities column
 
-Reads your entity monitor. Point it at a single Entity Sentinel, or at the aggregator if you built one. When entities have gone quiet it lists each by name, reason, age, and area. When all are reporting it shows the same green check.
+Reads your entity monitor. Point it at a single Entity Sentinel, or at the aggregator if you built one. When entities have gone quiet it lists each by name, reason, age, and area. When all are reporting it shows the same green check. The last line shows when the sensor last evaluated.
 
 ```yaml
 type: markdown
-content: >
-  {% set quiet = state_attr('sensor.dashboard_sentinel', 'devices') %}
+content: |
   ## 📡 Entities
+
   ---
+
+  {% set quiet = state_attr('sensor.dashboard_sentinel', 'devices') -%}
   {% if quiet %}
-  {% for d in quiet %}
+  {% for d in quiet -%}
   ### {{ d.name }}
-  {{ d.reason }}{% if d.age and d.age != 'unknown' %} · {{ d.age }}{% endif %} &nbsp;·&nbsp; *{{ d.area }}*
-  {% endfor %}
+  {{ d.reason }}{% if d.age and d.age != 'unknown' %} · {{ d.age }}{% endif %} · *{{ d.area }}*
+
+  {% endfor -%}
   {% else %}
   <ha-icon icon="mdi:check-circle" style="color: var(--success-color, #4caf50); --mdc-icon-size: 32px;"></ha-icon>
+
   ### All entities reporting
+
   Every monitored entity is alive and current.
   {% endif %}
+  {%- set t = state_attr('sensor.dashboard_sentinel', 'last_evaluated') %}
+  <div style="opacity: 0.55; font-size: 0.8em; margin-top: 8px;">{% if t and t not in ['unknown', 'unavailable'] %}Last checked {{ (t | as_datetime | as_local).strftime('%-I:%M:%S %p') }}{% else %}Last checked: unknown{% endif %}</div>
 ```
 
 ### Footer
 
-A quiet attribution strip that closes the board.
+A refresh strip and a quiet attribution line that closes the board. The two tiles press the refresh buttons your Sentinels use, so you can force a re-evaluation before you trust the board; the "Last checked" line in each column updates to confirm it ran. Point each tile at whatever `input_button` you set as the refresh button on your own Sentinels.
 
 ```yaml
-type: markdown
-content: >
-  <div style="text-align: center; opacity: 0.6; font-size: 0.85em;">
-  Battery Sentinel + Dashboard Sentinel &nbsp;·&nbsp; updates live
-  </div>
+type: vertical-stack
+cards:
+  - type: horizontal-stack
+    cards:
+      - type: tile
+        entity: input_button.battery_sentinel
+        name: Check batteries now
+        icon: mdi:refresh
+        tap_action:
+          action: perform-action
+          perform_action: input_button.press
+          target:
+            entity_id: input_button.battery_sentinel
+      - type: tile
+        entity: input_button.entity_sentinel
+        name: Check entities now
+        icon: mdi:refresh
+        tap_action:
+          action: perform-action
+          perform_action: input_button.press
+          target:
+            entity_id: input_button.entity_sentinel
+  - type: markdown
+    content: |
+      <div style="text-align: center; opacity: 0.6; font-size: 0.85em;">Battery Sentinel + Dashboard Sentinel &nbsp;·&nbsp; updates live</div>
 ```
 
 ## Do you need the aggregator?

@@ -247,7 +247,9 @@ You have a sensor that always knows which batteries are low. The question is wha
 
 The first consumer is built and ready: **[Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md)**, a companion automation blueprint that turns this sensor into change-aware notifications, telling you the moment a battery drops below the threshold and again when you replace it, by name and with its type, without nagging you in between. It is a separate blueprint in this same repository.
 
-Beyond notifying, the same `devices` attribute can drive anything. Two companions are on the drawing board, named here because they came up often enough to be worth building:
+To put this on a dashboard, **[Dashboard Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.md)** provides a ready-to-use status card showing what is low and what has gone quiet across your house.
+
+Beyond notifications and dashboards, the same `devices` attribute can drive anything. Two companions are on the drawing board, named here because they came up often enough to be worth building:
 
 A **shopping-list companion** that keeps a to-do list in sync with the batteries currently low, one checkable item per battery with its type, so the right battery is bought before the swap and ticked off once it is. Because the sensor already knows what is low, this is a clean reader: it adds what is new, skips what is already listed, and can clear an item when the battery is replaced.
 

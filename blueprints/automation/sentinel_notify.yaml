@@ -68,7 +68,7 @@
 # alert proceeds. The wait is bounded: it ends the instant every source is healthy, and
 # is capped at source_refresh_timeout (default 15) so a slow hub on a large mesh gets
 # the time it needs while a fast system returns in a second or two. The button is
-# OPTIONAL (default input_button.none); left unset, nothing is pressed and the debounce
+# OPTIONAL (unset by default, an empty string); left unset, nothing is pressed and the debounce
 # alone handles restarts. Because a run that waits holds the single instance busy, the
 # wait is only ever entered when a source is unavailable AND a button is configured, and
 # it is bounded, so it never swallows a real alert for more than the brief recovery
@@ -119,6 +119,13 @@
 #   9. Log the result (debug only).
 #
 # Changelog:
+#   1.0.0-alpha.6.1 - Housekeeping. The optional source refresh button now defaults to an
+#           empty string instead of the placeholder input_button.none. That placeholder was a
+#           real entity name that does not exist, so a validator such as Spook flagged the
+#           automation for referencing a missing entity whenever no refresh button was set. The
+#           press action now targets the button through its variable and is reached only when a
+#           button is actually configured, so no phantom entity is named anywhere. No behavior
+#           change: an unset button still presses nothing and the debounce alone handles restarts.
 #   1.0.0-alpha.6 - Two features that stop reboot false alarms on the broken-Sentinel
 #           stream, both additive and non-breaking.
 #           (1) BROKEN-SENTINEL DEBOUNCE. A source Sentinel goes unavailable for a
@@ -137,7 +144,7 @@
 #           saved input, so an existing automation keeps working and simply gets quiet
 #           reboots.
 #           (2) OPTIONAL ACTIVE SOURCE REFRESH. A new optional source_refresh_button
-#           input (default input_button.none). When set and a source reads unavailable,
+#           input (unset by default). When set and a source reads unavailable,
 #           the companion presses that button (the same input_button the Sentinel
 #           sensors expose, one shared button refreshes a whole family) and waits for
 #           the state to recover before deciding, so a source that had only gone stale
@@ -272,7 +279,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.6
+    1.0.0-alpha.6.1
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -514,7 +521,7 @@ blueprint:
             recover before deciding, so a source that had only gone stale is confirmed
             healthy in seconds rather than at its next scheduled scan. Leave it unset
             and nothing is pressed; the debounce above still handles restarts.
-          default: input_button.none
+          default: ""
           selector:
             entity:
               filter:
@@ -551,7 +558,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-alpha.6
+  version: 1.0.0-alpha.6.1
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -603,7 +610,7 @@ variables:
     {{ ns.plan }}
 
   refresh_button_set: >-
-    {{ source_refresh_button not in ['input_button.none', none, ''] }}
+    {{ source_refresh_button not in [none, ''] }}
 
   any_source_unavailable: >-
     {% set ns = namespace(any=false) %}
@@ -881,11 +888,11 @@ action:
               logger: sentinel_notify
               message: >-
                 Sentinel Notify v{{ version }} | mode: {{ family_mode }} | refresh: pressing {{ source_refresh_button }}, waiting up to {{ source_refresh_timeout }}s for sources to recover
-      - alias: Press the source refresh button
+      - alias: Press the source refresh button (only reached when refresh_button_set is true, so the target is always a real button)
         action: input_button.press
         continue_on_error: true
         target:
-          entity_id: !input source_refresh_button
+          entity_id: "{{ source_refresh_button }}"
       - alias: Wait for every source to leave the unavailable/unknown state, bounded by the timeout
         wait_template: >-
           {% set ns = namespace(any=false) %}

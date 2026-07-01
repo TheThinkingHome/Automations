@@ -12,9 +12,26 @@
 # It does NOT detect anything itself. Each Entity Sentinel has already done the work
 # of scanning, electing representatives, and classifying gone-quiet entities into its
 # devices attribute. This sensor only reads those finished lists and combines them, so
-# it runs no detection engine, no entity scan, no uptime math. It is a state-based
-# template sensor: it re-evaluates automatically whenever one of the source sensors it
-# references changes. There is no cadence, no trigger, and no polling.
+# it runs no detection engine, no entity scan, no uptime math.
+#
+# WHY IT IS TRIGGER-BASED: it reads its sources through states[sid], where sid is a
+# runtime loop variable over the chosen source list. Home Assistant works out which
+# entities a state-based template must watch by reading the template at load time, and
+# a dynamic subscript like states[sid] is invisible to that analysis, so a state-based
+# version never registers its sources as tracked and does not re-evaluate when one of
+# them changes. Naming the sources in a state trigger fixes that: the trigger tells HA
+# exactly which entities to watch, so the sensor recomputes the moment any source
+# updates. It stays event-driven, there is no polling cadence. A homeassistant start
+# trigger gives one guaranteed evaluation at boot.
+#
+# NO GRACE IS NEEDED, and this is the reason: Dashboard does not detect anything, so it
+# has nothing to false-flag at boot. It only reflects what its sources currently say,
+# and each source runs its own startup grace. At boot the sources are created one at a
+# time, and each first state is a state change that fires this sensor, so it converges
+# naturally as the sources appear. A source that comes up broken is also a state change,
+# so it is picked up and reported as a down source; a source that never comes good stays
+# in the down list and never blocks the rest. The sensor always monitors the sources it
+# can and reports the ones it cannot, at boot and after.
 #
 # THE MIRROR: each merged entry keeps the exact Entity Sentinel devices shape
 # (name, entity_id, area, reason, since, last_seen, age). A consumer treats this sensor
@@ -75,6 +92,19 @@
 #      two problem lists with their counts, the identity markers, and last_evaluated.
 #
 # Changelog:
+#   1.0.0-alpha.2 - Fix: the sensor was state-based and read its sources through a
+#           dynamic states[sid] over the chosen list, which Home Assistant's load-time
+#           dependency analysis cannot see, so it never tracked its sources and did not
+#           re-evaluate when one changed (it went stale after the first load). Rebuilt
+#           as a trigger-based template sensor with a state trigger on the source list,
+#           so HA tracks the sources explicitly and the sensor recomputes the moment any
+#           source updates, plus a homeassistant start trigger for one evaluation at
+#           boot. No grace is used: the sensor does no detection of its own, so it has
+#           nothing to false-flag at boot; it converges as its sources appear and reports
+#           a broken source as down without blocking the rest. No detection or output
+#           change; the result engine is identical to alpha.1.1. Being trigger-based,
+#           the platform block is a normal list again, which also sidesteps HA core
+#           #150280.
 #   1.0.0-alpha.1.1 - Fix for the config validator error on a state-based
 #           template blueprint whose platform section was written as a list
 #           (HA core #150280). The sensor block is now a mapping, the leading
@@ -113,7 +143,7 @@ blueprint:
 
     ## How it works
 
-    It does not detect anything itself. Each Entity Sentinel has already classified its own gone-quiet entities; this sensor reads those finished lists, merges them, removes any entity flagged by two of them (keeping the more serious reason), and sorts the result by entity id so it groups by domain. It re-evaluates the moment a source changes, with no cadence to set.
+    It does not detect anything itself. Each Entity Sentinel has already classified its own gone-quiet entities; this sensor reads those finished lists, merges them, removes any entity flagged by two of them (keeping the more serious reason), and sorts the result by entity id so it groups by domain. It recomputes the moment a source changes, so it converges naturally as sources come online at boot. There is no polling cadence and no grace: it does no detection of its own, so it has nothing to false-flag, and a source that is down is reported as down without holding up the rest.
 
     Each source you name is checked by its identity marker. A healthy Entity Sentinel is merged. A real Entity Sentinel that is currently broken is listed separately as a down source, while the rest still combine. A wrong input, a sensor that is not an Entity Sentinel, a Battery Sentinel added by mistake, another aggregate, or a typo, is surfaced in a rejected list rather than silently dropped, so a misconfiguration is visible instead of hidden.
 
@@ -123,7 +153,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.1.1
+    1.0.0-alpha.2
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.yaml
@@ -173,8 +203,15 @@ blueprint:
             text:
               multiple: false
               multiline: false
+
+trigger:
+  - trigger: state
+    entity_id: !input source_sensors
+  - trigger: homeassistant
+    event: start
+
 variables:
-  sentinel_version: 1.0.0-alpha.1.1
+  sentinel_version: 1.0.0-alpha.2
   source_sensors: !input source_sensors
   result: |
     {%- set severe = ['unavailable', 'unknown', 'missing', 'never_reported'] -%}
@@ -274,23 +311,23 @@ variables:
     }}
 
 sensor:
-  name: !input sensor_name
-  unique_id: !input unique_id
-  state: '{{ result.state }}'
-  icon: >-
-    {% if not result.ok %}mdi:alert-circle-outline{% elif result.state | int(0) > 0
-    %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
-  attributes:
-    ok: '{{ result.ok }}'
-    sentinel_type: entity
-    sentinel_role: aggregate
-    sentinel_version: '{{ sentinel_version }}'
-    total_monitored: '{{ result.total_monitored }}'
-    devices: '{{ result.devices }}'
-    unavailable_count: '{{ result.unavailable_count }}'
-    frozen_count: '{{ result.frozen_count }}'
-    source_error_count: '{{ result.source_error_count }}'
-    rejected_count: '{{ result.rejected_count }}'
-    sources: '{{ result.sources }}'
-    rejected: '{{ result.rejected }}'
-    last_evaluated: '{{ result.last_evaluated }}'
+  - name: !input sensor_name
+    unique_id: !input unique_id
+    state: '{{ result.state }}'
+    icon: >-
+      {% if not result.ok %}mdi:alert-circle-outline{% elif result.state | int(0) > 0
+      %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
+    attributes:
+      ok: '{{ result.ok }}'
+      sentinel_type: entity
+      sentinel_role: aggregate
+      sentinel_version: '{{ sentinel_version }}'
+      total_monitored: '{{ result.total_monitored }}'
+      devices: '{{ result.devices }}'
+      unavailable_count: '{{ result.unavailable_count }}'
+      frozen_count: '{{ result.frozen_count }}'
+      source_error_count: '{{ result.source_error_count }}'
+      rejected_count: '{{ result.rejected_count }}'
+      sources: '{{ result.sources }}'
+      rejected: '{{ result.rejected }}'
+      last_evaluated: '{{ result.last_evaluated }}'

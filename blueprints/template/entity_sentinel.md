@@ -281,7 +281,9 @@ You have a sensor that always knows which of your critical entities have gone qu
 
 The first consumer is built and ready: **[Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md)**, a companion automation blueprint that turns this sensor into change-aware notifications, telling you the moment an entity goes quiet, and again when it comes back, by name and with the reason and how long it has been silent, without nagging you in between.
 
-Beyond notifying, the same `devices` attribute can drive anything. A couple of ideas are on the drawing board, named here because they came up often enough to be worth building:
+To put this on a dashboard, **[Dashboard Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.md)** provides a ready-to-use status card showing what is low and what has gone quiet across your house.
+
+Beyond notifications and dashboards, the same `devices` attribute can drive anything. A couple of ideas are on the drawing board, named here because they came up often enough to be worth building:
 
 A **health-badge or dashboard companion** that surfaces the count and the list at a glance, one number that is zero when everything is reporting, so the state of the whole house is visible without opening anything.
 

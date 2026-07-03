@@ -27,9 +27,11 @@
 #   memory helper (a shared helper cross-fires endless notifications).
 #
 # Triggering: event-driven, no polling. It re-evaluates at Home Assistant start, when
-#   a watched sensor changes, and at the optional daily reminder time. The normal
-#   alert fires on a CHANGE; the daily reminder sends the current set, not a diff,
-#   according to its mode (see the reminder-modes design choice below).
+#   a watched sensor changes, when a watched sensor has been unavailable for the full
+#   debounce (a dedicated for: trigger, so a dead source is reported on time rather
+#   than at the next unrelated event), and at the optional daily reminder time. The
+#   normal alert fires on a CHANGE; the daily reminder sends the current set, not a
+#   diff, according to its mode (see the reminder-modes design choice below).
 #
 # DESIGN CHOICE (one family per instance): the change-detection engine works across
 # families, but the wording, item shape, and sensible defaults differ enough between
@@ -58,7 +60,14 @@
 # stays unavailable past it and fires correctly. setup_error and ok:false are NOT
 # debounced, they are persistent misconfigurations a reboot neither causes nor cures,
 # so they still fire immediately. A truly missing source (states[s] is none, deleted
-# or a typo) is treated as long-gone and flags immediately, not as a restart.
+# or a typo) is treated as long-gone and flags immediately, not as a restart. The
+# debounce alone would leave a hole: a source dying mid-day is evaluated once at the
+# transition (elapsed zero, inside the window) and then never re-checked, because a
+# stuck-unavailable sensor produces no further state changes; the alert would wait
+# for the next unrelated trigger, up to the next day's reminder time. So a dedicated
+# state trigger (to unavailable/unknown, for: the same debounce) wakes the run at the
+# exact moment a source has been down for the full window. It never fires during a
+# normal reboot, which recovers inside the window.
 #
 # DESIGN CHOICE (settle hold on the normal stream): the debounce above guards the
 # broken-Sentinel stream, but a restart also disturbs the NORMAL stream: inside their
@@ -72,6 +81,23 @@
 # themselves apply. The held flag survives the hold too, so a change held during
 # quiet hours before a reboot is still delivered by the overnight reminder after it.
 #
+# DESIGN CHOICE (blip hold on the normal stream): the settle hold above keys on
+# boot_time, which only moves on a Home Assistant restart. A mid-day blip, a source
+# going unavailable for a minute because Z2M restarted or the template reloaded, does
+# not move boot_time, yet it has the same destructive effect: an unavailable source
+# has no attributes, the flagged list collapses, changed fires, and the memory is
+# wiped, so the recovery minutes later re-announces known items as new failures. So a
+# run is also HELD, no memory write, no notification, no card change, while any
+# source is unavailable/unknown but still INSIDE the debounce window, judged live
+# after the optional refresh so a recovery during the wait releases the hold in the
+# same run. Once a source has been down past the debounce it is declared broken and
+# the run proceeds: the broken-Sentinel alert fires and the healthy sources still
+# report, so a dead monitor never silences the working ones. ACCEPTED LIMIT: after an
+# outage LONGER than the debounce, the dead source's items leave the fingerprint, so
+# its recovery re-announces them; distinguishing that needs per-source memory, which
+# arrives with the raw detection list planned for a later release. A missing source
+# (states[s] is none) is long-gone, never a blip, and does not hold the run.
+#
 # DESIGN CHOICE (optional active source refresh): when a source reads unavailable, the
 # companion can press that source's own refresh button (the same input_button the
 # Sentinel sensors expose) to make the sources re-evaluate at once, then wait briefly
@@ -83,9 +109,12 @@
 # the time it needs while a fast system returns in a second or two. The button is
 # OPTIONAL (unset by default, an empty string); left unset, nothing is pressed and the debounce
 # alone handles restarts. Because a run that waits holds the single instance busy, the
-# wait is only ever entered when a source is unavailable AND a button is configured, and
-# it is bounded, so it never swallows a real alert for more than the brief recovery
-# window. After the wait, the broken-Sentinel decision is recomputed LIVE (top-level
+# wait is only ever entered when a source is unavailable INSIDE the debounce window (a
+# blip, a candidate for recovery) AND a button is configured, and it is bounded. A
+# source already down past the debounce is declared broken and is never pressed or
+# waited for again, so a permanently dead source cannot tax every future run with the
+# full timeout; the press-and-wait exists to catch a stale-but-alive source, which by
+# definition is one still inside the window. After the wait, the broken-Sentinel decision is recomputed LIVE (top-level
 # variables are frozen at trigger time and would be stale post-press), so the alert
 # reflects the post-refresh reality; the normal alert path is unchanged and self-corrects
 # on its own re-trigger.
@@ -137,31 +166,83 @@
 # is no single result: engine; the work is the variables block plus the action steps,
 # which run top to bottom in this order:
 #
-#   1. Compute. The variables block builds setup_error/ok, the upstream (broken)
-#      state WITH the debounce applied, the flagged list, the de-duped list, the
-#      fingerprints, the previous values (including the held flag) read back from the
-#      memory helper, and in_quiet_hours.
+#   1. Compute. The variables block builds setup_error/ok (including a deleted
+#      memory helper), the upstream (broken) state WITH the debounce applied, the
+#      blip state (unavailable inside the debounce), the flagged list, the de-duped
+#      list, the fingerprints, the previous values (including the held flag) read
+#      back from the memory helper, and in_quiet_hours.
 #   2. Log the check (debug only), then stop if setup_error.
-#   3. Active refresh (optional). If any source is unavailable and a refresh button is
-#      configured, press it and wait for recovery, bounded by the timeout.
-#   4. Recompute the upstream decision LIVE, so it reflects any recovery from the
-#      refresh (the frozen top-level values were computed before the press).
-#   5. Decide. Work out the reminder run and its mode, the all-clear case,
+#   3. Active refresh (optional). If any source is BLIPPING (unavailable inside the
+#      debounce) and a refresh button is configured, press it and wait for recovery,
+#      bounded by the timeout. A source already broken past the debounce is not
+#      pressed or waited for.
+#   4. Recompute the upstream decision and the blip state LIVE, so they reflect any
+#      recovery from the refresh (the frozen top-level values were computed before
+#      the press).
+#   5. Blip hold. If a source is still blipping after the refresh, stop: no memory
+#      write, no notification, no card change. The source_broken trigger re-runs at
+#      the debounce if it stays down; a recovery re-runs via its own state change.
+#   6. Decide. Work out the reminder run and its mode, the all-clear case,
 #      battery_should_notify and upstream_should_notify (a change, or a reminder-mode
 #      send), the new held flag, and whether memory needs writing.
-#   6. Persist. Write the memory when the fingerprints or the held flag actually
+#   7. Persist. Write the memory when the fingerprints or the held flag actually
 #      changed. Not gated by quiet hours, so state tracking survives the night.
-#   7. Broken-Sentinel stream. Raise its card and push it to the plan: high targets
+#   8. Broken-Sentinel stream. Raise its card and push it to the plan: high targets
 #      always, normal targets outside quiet hours or on a reminder run. Dismiss the
 #      card once every source is healthy again.
-#   8. Normal stream. Dismiss the card when nothing is flagged (unless the
+#   9. Normal stream. Dismiss the card when nothing is flagged (unless the
 #      daily-summary all-clear should show, in which case post the persistent
 #      all-clear card and push it to high-priority targets only); otherwise raise the
 #      card and push it to the plan: high targets always, normal targets outside
 #      quiet hours or on a reminder run.
-#   9. Log the result (debug only).
+#  10. Log the result (debug only).
 #
 # Changelog:
+#   1.0.0-alpha.7.2 - Four hardening fixes from an external code review (Gemini) plus
+#           an adversarial simulation pass (sn_brutal.py), all additive, no input
+#           changes.
+#           (1) DEBOUNCE BLACK HOLE. A source dying mid-day was evaluated once at the
+#           transition (elapsed zero, inside the debounce) and then never re-checked:
+#           a stuck-unavailable sensor produces no further state changes and no timer
+#           existed, so the broken-Sentinel alert waited for the next unrelated
+#           trigger, up to 18 hours in a quiet single-source setup. A new state
+#           trigger (to unavailable/unknown, for: the debounce, id source_broken)
+#           wakes the run at the exact expiry. It cannot fire during a normal reboot,
+#           which recovers inside the window.
+#           (2) BLIP HOLD. A mid-day source blip (Z2M restart, template reload)
+#           collapsed the flagged list, wiped the memory, and re-announced known items
+#           as new on recovery, the reboot bug's twin outside the settle hold's
+#           boot_time coverage. A run is now held, like the settle hold, while any
+#           source is unavailable inside the debounce, judged LIVE after the optional
+#           refresh. Past the debounce the source is declared broken and the run
+#           proceeds with the healthy sources. Accepted limit: an outage longer than
+#           the debounce still re-announces that source's items on recovery;
+#           per-source memory arrives with the raw detection list in a later release.
+#           (3) DEAD-WEIGHT REFRESH. The refresh press-and-wait previously ran
+#           whenever ANY source was unavailable, so one permanently dead source taxed
+#           every future run with the full timeout (and, under mode single, dropped
+#           triggers arriving during the wait). The gate is now blipping-only:
+#           unavailable AND inside the debounce. A source declared broken is never
+#           pressed or waited for again.
+#           (4) DELETED MEMORY HELPER. Deleting the helper after setup left
+#           setup_error empty while every write failed silently under
+#           continue_on_error, so change detection compared against empty memory and
+#           re-notified known items on every qualifying trigger. setup_error now
+#           checks states[memory_helper] is none and fails loud with a clear message.
+#           The check uses the states[] form deliberately: a freshly created helper
+#           reads 'unknown' from states() and must remain valid.
+#           (5) HELD-FLAG NATIVE TYPING (found by the fix-proof harness, present in
+#           7.1 since release). Home Assistant renders script variables with native
+#           typing, so a template producing "0" or "1" yields an INTEGER, not a
+#           string. previous_held and held_new therefore arrived as ints, the
+#           overnight mode's previous_held == '1' comparison was int-vs-string and
+#           always false (overnight delivery silently never fired), and the held
+#           comparison inside memory_needs_write mismatched the same way (memory was
+#           rewritten on every run, timestamp churn only). All held-flag comparisons
+#           and the stored h= segment now pass through | string, so the logic is
+#           type-robust whichever form the renderer hands over. Anyone who ran 7.1
+#           in overnight mode never received an overnight delivery; 7.2 corrects it
+#           with no input change.
 #   1.0.0-alpha.7.1 - One scheduled send instead of two. The daily reminder and the
 #           quiet-hours-end re-send overlapped in purpose and could both fire in one
 #           morning; the quiet-end push also re-sent long-known items every day just
@@ -350,7 +431,7 @@ blueprint:
 
     Optional quiet hours, off by default, hold phone pushes to normal-priority devices during a window you set, for example overnight. The persistent card still updates silently, so nothing is lost; only the push waits. To hear in the morning about a change that was held overnight, set the daily reminder to overnight mode with a time at or after the end of the window.
 
-    The broken-Sentinel alert (raised when a source Sentinel itself is not working) rides out a Home Assistant restart: a source that goes unavailable during a reboot is only reported once it has been unavailable longer than a debounce you can set in Advanced (default four minutes), so a normal restart no longer fires a false "Sentinel not working" alert. Optionally, point it at your Sentinels' refresh button and a source reading unavailable is prompted to re-evaluate and confirm recovery in seconds.
+    The broken-Sentinel alert (raised when a source Sentinel itself is not working) rides out a Home Assistant restart: a source that goes unavailable during a reboot is only reported once it has been unavailable longer than a debounce you can set in Advanced (default four minutes), so a normal restart no longer fires a false "Sentinel not working" alert. A source that dies mid-day is reported the moment the debounce elapses, and a brief blip cannot wipe the change-detection memory or re-announce items you already know about. Optionally, point it at your Sentinels' refresh button and a source reading unavailable is prompted to re-evaluate and confirm recovery in seconds; a source already declared broken is not repeatedly interrogated.
 
     Send by push to two lists of mobile devices, a high-priority list and a normal-priority list, and/or as a persistent notification in the Home Assistant UI. Priority is per device: high-priority devices get an attention-grabbing alert that pierces quiet hours, normal-priority devices get standard delivery that respects quiet hours. A device in both lists is treated as high.
 
@@ -362,7 +443,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.7.1
+    1.0.0-alpha.7.2
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -650,7 +731,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-alpha.7.1
+  version: 1.0.0-alpha.7.2
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -723,12 +804,25 @@ variables:
     {% endfor %}
     {{ ns.any }}
 
+  any_source_blipping: >-
+    {% set ns = namespace(any=false) %}
+    {% for s in source_sensors %}
+      {% if states(s) in ['unavailable', 'unknown'] and states[s] is not none %}
+        {% if (now() - states[s].last_changed).total_seconds() < upstream_debounce_seconds %}
+          {% set ns.any = true %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.any }}
+
   setup_error: >-
     {% set ns = namespace(err='') %}
     {% if source_sensors | length == 0 %}
       {% set ns.err = 'No source sensors selected. Pick one or more Sentinel sensors of the chosen family.' %}
     {% elif memory_helper in [none, ''] %}
       {% set ns.err = 'No memory helper selected. Create an input_text helper and select it.' %}
+    {% elif states[memory_helper] is none %}
+      {% set ns.err = 'Memory helper ' ~ memory_helper ~ ' does not exist. It may have been deleted or renamed. Re-create it (or select another) and re-save this automation.' %}
     {% else %}
       {% for s in source_sensors %}
         {% if states(s) not in ['unavailable', 'unknown'] and state_attr(s, 'devices') is none and state_attr(s, 'total_monitored') is none %}
@@ -927,6 +1021,15 @@ trigger:
     entity_id: !input source_sensors
     id: source_change
     alias: Re-evaluate when a watched sensor changes
+  - trigger: state
+    entity_id: !input source_sensors
+    to:
+      - unavailable
+      - unknown
+    for:
+      seconds: !input upstream_debounce_seconds
+    id: source_broken
+    alias: A source has stayed unavailable for the full debounce, wake up and report it broken
   - trigger: time
     at: !input daily_reminder_time
     id: daily_reminder
@@ -962,7 +1065,7 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | quiet: {{ in_quiet_hours }} | reminder_mode: {{ daily_reminder_mode }} | held: {{ previous_held }} | settling: {{ sources_settling }} | any_unavail: {{ any_source_unavailable }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | quiet: {{ in_quiet_hours }} | reminder_mode: {{ daily_reminder_mode }} | held: {{ previous_held }} | settling: {{ sources_settling }} | any_unavail: {{ any_source_unavailable }} | blipping: {{ any_source_blipping }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
 
   - alias: Stop if setup error
     if:
@@ -990,10 +1093,10 @@ action:
                 Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | settling: sources rebooted within the last {{ upstream_debounce_seconds }}s, holding memory and notifications until they settle | flagged now: {{ flagged_count }} | memory kept: {{ previous_fingerprint | trim }}
       - stop: Sources settling after a restart; memory and notifications held so the pre-restart state survives the reboot.
 
-  - alias: Active refresh, press the source refresh button and wait for recovery, only when a source is unavailable and a button is configured
+  - alias: Active refresh, press the source refresh button and wait for recovery, only when a source is blipping (unavailable inside the debounce, a recovery candidate) and a button is configured; a source already broken past the debounce is never pressed or waited for
     if:
       - condition: template
-        value_template: "{{ any_source_unavailable and refresh_button_set }}"
+        value_template: "{{ any_source_blipping and refresh_button_set }}"
     then:
       - alias: Log that we are refreshing
         if:
@@ -1058,6 +1161,16 @@ action:
       upstream_broken_live: "{{ ok and upstream_error_live != '' }}"
       upstream_fingerprint_live: "{{ upstream_error_live | md5 if upstream_error_live != '' else '' }}"
       upstream_changed_live: "{{ ok and (upstream_fingerprint_live | trim) != (previous_upstream | trim) }}"
+      sources_blipping_live: >-
+        {% set ns = namespace(any=false) %}
+        {% for s in source_sensors %}
+          {% if states(s) in ['unavailable', 'unknown'] and states[s] is not none %}
+            {% if (now() - states[s].last_changed).total_seconds() < upstream_debounce_seconds %}
+              {% set ns.any = true %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.any }}
 
   - alias: Log the live upstream state after any refresh
     if:
@@ -1070,7 +1183,26 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | upstream(live): {{ upstream_error_live if upstream_error_live else 'none' }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_changed(live): {{ upstream_changed_live }} | previous_upstream: {{ previous_upstream | trim }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | upstream(live): {{ upstream_error_live if upstream_error_live else 'none' }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_changed(live): {{ upstream_changed_live }} | blipping(live): {{ sources_blipping_live }} | previous_upstream: {{ previous_upstream | trim }}
+
+  - alias: Blip hold, stop while a source is briefly unavailable inside the debounce, so an incomplete flagged list cannot wipe the memory or fire false alerts; the source_broken trigger re-runs at the debounce if it stays down, and a recovery re-runs via its own state change
+    if:
+      - condition: template
+        value_template: "{{ sources_blipping_live }}"
+    then:
+      - alias: Log that this run is held for a blip
+        if:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        then:
+          - action: system_log.write
+            continue_on_error: true
+            data:
+              level: info
+              logger: sentinel_notify
+              message: >-
+                Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | blip: a source is unavailable but inside the {{ upstream_debounce_seconds }}s debounce, holding memory and notifications until it recovers or is declared broken | flagged now: {{ flagged_count }} | memory kept: {{ previous_fingerprint | trim }}
+      - stop: A source is unavailable but still inside the debounce; memory and notifications held so a brief blip cannot wipe the pre-blip state.
 
   - alias: Work out what to notify this run, the new held flag, and the memory value
     variables:
@@ -1079,14 +1211,14 @@ action:
       reminder_sends_flagged: >-
         {{ is_reminder and flagged_count | int > 0
            and (daily_reminder_mode == 'daily'
-                or (daily_reminder_mode == 'overnight' and previous_held == '1')) }}
+                or (daily_reminder_mode == 'overnight' and previous_held | string == '1')) }}
       battery_should_notify: "{{ changed or reminder_sends_flagged }}"
       upstream_should_notify: "{{ upstream_changed_live or (is_reminder and upstream_broken_live) }}"
       held_new: >-
         {%- if is_reminder and daily_reminder_mode == 'overnight' -%}0{%- elif changed and in_quiet_hours -%}1{%- elif changed -%}0{%- else -%}{{ previous_held }}{%- endif -%}
-      memory_needs_write: "{{ changed or upstream_changed_live or (held_new | trim) != previous_held }}"
+      memory_needs_write: "{{ changed or upstream_changed_live or (held_new | string | trim) != (previous_held | string | trim) }}"
       stored_value: >-
-        b={{ fingerprint }}|u={{ upstream_fingerprint_live }}|h={{ held_new | trim }}|t={{ now().isoformat() }}
+        b={{ fingerprint }}|u={{ upstream_fingerprint_live }}|h={{ held_new | string | trim }}|t={{ now().isoformat() }}
 
   - alias: Persist the memory when the fingerprints or the held flag actually changed
     if:

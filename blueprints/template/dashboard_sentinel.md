@@ -10,7 +10,7 @@ This is the first version of a dashboard layer for the Sentinels, and it is as m
 
 This is the payoff, and for most people it is the whole reason to be here. Here is the status board shown below, built from stock `markdown` cards so it is portable and needs nothing installed beyond the one layout helper noted after. Each card reads your Sentinel sensors directly and shows a calm "all healthy" state when there is nothing to report and a formatted list when there is.
 
-![Sentinel Status dashboard showing one low battery and three quiet entities, arranged as a header summary above two columns with a footer](https://xeazy.com/wp-content/uploads/sentinel-status-detected-1.png)
+![Sentinel Status dashboard showing one low battery and three quiet entities, arranged as a header summary above two columns with a footer]([https://xeazy.com/wp-content/uploads/sentinel-status-detected-1.png](https://xeazy.com/wp-content/uploads/sentinel-status-detected-todo.webp))
 
 The four cards are shown one at a time below. The responsive arrangement, the header and footer spanning the full width with the two columns side by side on a wide screen and stacked on a phone, is done with [layout-card](https://github.com/thomasloven/lovelace-layout-card), the one HACS helper this board depends on. In a `custom:grid-layout` view each card also carries a `view_layout` line naming its grid area (`header`, `battery`, `entity`, `footer`); drop a card into an ordinary dashboard without layout-card and it still renders, it simply stacks in normal order. The card content below is what matters; the layout is yours to arrange.
 

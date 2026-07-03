@@ -27,9 +27,9 @@
 #   memory helper (a shared helper cross-fires endless notifications).
 #
 # Triggering: event-driven, no polling. It re-evaluates at Home Assistant start, when
-#   a watched sensor changes, at an optional daily reminder time, and at the optional
-#   quiet-hours end time. The normal alert fires on a CHANGE; the daily reminder and
-#   the quiet-hours end re-send whatever currently persists rather than a diff.
+#   a watched sensor changes, and at the optional daily reminder time. The normal
+#   alert fires on a CHANGE; the daily reminder sends the current set, not a diff,
+#   according to its mode (see the reminder-modes design choice below).
 #
 # DESIGN CHOICE (one family per instance): the change-detection engine works across
 # families, but the wording, item shape, and sensible defaults differ enough between
@@ -39,12 +39,13 @@
 # DESIGN CHOICE (memory): change-detection has to remember what was last reported
 # across restarts. The only UI-creatable, restart-surviving store is an input_text
 # (capped at 255 characters). That cap is not a constraint: the companion stores two
-# md5 fingerprints (one for the alert, one for the broken-Sentinel state) plus a
-# timestamp, as b={hash}|u={hash}|t={iso}. Hashing both before storage keeps the
-# value short regardless of fleet size and means no device name or error text (and no
-# stray delimiter) can land in the stored value and corrupt the parse. Persistent
-# notifications cannot be read back from templates since HA 2023.6, and a shell or
-# file store is too much to ask of a non-advanced user, so input_text is the store.
+# md5 fingerprints (one for the alert, one for the broken-Sentinel state), a
+# one-character held flag, plus a timestamp, as b={hash}|u={hash}|h={0|1}|t={iso}.
+# Hashing both fingerprints before storage keeps the value short regardless of fleet
+# size and means no device name or error text (and no stray delimiter) can land in
+# the stored value and corrupt the parse. Persistent notifications cannot be read
+# back from templates since HA 2023.6, and a shell or file store is too much to ask
+# of a non-advanced user, so input_text is the store.
 #
 # DESIGN CHOICE (broken-Sentinel debounce): a source Sentinel goes unavailable for a
 # minute or two during any Home Assistant restart, as the template entity is unloaded
@@ -68,7 +69,8 @@
 # notification, no card change. The pre-restart memory survives, the re-detected set
 # compares equal, and the reboot passes silently. A genuinely new failure during the
 # window is delayed at most the settle time, mirroring the grace the sensors
-# themselves apply.
+# themselves apply. The held flag survives the hold too, so a change held during
+# quiet hours before a reboot is still delivered by the overnight reminder after it.
 #
 # DESIGN CHOICE (optional active source refresh): when a source reads unavailable, the
 # companion can press that source's own refresh button (the same input_button the
@@ -91,17 +93,45 @@
 # DESIGN CHOICE (quiet hours and per-device priority): priority is set per device by
 # which list it is in, high_priority_targets or normal_priority_targets. A HIGH target
 # pierces quiet hours (pushed whenever something is flagged, day or night); a NORMAL
-# target respects quiet hours (held during the window, then delivered at the end). The
-# gate is one per-entry test, push if the entry is high OR we are outside quiet hours,
-# so the two rules fall out of a single expression. Quiet hours never gates the
-# persistent card or the memory write, so state tracking survives the night and the
-# only thing held back is the sound on a normal-priority phone. The quiet-hours END
-# time re-sends whatever currently persists to BOTH lists, sharing the daily reminder's
-# "send the current set, not a diff" path: a high phone sees a refreshed card under the
-# same tag, a normal phone gets the held report for the first time. The in_quiet_hours
-# test compares the wall clock as a zero-padded HH:MM:SS string (which sorts
-# chronologically), start-inclusive and end-exclusive, and treats a window whose start
-# is later than its end as crossing midnight. A target in both lists is deduped to high.
+# target respects quiet hours (held during the window). The gate is one per-entry
+# test, push if the entry is high OR we are outside quiet hours OR this run is the
+# daily reminder, so the rules fall out of a single expression. Quiet hours never
+# gates the persistent card or the memory write, so state tracking survives the night
+# and the only thing held back is the sound on a normal-priority phone. Nothing fires
+# at the END of the window anymore: delivery of a change that was held overnight is
+# the job of the daily reminder's OVERNIGHT mode, driven by the held flag (see the
+# reminder-modes design choice below). The in_quiet_hours test compares the wall
+# clock as a zero-padded HH:MM:SS string (which sorts chronologically),
+# start-inclusive and end-exclusive, and treats a window whose start is later than
+# its end as crossing midnight. A target in both lists is deduped to high.
+#
+# DESIGN CHOICE (daily reminder modes and the held flag): earlier releases carried two
+# scheduled sends, the daily reminder and a separate re-send at the quiet-hours end
+# time. They overlapped in purpose, could both fire in one morning, and the quiet-end
+# push re-sent long-known items every day just because the window closed, reading as a
+# mystery alert. Both are now ONE scheduled send, the daily reminder, with a three-way
+# mode:
+#   NONE (default): nothing scheduled ever fires; pure change detection.
+#   OVERNIGHT CHANGES: fires at the reminder time only when a change occurred during
+#       the quiet window, and lists the FULL currently flagged set (the memory stores
+#       hashes, not items, so a true overnight-only diff waits for the raw detection
+#       list planned for a later release). Silent when the night was quiet. Driven by
+#       the held flag: h=1 is written when a change fires inside quiet hours (the
+#       moment normal targets are skipped), h=0 when a change is delivered live
+#       outside the window (nothing is held anymore), and the overnight reminder run
+#       itself clears the flag. Requires quiet hours; with quiet hours off the flag is
+#       never set and the mode degrades to none.
+#   DAILY SUMMARY: fires at the reminder time every day. Flagged items go out on the
+#       normal priority plan; a clean fleet sends an all-clear instead, as a
+#       persistent card plus a push to HIGH-priority targets only, at normal delivery
+#       settings (an all-clear is by definition not urgent), never to normal targets.
+#       A high-priority phone in this mode gets exactly one guaranteed daily touch.
+# In every mode the reminder send is EXEMPT from the quiet-hours gate: the user chose
+# that time explicitly, so a reminder time set inside the window still delivers to
+# normal targets rather than silently reaching only the high list. In both active
+# modes the reminder also re-raises the broken-Sentinel alert if a source is still
+# broken. The reminder never disturbs change detection: the fingerprints are written
+# only on a real change; the reminder run touches only the held flag.
 #
 # THE ACTION FLOW: documented here, in the header. Unlike the Sentinel sensors there
 # is no single result: engine; the work is the variables block plus the action steps,
@@ -109,27 +139,54 @@
 #
 #   1. Compute. The variables block builds setup_error/ok, the upstream (broken)
 #      state WITH the debounce applied, the flagged list, the de-duped list, the
-#      fingerprints, the previous values read back from the memory helper, and
-#      in_quiet_hours.
+#      fingerprints, the previous values (including the held flag) read back from the
+#      memory helper, and in_quiet_hours.
 #   2. Log the check (debug only), then stop if setup_error.
 #   3. Active refresh (optional). If any source is unavailable and a refresh button is
 #      configured, press it and wait for recovery, bounded by the timeout.
 #   4. Recompute the upstream decision LIVE, so it reflects any recovery from the
 #      refresh (the frozen top-level values were computed before the press).
-#   5. Decide. Work out battery_should_notify and upstream_should_notify (a change,
-#      or a daily-reminder/quiet-end re-send), and whether memory needs writing.
-#   6. Persist. Write both memory slots together when the content actually changed.
-#      Not gated by quiet hours, so state tracking survives the night.
+#   5. Decide. Work out the reminder run and its mode, the all-clear case,
+#      battery_should_notify and upstream_should_notify (a change, or a reminder-mode
+#      send), the new held flag, and whether memory needs writing.
+#   6. Persist. Write the memory when the fingerprints or the held flag actually
+#      changed. Not gated by quiet hours, so state tracking survives the night.
 #   7. Broken-Sentinel stream. Raise its card and push it to the plan: high targets
-#      always, normal targets only outside quiet hours. Dismiss the card once every
-#      source is healthy again.
-#   8. Normal stream. Dismiss the card when nothing is flagged (unless the optional
-#      daily all-clear should show, in which case post the persistent "all clear" card
-#      instead); otherwise raise the card and push it to the plan: high targets always,
-#      normal targets only outside quiet hours.
+#      always, normal targets outside quiet hours or on a reminder run. Dismiss the
+#      card once every source is healthy again.
+#   8. Normal stream. Dismiss the card when nothing is flagged (unless the
+#      daily-summary all-clear should show, in which case post the persistent
+#      all-clear card and push it to high-priority targets only); otherwise raise the
+#      card and push it to the plan: high targets always, normal targets outside
+#      quiet hours or on a reminder run.
 #   9. Log the result (debug only).
 #
 # Changelog:
+#   1.0.0-alpha.7.1 - One scheduled send instead of two. The daily reminder and the
+#           quiet-hours-end re-send overlapped in purpose and could both fire in one
+#           morning; the quiet-end push also re-sent long-known items every day just
+#           because the window closed, reading as an undocumented mystery alert. The
+#           quiet-hours-end TRIGGER is removed (the end time still defines the window;
+#           nothing fires at it) and the daily reminder becomes a three-way MODE
+#           select replacing two booleans: NONE (default, pure change detection),
+#           OVERNIGHT CHANGES (fires at the reminder time only when a change occurred
+#           during the quiet window, listing the full currently flagged set; silent
+#           after a quiet night; degrades to none when quiet hours is off), and DAILY
+#           SUMMARY (fires every day; the flagged list when something needs attention,
+#           or an all-clear when nothing does, sent as a persistent card plus a push
+#           to high-priority targets only, at normal delivery settings). The overnight
+#           mode is driven by a new held flag in the memory, whose format is now
+#           b={hash}|u={hash}|h={0|1}|t={iso}: h=1 is written when a change fires
+#           inside quiet hours, h=0 when a change is delivered live outside the
+#           window, and the overnight reminder run clears it. An old helper value
+#           without h= parses as not-held, so the upgrade needs no manual reset. The
+#           reminder send is now exempt from the quiet-hours gate, so a reminder time
+#           set inside the window still delivers to normal-priority targets. The
+#           separate all-clear toggle is absorbed into the daily-summary mode.
+#           BREAKING INPUT CHANGE: daily_reminder_enabled and all_clear_enabled are
+#           replaced by daily_reminder_mode; an existing automation must be re-saved
+#           with the new field set. Acceptable while pre-release alpha, precedent
+#           from alpha.5.
 #   1.0.0-alpha.7 - Ride out the restart on the NORMAL alert stream. During a Home
 #           Assistant reboot the source Sentinels report an empty flagged list while
 #           inside their startup grace. Previously Sentinel Notify trusted that empty
@@ -289,9 +346,9 @@ blueprint:
 
     Set the mode to Battery or Entity and point it at sensors of that family. When a watched sensor changes, it builds a sorted fingerprint of what the Sentinel is flagging and compares it to what it last reported, stored in a required input_text helper. If the set changed, it sends a notification listing everything currently flagged; if not, it stays quiet. There is no polling; it reacts to the sensor. Several sensors of one family combine into a single report. The notification uses a tag, so even when it fires it replaces the previous one in place rather than stacking.
 
-    An optional daily reminder, off by default, re-sends the current report at a time of day you set, but only if something is still flagged. It reuses the same tag, so it refreshes the existing card rather than stacking a new one. Use it as a once-a-day "this is still not fixed" nudge. An optional daily all-clear, also off by default, posts a persistent "all clear" card on that same daily run when nothing is flagged, so a clean fleet shows reassurance rather than no card. The all-clear is persistent only and never pushes to a phone.
+    An optional daily reminder, off by default, sends once a day at a time you set, in one of two modes. Overnight changes fires only when something changed during your quiet hours, listing everything currently flagged, so a quiet night stays silent. Daily summary fires every day: the flagged list when something needs attention, or an all-clear when nothing does (the all-clear goes to the UI card and to high-priority devices only). Either mode reuses the same tag, so it refreshes the existing card rather than stacking.
 
-    Optional quiet hours, off by default, hold phone pushes during a window you set, for example overnight. The persistent card still updates silently, so nothing is lost; only the push waits. At the end of the window the companion re-sends whatever is still flagged, so a problem raised overnight reaches you in the morning and one that already cleared does not.
+    Optional quiet hours, off by default, hold phone pushes to normal-priority devices during a window you set, for example overnight. The persistent card still updates silently, so nothing is lost; only the push waits. To hear in the morning about a change that was held overnight, set the daily reminder to overnight mode with a time at or after the end of the window.
 
     The broken-Sentinel alert (raised when a source Sentinel itself is not working) rides out a Home Assistant restart: a source that goes unavailable during a reboot is only reported once it has been unavailable longer than a debounce you can set in Advanced (default four minutes), so a normal restart no longer fires a false "Sentinel not working" alert. Optionally, point it at your Sentinels' refresh button and a source reading unavailable is prompted to re-evaluate and confirm recovery in seconds.
 
@@ -305,7 +362,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.7
+    1.0.0-alpha.7.1
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -408,9 +465,10 @@ blueprint:
             The mobile_app notify ACTIONS that should receive NORMAL-priority pushes,
             one per line, same notify.mobile_app_your_phone form. Normal priority is
             standard delivery AND respects quiet hours: a normal-priority target is
-            held during the quiet window and receives whatever is still flagged when
-            the window ends. A target listed in both lists is treated as high
-            (pushed once, at high priority). Leave empty for no normal-priority pushes.
+            held during the quiet window; use the Daily Reminder's overnight mode to
+            be told in the morning about a change that was held. A target listed in
+            both lists is treated as high (pushed once, at high priority). Leave
+            empty for no normal-priority pushes.
           default: []
           selector:
             text:
@@ -437,18 +495,22 @@ blueprint:
     quiet_hours_section:
       name: Quiet Hours
       icon: mdi:sleep
-      description: An optional daily window during which phone pushes are held back. The persistent card still updates, and at the end of the window anything still flagged is pushed. Off by default.
+      description: An optional daily window during which phone pushes to normal-priority targets are held back. The persistent card still updates. Pair it with the Daily Reminder's overnight mode to hear in the morning about a change held overnight. Off by default.
       collapsed: true
       input:
         quiet_hours_enabled:
           name: Enable quiet hours
           description: >-
-            When on, phone pushes (both the normal alert and the broken-Sentinel
-            alert) are held during the window below. The persistent notification
+            When on, phone pushes to normal-priority targets (both the normal alert
+            and the broken-Sentinel alert) are held during the window below;
+            high-priority targets are still pushed. The persistent notification
             still updates silently and the change-detection memory still tracks, so
-            nothing is lost; only the push waits. At the end time the companion
-            re-sends whatever is still flagged. When off, pushes go out as soon as
-            something changes, at any hour.
+            nothing is lost; only the push waits. Nothing fires when the window
+            ends: to hear in the morning about a change that was held overnight,
+            set the Daily Reminder below to its overnight mode, with a time at or
+            after the quiet-hours end. With the reminder set to none, a change held
+            overnight reaches normal-priority targets only on the next change. When
+            off, pushes go out as soon as something changes, at any hour.
           default: false
           selector:
             boolean: {}
@@ -464,9 +526,8 @@ blueprint:
         quiet_hours_end:
           name: Quiet hours end
           description: >-
-            When the quiet window ends. At this time the companion wakes, re-checks,
-            and pushes anything still flagged. For example 08:00:00 for 8 in the
-            morning.
+            When the quiet window ends. Nothing fires at this time; it only defines
+            the window. For example 08:00:00 for 8 in the morning.
           default: "08:00:00"
           selector:
             time: {}
@@ -474,41 +535,46 @@ blueprint:
     reminder_section:
       name: Daily Reminder
       icon: mdi:calendar-clock
-      description: An optional once-a-day nudge if something is still flagged. Off by default.
+      description: An optional once-a-day scheduled send at a time you set. Off by default.
       collapsed: true
       input:
-        daily_reminder_enabled:
-          name: Enable the daily reminder
+        daily_reminder_mode:
+          name: Daily reminder mode
           description: >-
-            When on, once a day at the time below the companion re-sends the
-            current report if anything is still flagged (and re-raises the
-            broken-Sentinel card if a source is still broken). It reuses the same
-            tag, so it refreshes the existing card rather than stacking. When off,
-            the companion only ever notifies on a change.
-          default: false
+            What the once-a-day send at the time below does. NONE: nothing
+            scheduled ever fires; you are notified only on a change. OVERNIGHT
+            CHANGES: fires only when a change occurred during your quiet hours, and
+            lists everything currently flagged; a quiet night stays silent.
+            Requires quiet hours to be enabled (with quiet hours off nothing is
+            ever held, so this behaves as none), and the time below should be at or
+            after the quiet-hours end. DAILY SUMMARY: fires every day; the flagged
+            list when something needs attention, or an all-clear when nothing does.
+            The all-clear goes to the persistent card and to high-priority targets
+            only, at normal delivery settings, never to normal-priority targets. In
+            either active mode the send reuses the same tag, so it refreshes the
+            existing card rather than stacking, delivers to normal-priority targets
+            even if the time falls inside quiet hours, and re-raises the
+            broken-Sentinel alert if a source is still broken. It never disturbs
+            change detection.
+          default: none
           selector:
-            boolean: {}
+            select:
+              options:
+                - label: None (notify only on change)
+                  value: none
+                - label: Overnight changes (only if something changed during quiet hours)
+                  value: overnight
+                - label: Daily summary (every day, all-clear when nothing is flagged)
+                  value: daily
         daily_reminder_time:
           name: Reminder time
           description: >-
-            The time of day the daily reminder fires, if enabled. For example
-            08:00:00 for 8 in the morning.
+            The time of day the reminder fires, when the mode above is not none.
+            For the overnight mode, set it at or after the quiet-hours end. For
+            example 08:00:00 for 8 in the morning.
           default: "08:00:00"
           selector:
             time: {}
-        all_clear_enabled:
-          name: Send a daily all-clear
-          description: >-
-            When on, the daily reminder also posts a persistent all-clear card when
-            nothing is flagged, so a clean fleet shows "all clear" rather than no
-            card at all. It is persistent only and never pushes to a phone, so it
-            cannot wake you. It uses the same card as the alert, so an alert from
-            overnight is overwritten by the all-clear when the fleet is clean again.
-            Requires the daily reminder above to be on, and a persistent notification
-            to be enabled. Off by default.
-          default: false
-          selector:
-            boolean: {}
 
     advanced_section:
       name: Advanced
@@ -584,7 +650,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-alpha.7
+  version: 1.0.0-alpha.7.1
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -596,8 +662,8 @@ variables:
   quiet_hours_enabled: !input quiet_hours_enabled
   quiet_hours_start: !input quiet_hours_start
   quiet_hours_end: !input quiet_hours_end
-  daily_reminder_enabled: !input daily_reminder_enabled
-  all_clear_enabled: !input all_clear_enabled
+  daily_reminder_mode: !input daily_reminder_mode
+  daily_reminder_time: !input daily_reminder_time
   upstream_debounce_seconds: !input upstream_debounce_seconds
   source_refresh_button: !input source_refresh_button
   source_refresh_timeout: !input source_refresh_timeout
@@ -798,16 +864,18 @@ variables:
 
   stored_raw: "{{ states(memory_helper) }}"
   stored_parts: >-
-    {% set ns = namespace(b='', u='', t='') %}
+    {% set ns = namespace(b='', u='', h='', t='') %}
     {% for seg in stored_raw.split('|') %}
       {% if seg.startswith('b=') %}{% set ns.b = seg[2:] %}
       {% elif seg.startswith('u=') %}{% set ns.u = seg[2:] %}
+      {% elif seg.startswith('h=') %}{% set ns.h = seg[2:] %}
       {% elif seg.startswith('t=') %}{% set ns.t = seg[2:] %}
       {% endif %}
     {% endfor %}
-    {{ {'b': ns.b, 'u': ns.u, 't': ns.t} }}
+    {{ {'b': ns.b, 'u': ns.u, 'h': ns.h, 't': ns.t} }}
   previous_fingerprint: "{{ stored_parts.b }}"
   previous_upstream: "{{ stored_parts.u }}"
+  previous_held: "{{ '1' if stored_parts.h == '1' else '0' }}"
   previous_notified_iso: "{{ stored_parts.t }}"
 
   changed: "{{ ok and (fingerprint | trim) != (previous_fingerprint | trim) }}"
@@ -862,11 +930,7 @@ trigger:
   - trigger: time
     at: !input daily_reminder_time
     id: daily_reminder
-    alias: Daily reminder at the configured time
-  - trigger: time
-    at: !input quiet_hours_end
-    id: quiet_hours_end
-    alias: Quiet hours end, re-send anything still flagged
+    alias: Scheduled daily send at the configured time, active when the reminder mode is not none
 
 condition:
   - alias: For a source-sensor trigger, run only if the monitored content actually changed (ignore attribute-only churn like a refreshed evaluation timestamp). Other triggers always pass.
@@ -898,7 +962,7 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | quiet: {{ in_quiet_hours }} | settling: {{ sources_settling }} | any_unavail: {{ any_source_unavailable }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | quiet: {{ in_quiet_hours }} | reminder_mode: {{ daily_reminder_mode }} | held: {{ previous_held }} | settling: {{ sources_settling }} | any_unavail: {{ any_source_unavailable }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
 
   - alias: Stop if setup error
     if:
@@ -994,8 +1058,6 @@ action:
       upstream_broken_live: "{{ ok and upstream_error_live != '' }}"
       upstream_fingerprint_live: "{{ upstream_error_live | md5 if upstream_error_live != '' else '' }}"
       upstream_changed_live: "{{ ok and (upstream_fingerprint_live | trim) != (previous_upstream | trim) }}"
-      stored_value: >-
-        b={{ fingerprint }}|u={{ upstream_fingerprint_live }}|t={{ now().isoformat() }}
 
   - alias: Log the live upstream state after any refresh
     if:
@@ -1010,16 +1072,23 @@ action:
           message: >-
             Sentinel Notify v{{ version }} | mode: {{ family_mode }} | upstream(live): {{ upstream_error_live if upstream_error_live else 'none' }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_changed(live): {{ upstream_changed_live }} | previous_upstream: {{ previous_upstream | trim }}
 
-  - alias: Work out what to notify this run
+  - alias: Work out what to notify this run, the new held flag, and the memory value
     variables:
-      is_reminder: "{{ trigger.id == 'daily_reminder' and daily_reminder_enabled }}"
-      is_quiet_end: "{{ trigger.id == 'quiet_hours_end' and quiet_hours_enabled }}"
-      is_all_clear: "{{ trigger.id == 'daily_reminder' and daily_reminder_enabled and all_clear_enabled and flagged_count | int == 0 }}"
-      battery_should_notify: "{{ changed or (is_reminder and flagged_count | int > 0) or (is_quiet_end and flagged_count | int > 0) }}"
-      upstream_should_notify: "{{ upstream_changed_live or (is_reminder and upstream_broken_live) or (is_quiet_end and upstream_broken_live) }}"
-      memory_needs_write: "{{ changed or upstream_changed_live }}"
+      is_reminder: "{{ trigger.id == 'daily_reminder' and daily_reminder_mode != 'none' }}"
+      is_all_clear: "{{ is_reminder and daily_reminder_mode == 'daily' and flagged_count | int == 0 }}"
+      reminder_sends_flagged: >-
+        {{ is_reminder and flagged_count | int > 0
+           and (daily_reminder_mode == 'daily'
+                or (daily_reminder_mode == 'overnight' and previous_held == '1')) }}
+      battery_should_notify: "{{ changed or reminder_sends_flagged }}"
+      upstream_should_notify: "{{ upstream_changed_live or (is_reminder and upstream_broken_live) }}"
+      held_new: >-
+        {%- if is_reminder and daily_reminder_mode == 'overnight' -%}0{%- elif changed and in_quiet_hours -%}1{%- elif changed -%}0{%- else -%}{{ previous_held }}{%- endif -%}
+      memory_needs_write: "{{ changed or upstream_changed_live or (held_new | trim) != previous_held }}"
+      stored_value: >-
+        b={{ fingerprint }}|u={{ upstream_fingerprint_live }}|h={{ held_new | trim }}|t={{ now().isoformat() }}
 
-  - alias: Persist both memory slots together when content actually changed
+  - alias: Persist the memory when the fingerprints or the held flag actually changed
     if:
       - condition: template
         value_template: "{{ memory_needs_write }}"
@@ -1053,7 +1122,7 @@ action:
                   title: Sentinel not working
                   message: >-
                     A source Sentinel is reporting a problem and is not monitoring. Fix it, then this clears. Detail: {{ upstream_error_live }}
-          - alias: Push for the broken Sentinel; high pierces quiet hours, normal waits
+          - alias: Push for the broken Sentinel; high pierces quiet hours, normal waits, a reminder run delivers to both
             if:
               - condition: template
                 value_template: "{{ push_plan | length > 0 }}"
@@ -1061,10 +1130,10 @@ action:
               - repeat:
                   for_each: "{{ push_plan }}"
                   sequence:
-                    - alias: Push to this target only if high priority or outside quiet hours; continue_on_error makes a dead target non-fatal
+                    - alias: Push to this target only if high priority, outside quiet hours, or a reminder run; continue_on_error makes a dead target non-fatal
                       if:
                         - condition: template
-                          value_template: "{{ repeat.item.priority == 'high' or not in_quiet_hours }}"
+                          value_template: "{{ repeat.item.priority == 'high' or not in_quiet_hours or is_reminder }}"
                       then:
                         - action: "{{ repeat.item.target }}"
                           continue_on_error: true
@@ -1106,19 +1175,48 @@ action:
         data:
           notification_id: "{{ notification_tag }}"
 
-  - alias: All-clear card on the daily reminder when the fleet is clean; persistent only, never pushes
+  - alias: Daily-summary all-clear when the fleet is clean; a persistent card plus a push to high-priority targets only
     if:
       - condition: template
-        value_template: "{{ persistent_enabled and is_all_clear }}"
+        value_template: "{{ is_all_clear }}"
     then:
-      - action: persistent_notification.create
-        continue_on_error: true
-        data:
-          notification_id: "{{ notification_tag }}"
-          title: >-
-            {% if family_mode == 'battery' %}Battery Sentinel: all clear{% elif family_mode == 'entity' %}Entity Sentinel: all clear{% else %}Sentinel: all clear{% endif %}
-          message: >-
-            {% if family_mode == 'battery' %}All monitored batteries OK.{% elif family_mode == 'entity' %}All monitored entities reporting.{% else %}All monitored entities OK.{% endif %}
+      - alias: Persistent all-clear card
+        if:
+          - condition: template
+            value_template: "{{ persistent_enabled }}"
+        then:
+          - action: persistent_notification.create
+            continue_on_error: true
+            data:
+              notification_id: "{{ notification_tag }}"
+              title: >-
+                {% if family_mode == 'battery' %}Battery Sentinel: all clear{% elif family_mode == 'entity' %}Entity Sentinel: all clear{% else %}Sentinel: all clear{% endif %}
+              message: >-
+                {% if family_mode == 'battery' %}All monitored batteries OK.{% elif family_mode == 'entity' %}All monitored entities reporting.{% else %}All monitored entities OK.{% endif %}
+      - alias: Push the all-clear to high-priority targets only; an all-clear is not urgent, so it goes at normal delivery settings
+        if:
+          - condition: template
+            value_template: "{{ push_plan | selectattr('priority', 'eq', 'high') | list | length > 0 }}"
+        then:
+          - repeat:
+              for_each: "{{ push_plan | selectattr('priority', 'eq', 'high') | list }}"
+              sequence:
+                - alias: Push the all-clear to this high-priority target; continue_on_error makes a dead target non-fatal
+                  action: "{{ repeat.item.target }}"
+                  continue_on_error: true
+                  data:
+                    title: >-
+                      {% if family_mode == 'battery' %}Battery Sentinel: all clear{% elif family_mode == 'entity' %}Entity Sentinel: all clear{% else %}Sentinel: all clear{% endif %}
+                    message: >-
+                      {% if family_mode == 'battery' %}All monitored batteries OK.{% elif family_mode == 'entity' %}All monitored entities reporting.{% else %}All monitored entities OK.{% endif %}
+                    data:
+                      tag: "{{ notification_tag }}"
+                      priority: normal
+                      ttl: 3600
+                      channel: default
+                      importance: default
+                      push:
+                        interruption-level: active
 
   - alias: Battery notification, runs independently of any broken Sentinel
     if:
@@ -1137,7 +1235,7 @@ action:
               title: "{{ title | trim }}"
               message: "{{ body }}"
 
-      - alias: Push notifications; high pierces quiet hours, normal waits
+      - alias: Push notifications; high pierces quiet hours, normal waits, a reminder run delivers to both
         if:
           - condition: template
             value_template: "{{ push_plan | length > 0 and flagged_count | int > 0 }}"
@@ -1145,10 +1243,10 @@ action:
           - repeat:
               for_each: "{{ push_plan }}"
               sequence:
-                - alias: Push to this target only if high priority or outside quiet hours; continue_on_error makes a dead target non-fatal
+                - alias: Push to this target only if high priority, outside quiet hours, or a reminder run; continue_on_error makes a dead target non-fatal
                   if:
                     - condition: template
-                      value_template: "{{ repeat.item.priority == 'high' or not in_quiet_hours }}"
+                      value_template: "{{ repeat.item.priority == 'high' or not in_quiet_hours or is_reminder }}"
                   then:
                     - action: "{{ repeat.item.target }}"
                       continue_on_error: true
@@ -1180,4 +1278,4 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | battery_notify: {{ battery_should_notify }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_notify: {{ upstream_should_notify }} | quiet: {{ in_quiet_hours }} | targets: {{ push_plan | length }} (high {{ high_priority_targets | length }}, normal {{ normal_priority_targets | length }})
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | battery_notify: {{ battery_should_notify }} | reminder: {{ is_reminder }} ({{ daily_reminder_mode }}) | all_clear: {{ is_all_clear }} | held_prev: {{ previous_held }} | held_new: {{ held_new | trim }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_notify: {{ upstream_should_notify }} | quiet: {{ in_quiet_hours }} | targets: {{ push_plan | length }} (high {{ high_priority_targets | length }}, normal {{ normal_priority_targets | length }})

@@ -59,6 +59,17 @@
 # so they still fire immediately. A truly missing source (states[s] is none, deleted
 # or a typo) is treated as long-gone and flags immediately, not as a restart.
 #
+# DESIGN CHOICE (settle hold on the normal stream): the debounce above guards the
+# broken-Sentinel stream, but a restart also disturbs the NORMAL stream: inside their
+# startup grace the source Sentinels report an empty flagged list, and trusting it
+# wipes the change-detection memory, turning the re-detection of already-known
+# entities into false pushes. So while any source's boot_time is within
+# upstream_debounce_seconds of now, the whole run is held: no memory write, no
+# notification, no card change. The pre-restart memory survives, the re-detected set
+# compares equal, and the reboot passes silently. A genuinely new failure during the
+# window is delayed at most the settle time, mirroring the grace the sensors
+# themselves apply.
+#
 # DESIGN CHOICE (optional active source refresh): when a source reads unavailable, the
 # companion can press that source's own refresh button (the same input_button the
 # Sentinel sensors expose) to make the sources re-evaluate at once, then wait briefly
@@ -119,6 +130,21 @@
 #   9. Log the result (debug only).
 #
 # Changelog:
+#   1.0.0-alpha.7 - Ride out the restart on the NORMAL alert stream. During a Home
+#           Assistant reboot the source Sentinels report an empty flagged list while
+#           inside their startup grace. Previously Sentinel Notify trusted that empty
+#           list, overwrote its memory helper with "nothing flagged", and then treated
+#           the re-detection of the same entities minutes later as brand-new failures,
+#           producing false pushes after every reboot (seen live 2026-07-03: memory
+#           wiped at ha_start 03:32, false pushes at 04:00 and 04:30 for entities known
+#           since before the reboot). Now a run is HELD, no memory write, no
+#           notification, no card change, while any source Sentinel's boot_time is
+#           within upstream_debounce_seconds (the same Advanced input the
+#           broken-Sentinel debounce uses, default 240). The pre-restart memory
+#           survives the reboot, so when the same entities are re-detected they compare
+#           equal and stay silent; a genuinely new failure is delayed at most the
+#           settle window. Reads the boot_time attribute the Sentinels already expose,
+#           so no new input is needed. Additive, non-breaking.
 #   1.0.0-alpha.6.1 - Housekeeping. The optional source refresh button now defaults to an
 #           empty string instead of the placeholder input_button.none. That placeholder was a
 #           real entity name that does not exist, so a validator such as Spook flagged the
@@ -279,7 +305,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.6.1
+    1.0.0-alpha.7
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -558,7 +584,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 1.0.0-alpha.6.1
+  version: 1.0.0-alpha.7
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   memory_helper: !input memory_helper
@@ -611,6 +637,16 @@ variables:
 
   refresh_button_set: >-
     {{ source_refresh_button not in [none, ''] }}
+
+  sources_settling: >-
+    {% set ns = namespace(latest=none) %}
+    {% for s in source_sensors %}
+      {% set bt = state_attr(s, 'boot_time') | as_datetime(none) %}
+      {% if bt is not none and (ns.latest is none or bt > ns.latest) %}
+        {% set ns.latest = bt %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.latest is not none and (now() - ns.latest).total_seconds() < upstream_debounce_seconds }}
 
   any_source_unavailable: >-
     {% set ns = namespace(any=false) %}
@@ -862,7 +898,7 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | quiet: {{ in_quiet_hours }} | any_unavail: {{ any_source_unavailable }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | changed: {{ changed }} | quiet: {{ in_quiet_hours }} | settling: {{ sources_settling }} | any_unavail: {{ any_source_unavailable }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }} | fingerprint: {{ fingerprint | trim }} | previous: {{ previous_fingerprint | trim }}
 
   - alias: Stop if setup error
     if:
@@ -870,6 +906,25 @@ action:
         value_template: "{{ not ok }}"
     then:
       - stop: Setup error, see the debug log and the README.
+
+  - alias: Ride out the restart, hold memory and notifications while the source Sentinels settle after a reboot
+    if:
+      - condition: template
+        value_template: "{{ sources_settling }}"
+    then:
+      - alias: Log that this run is held for settling
+        if:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        then:
+          - action: system_log.write
+            continue_on_error: true
+            data:
+              level: info
+              logger: sentinel_notify
+              message: >-
+                Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | settling: sources rebooted within the last {{ upstream_debounce_seconds }}s, holding memory and notifications until they settle | flagged now: {{ flagged_count }} | memory kept: {{ previous_fingerprint | trim }}
+      - stop: Sources settling after a restart; memory and notifications held so the pre-restart state survives the reboot.
 
   - alias: Active refresh, press the source refresh button and wait for recovery, only when a source is unavailable and a button is configured
     if:

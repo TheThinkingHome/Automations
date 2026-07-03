@@ -37,6 +37,20 @@ The 1.x engine remembers what it last reported as a hashed fingerprint inside an
 
 The trade: setup gains one step (each copy needs its own Local To-do list, created through Add Integration rather than the Helpers page), and the engine restructure is large enough that 2.0 starts life as an alpha all over again, on the same deal as before: I test as hard as I can in one house and in simulation, and the community's use is what makes it solid.
 
+## Import the Development Build
+
+If you want to follow the 2.0 line as it develops, help test, and can tolerate breaking changes between commits, import from this branch. Everyone else should use the stable import above.
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Fautomation%2Fsentinel_notify.yaml)
+
+Or paste this URL into Settings, Automations & Scenes, Blueprints, Import Blueprint:
+
+```
+https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/automation/sentinel_notify.yaml
+```
+
+Your imported copy is a snapshot; re-import to pick up newer development builds. Check the Status table below and the version number in the blueprint description before relying on it.
+
 ## Status
 
 | Stage | State |

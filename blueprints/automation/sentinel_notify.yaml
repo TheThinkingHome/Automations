@@ -54,7 +54,8 @@
 # are not the companion's and are never touched, so a user may keep their own notes
 # on the same list, though a dedicated list is strongly recommended. The input_text
 # helper REMAINS, smaller: it holds only the broken-Sentinel fingerprint and the
-# quiet-hours held flag, as u={hash}|h={0|1}|t={iso}. A 1.x helper value with a
+# quiet-hours held flag, and the last reminder-delivery date, as
+# u={hash}|h={0|1}|r={date}|t={iso}. A 1.x helper value with a
 # leading b= segment parses cleanly; the b= slot is simply ignored.
 #
 # DESIGN CHOICE (addition-only gate): the 1.x engine notified when the SET changed,
@@ -133,17 +134,37 @@
 # The in_quiet_hours test compares the wall clock as a zero-padded HH:MM:SS string,
 # start-inclusive, end-exclusive, midnight-crossing when start > end.
 #
+# DESIGN CHOICE (the reminder is a DUTY, not a trigger): the scheduled time trigger
+# is only a wake-up. Whether the daily send is owed is computed on EVERY run: the
+# mode is active, the configured time has passed today, and the helper's r= slot
+# shows no delivery today. Whichever run first finds the duty owed performs it and
+# records the date. This exists because the reminder time can land on the same
+# instant as a sensor's scan tick (the 08:00 default sits exactly on the common
+# /30 scan grid); under mode: single one of the two colliding triggers is silently
+# dropped, and in the trigger-identity design a dropped reminder trigger LOST the
+# delivery (seen live 2026-07-04). Under the duty design the colliding run itself
+# carries the send in the same instant, any reminder time is valid, and a reminder
+# missed because Home Assistant was rebooting at that moment is caught up by the
+# next run instead of lost. A run held by the settle or blip hold does not record
+# the date, so the duty survives holds too. Delivery is exactly once per day.
+#
 # DESIGN CHOICE (daily reminder modes): one scheduled send, three modes. NONE
-# (default): nothing scheduled fires. OVERNIGHT CHANGES: fires at the reminder time
-# only when an addition occurred during the quiet window, and sends the full current
-# OPEN set (acknowledged items excluded); silent after a quiet night; degrades to
-# none when quiet hours is off. DAILY SUMMARY: fires every day; the open set when
-# something needs attention, or an all-clear when nothing is flagged at all, as a
-# persistent card plus a push to HIGH-priority targets only at normal delivery
-# settings. When every remaining item is acknowledged, the daily run stays silent
-# rather than claiming all clear: acknowledged is not fixed. In every mode the
-# reminder is exempt from the quiet-hours gate and re-raises the broken-Sentinel
-# alert if a source is still broken.
+# (default): nothing scheduled fires. OVERNIGHT CHANGES: a true summary of the
+# quiet window. It fires only when an addition occurred during the window (the
+# held flag) and lists ONLY the open items whose own detection time, read from
+# each item's description, falls inside the just-ended window, so a week-old
+# known problem never rides along in a morning summary. Silent after a quiet
+# night, and silent when the overnight arrivals self-cleared or were acknowledged
+# before morning; degrades to none when quiet hours is off. If the duty run also
+# carries a brand-new addition of its own, the two merge into ONE push (the
+# overnight body plus the new arrivals, deduped) rather than racing for the tag.
+# DAILY SUMMARY: fires every day; the open set when something needs attention, or
+# an all-clear when nothing is flagged at all, as a persistent card plus a push to
+# HIGH-priority targets only at normal delivery settings. When every remaining
+# item is acknowledged, the daily run stays silent rather than claiming all
+# clear: acknowledged is not fixed. In every mode the reminder is exempt from the
+# quiet-hours gate and re-raises the broken-Sentinel alert if a source is still
+# broken.
 #
 # THE ACTION FLOW, top to bottom:
 #   1. Compute. Top-level variables: setup_error/ok (sources, helper, to-do list),
@@ -160,8 +181,10 @@
 #      the notification titles and bodies.
 #   8. Apply. Add new items, update changed ones, remove recovered ones. Foreign
 #      items untouched. Not gated by quiet hours.
-#   9. Decide. Reminder run and mode, all-clear, what to push, the new held flag,
-#      whether the helper needs writing. Persist the helper.
+#   9. Decide. Whether the daily-send duty is owed (computed every run, recorded
+#      in the helper once performed), the overnight window diff, the all-clear,
+#      what to push (a duty run with live additions merges into one push), the
+#      new held flag, and whether the helper needs writing. Persist the helper.
 #  10. Broken-Sentinel stream: card and pushes, change-detected, then dismiss when
 #      healthy.
 #  11. Normal stream: dismiss the card when nothing is open (unless the all-clear
@@ -171,6 +194,31 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.9 - THE RELIABLE REMINDER. Two fixes from the first live morning.
+#           (1) REMINDER AS A DUTY. The reminder was identified by its time
+#           trigger; when that trigger landed on the same instant as a sensor scan
+#           tick (the 08:00 default sits exactly on the common /30 grid), mode:
+#           single silently dropped it and the delivery was lost (seen live
+#           2026-07-04, survived only because nothing was held that night). The
+#           duty is now computed on every run: mode active, time passed today, no
+#           delivery recorded today in the helper's new r= slot; whichever run
+#           first finds it owed performs it and records the date. Collisions
+#           deliver in the same instant, any reminder time is valid on or off the
+#           scan grid, and a reminder missed during a reboot is caught up by the
+#           next run. Helper format is now u={hash}|h={0|1}|r={date}|t={iso}; an
+#           older value parses as never-delivered, no manual reset needed.
+#           (2) TRUE OVERNIGHT SUMMARY. The overnight mode previously sent the
+#           full current open set, a compromise from the 1.x hash memory that
+#           could not know which items were new; a week-old known problem rode
+#           along in every morning delivery. The raw item memory now makes the
+#           honest body possible: only the open items whose own detection time
+#           falls inside the just-ended quiet window are listed, with the window
+#           computed from the quiet-hours inputs and midnight crossing handled.
+#           Overnight arrivals that self-cleared or were acknowledged before
+#           morning stay silent. A duty run that also carries a live addition
+#           merges into ONE push, the overnight items plus the new arrivals,
+#           deduped, under a dedicated overnight title ("N entities went quiet
+#           overnight"). No input changes; existing automations upgrade in place.
 #   2.0.0-alpha.8 - THE TO-DO REBUILD. The item memory moves from a hashed
 #           fingerprint in an input_text to a dedicated Local To-do list, one item
 #           per flagged entity: summary is the human line, description carries the
@@ -233,7 +281,7 @@ blueprint:
 
     **The checkbox acknowledges.** Check an item off and it stays known (it will not re-notify), drops out of the daily summary, and re-arms by itself if the device recovers and later fails again. The companion never checks items itself and never touches items it did not create.
 
-    Everything else carries over from 1.x: two independent alert streams (the report, and a "Sentinel not working" alert when a source is itself broken, debounced to ride out restarts and reported on time when real), optional quiet hours with per-device high/normal priority, and a three-mode daily reminder (none, overnight changes, daily summary with all-clear).
+    Everything else carries over from 1.x: two independent alert streams (the report, and a "Sentinel not working" alert when a source is itself broken, debounced to ride out restarts and reported on time when real), optional quiet hours with per-device high/normal priority, and a three-mode daily reminder (none, overnight changes, daily summary with all-clear). The overnight mode is a true summary of the quiet window: it lists only the items that appeared during it, judged by each item's own detection time. The daily send is delivery-guaranteed: the scheduled time is only a wake-up, the duty itself is checked on every run, so a send can never be lost to a busy instant or a reboot at the wrong moment, and it is delivered exactly once per day.
 
     Setup needs two stores, created first: a dedicated **Local To-do list** (Settings, Devices & Services, Add Integration, Local To-do) and a dedicated **input_text helper** for internal state. One of each per copy; two copies must never share.
 
@@ -241,7 +289,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.8
+    2.0.0-alpha.9
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -541,7 +589,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.8
+  version: 2.0.0-alpha.9
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list
@@ -788,16 +836,18 @@ variables:
 
   stored_raw: "{{ states(memory_helper) }}"
   stored_parts: >-
-    {% set ns = namespace(u='', h='', t='') %}
+    {% set ns = namespace(u='', h='', r='', t='') %}
     {% for seg in stored_raw.split('|') %}
       {% if seg.startswith('u=') %}{% set ns.u = seg[2:] %}
       {% elif seg.startswith('h=') %}{% set ns.h = seg[2:] %}
+      {% elif seg.startswith('r=') %}{% set ns.r = seg[2:] %}
       {% elif seg.startswith('t=') %}{% set ns.t = seg[2:] %}
       {% endif %}
     {% endfor %}
-    {{ {'u': ns.u, 'h': ns.h, 't': ns.t} }}
+    {{ {'u': ns.u, 'h': ns.h, 'r': ns.r, 't': ns.t} }}
   previous_upstream: "{{ stored_parts.u }}"
   previous_held: "{{ '1' if stored_parts.h == '1' else '0' }}"
+  previous_reminder_date: "{{ stored_parts.r }}"
   previous_notified_iso: "{{ stored_parts.t }}"
 
 trigger:
@@ -821,7 +871,7 @@ trigger:
   - trigger: time
     at: !input daily_reminder_time
     id: daily_reminder
-    alias: Scheduled daily send at the configured time, active when the reminder mode is not none
+    alias: Scheduled wake-up for the daily send; the duty itself is computed on every run, so a dropped or missed trigger cannot lose a delivery
 
 condition:
   - alias: For a source-sensor trigger, run only if the monitored content actually changed (ignore attribute-only churn like a refreshed evaluation timestamp). Other triggers always pass.
@@ -853,7 +903,7 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | quiet: {{ in_quiet_hours }} | reminder_mode: {{ daily_reminder_mode }} | held: {{ previous_held }} | settling: {{ sources_settling }} | any_unavail: {{ any_source_unavailable }} | blipping: {{ any_source_blipping }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }}
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | ok: {{ ok }}{% if not ok %} | ERROR: {{ setup_error }}{% endif %} | flagged: {{ flagged_count }} | quiet: {{ in_quiet_hours }} | reminder_mode: {{ daily_reminder_mode }} | held: {{ previous_held }} | last_reminder: {{ previous_reminder_date if previous_reminder_date else 'never' }} | settling: {{ sources_settling }} | any_unavail: {{ any_source_unavailable }} | blipping: {{ any_source_blipping }} | refresh_set: {{ refresh_button_set }} | debounce: {{ upstream_debounce_seconds }}s | upstream(frozen): {{ upstream_error if upstream_error else 'none' }}
 
   - alias: Stop if setup error
     if:
@@ -1132,22 +1182,50 @@ action:
                   data:
                     item: "{{ repeat.item.uid }}"
 
-  - alias: Work out what to notify this run, the new held flag, and the helper value
+  - alias: Work out the reminder duty, what to notify this run, the new held flag, and the helper value
     variables:
-      is_reminder: "{{ trigger.id == 'daily_reminder' and daily_reminder_mode != 'none' }}"
-      is_all_clear: "{{ is_reminder and daily_reminder_mode == 'daily' and flagged_count | int == 0 }}"
-      reminder_sends_flagged: >-
-        {{ is_reminder and open_count | int > 0
-           and (daily_reminder_mode == 'daily'
-                or (daily_reminder_mode == 'overnight' and previous_held | string == '1')) }}
+      today_iso: "{{ now().date().isoformat() }}"
+      reminder_due: >-
+        {{ daily_reminder_mode != 'none'
+           and now().strftime('%H:%M:%S') >= daily_reminder_time
+           and previous_reminder_date != today_iso }}
+      is_reminder: "{{ reminder_due }}"
+      is_all_clear: "{{ reminder_due and daily_reminder_mode == 'daily' and flagged_count | int == 0 }}"
+      overnight_items: >-
+        {% if daily_reminder_mode != 'overnight' or not quiet_hours_enabled %}
+          {{ [] }}
+        {% else %}
+          {% set end_t = today_at(quiet_hours_end) %}
+          {% set w_end = end_t if now() >= end_t else end_t - timedelta(days=1) %}
+          {% set s_shift = (w_end.date() - now().date()).days %}
+          {% set s_cand = today_at(quiet_hours_start) + timedelta(days=s_shift) %}
+          {% set w_start = s_cand if s_cand < w_end else s_cand - timedelta(days=1) %}
+          {% set ns = namespace(items=[]) %}
+          {% for d in open_report %}
+            {% if d.entity_id in known_open_ids %}
+              {% set k = (known_items | selectattr('entity_id', 'eq', d.entity_id) | selectattr('status', 'eq', 'needs_action') | list | first) %}
+              {% set since_dt = k.since | as_datetime(none) %}
+              {% if since_dt is not none and w_start <= since_dt and since_dt < w_end %}
+                {% set ns.items = ns.items + [d] %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.items }}
+        {% endif %}
+      overnight_sends: >-
+        {{ reminder_due and daily_reminder_mode == 'overnight'
+           and previous_held | string == '1' and overnight_items | length > 0 }}
+      reminder_daily_sends: "{{ reminder_due and daily_reminder_mode == 'daily' and open_count | int > 0 }}"
+      reminder_sends_flagged: "{{ reminder_daily_sends or overnight_sends }}"
       event_should_notify: "{{ has_new }}"
       should_push: "{{ event_should_notify or reminder_sends_flagged }}"
-      upstream_should_notify: "{{ upstream_changed_live or (is_reminder and upstream_broken_live) }}"
+      upstream_should_notify: "{{ upstream_changed_live or (reminder_due and upstream_broken_live) }}"
       held_new: >-
-        {%- if is_reminder and daily_reminder_mode == 'overnight' -%}0{%- elif has_new and in_quiet_hours -%}1{%- elif has_new -%}0{%- else -%}{{ previous_held }}{%- endif -%}
-      memory_needs_write: "{{ upstream_changed_live or (held_new | string | trim) != (previous_held | string | trim) }}"
+        {%- if reminder_due and daily_reminder_mode == 'overnight' -%}0{%- elif has_new and in_quiet_hours -%}1{%- elif has_new -%}0{%- else -%}{{ previous_held }}{%- endif -%}
+      reminder_date_new: "{{ today_iso if reminder_due else previous_reminder_date }}"
+      memory_needs_write: "{{ upstream_changed_live or (held_new | string | trim) != (previous_held | string | trim) or reminder_due }}"
       stored_value: >-
-        u={{ upstream_fingerprint_live }}|h={{ held_new | string | trim }}|t={{ now().isoformat() }}
+        u={{ upstream_fingerprint_live }}|h={{ held_new | string | trim }}|r={{ reminder_date_new }}|t={{ now().isoformat() }}
       report_title: >-
         {% if family_mode == 'battery' %}
           Battery Sentinel: {{ open_count }} {{ 'battery' if open_count | int == 1 else 'batteries' }} to check
@@ -1169,10 +1247,31 @@ action:
       new_body: >-
         {% set new_lines = (additions | map(attribute='line') | list) + (kind_changed | map(attribute='line') | list) %}
         {{ new_lines | sort | join('\n') }}{% if open_count | int > new_count | int %}{{ '\n' }}Also open: {{ open_count | int - new_count | int }} more{% endif %}
-      push_title: "{{ report_title if reminder_sends_flagged else new_title }}"
-      push_body: "{{ report_body if reminder_sends_flagged else new_body }}"
+      overnight_deliver: >-
+        {% set new_ids = (additions | map(attribute='entity_id') | list) + (kind_changed | map(attribute='entity_id') | list) %}
+        {% set win_ids = overnight_items | map(attribute='entity_id') | list %}
+        {% set ns = namespace(items=[]) %}
+        {% for d in open_report %}
+          {% if d.entity_id in win_ids or (has_new and d.entity_id in new_ids) %}
+            {% set ns.items = ns.items + [d] %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.items }}
+      overnight_count: "{{ overnight_deliver | length }}"
+      overnight_title: >-
+        {% if family_mode == 'battery' %}
+          Battery Sentinel: {{ overnight_count }} {{ 'battery' if overnight_count | int == 1 else 'batteries' }} went low overnight
+        {% elif family_mode == 'entity' %}
+          Entity Sentinel: {{ overnight_count }} {{ 'entity' if overnight_count | int == 1 else 'entities' }} went quiet overnight
+        {% else %}
+          Sentinel report
+        {% endif %}
+      overnight_body: >-
+        {{ overnight_deliver | map(attribute='line') | list | join('\n') }}{% if open_count | int > overnight_count | int %}{{ '\n' }}Also open: {{ open_count | int - overnight_count | int }} more{% endif %}
+      push_title: "{{ report_title if reminder_daily_sends else (overnight_title if overnight_sends else new_title) }}"
+      push_body: "{{ report_body if reminder_daily_sends else (overnight_body if overnight_sends else new_body) }}"
 
-  - alias: Persist the helper when the broken-Sentinel state or the held flag actually changed
+  - alias: Persist the helper when the broken-Sentinel state, the held flag, or the reminder date actually changed
     if:
       - condition: template
         value_template: "{{ memory_needs_write }}"
@@ -1357,4 +1456,4 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | open: {{ open_count }} | acked: {{ acked_open_count }} | additions: {{ additions | length }} | kind_changed: {{ kind_changed | length }} | silent_updates: {{ silent_updates | length }} | recovered: {{ recovered | length }} | notify: {{ should_push }} ({{ 'reminder' if reminder_sends_flagged else 'new' if event_should_notify else 'none' }}) | all_clear: {{ is_all_clear }} | held_prev: {{ previous_held }} | held_new: {{ held_new | string | trim }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_notify: {{ upstream_should_notify }} | quiet: {{ in_quiet_hours }} | targets: {{ push_plan | length }} (high {{ high_priority_targets | length }}, normal {{ normal_priority_targets | length }})
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | open: {{ open_count }} | acked: {{ acked_open_count }} | additions: {{ additions | length }} | kind_changed: {{ kind_changed | length }} | silent_updates: {{ silent_updates | length }} | recovered: {{ recovered | length }} | notify: {{ should_push }} ({{ 'daily' if reminder_daily_sends else 'overnight' if overnight_sends else 'new' if event_should_notify else 'none' }}) | reminder_due: {{ reminder_due }} | overnight_window: {{ overnight_items | length }} | all_clear: {{ is_all_clear }} | held_prev: {{ previous_held }} | held_new: {{ held_new | string | trim }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_notify: {{ upstream_should_notify }} | quiet: {{ in_quiet_hours }} | targets: {{ push_plan | length }} (high {{ high_priority_targets | length }}, normal {{ normal_priority_targets | length }})

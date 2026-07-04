@@ -194,6 +194,28 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.9.2 - THE RELOAD GUARD, from a live failure on 2026-07-04: during
+#           an HA Core restart plus template reload, the source sensors passed
+#           through an attribute-less instant; the settle gate, reading boot_time
+#           and finding nothing, concluded no reboot was in progress, the blip
+#           path's own refresh press then woke the freshly recreated sensors into
+#           their startup grace, and their honest grace-empty answers deleted
+#           every item as a recovery. Three holds close the hole independently:
+#           (1) CONSERVATIVE SETTLE EVIDENCE, a listed source that looks alive but
+#           whose boot_time cannot be read counts as settling (unknown means
+#           assume rebooting); sources that are unavailable, in setup_error, or
+#           ok:false are exempt so the blip and broken-Sentinel paths still own
+#           them and a broken source still alerts. (2) LIVE SETTLE RECHECK, the
+#           post-refresh live recompute now re-judges the settle state alongside
+#           the blip state, so a run that pressed the refresh button and woke
+#           grace-fresh sensors holds instead of trusting their empty answers.
+#           (3) POST-UNAVAILABLE HOLD, a run fired by a source transitioning FROM
+#           unavailable or unknown is held outright; the source's next contentful
+#           evaluation on its own settled cycle acts instead. Net effect: after
+#           any reload, restart, or blip, the engine waits out the sources' grace,
+#           at most one debounce, before believing anything. A recovery that
+#           arrives as a from-unavailable transition is now acted on one
+#           evaluation later than before, a deliberate trade. No input changes.
 #   2.0.0-alpha.9.1 - Form reorganization only; the engine is untouched and no
 #           input keys changed, so existing automations are unaffected. The
 #           one-input Mode section and the collapsed Battery Settings section
@@ -301,7 +323,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.9.1
+    2.0.0-alpha.9.2
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -583,7 +605,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.9.1
+  version: 2.0.0-alpha.9.2
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list
@@ -639,14 +661,17 @@ variables:
     {{ source_refresh_button not in [none, ''] }}
 
   sources_settling: >-
-    {% set ns = namespace(latest=none) %}
+    {% set ns = namespace(latest=none, blind=false) %}
     {% for s in source_sensors %}
+      {% set st = states(s) %}
       {% set bt = state_attr(s, 'boot_time') | as_datetime(none) %}
       {% if bt is not none and (ns.latest is none or bt > ns.latest) %}
         {% set ns.latest = bt %}
+      {% elif bt is none and states[s] is not none and st not in ['unavailable', 'unknown', 'setup_error'] and state_attr(s, 'ok') != false %}
+        {% set ns.blind = true %}
       {% endif %}
     {% endfor %}
-    {{ ns.latest is not none and (now() - ns.latest).total_seconds() < upstream_debounce_seconds }}
+    {{ ns.blind or (ns.latest is not none and (now() - ns.latest).total_seconds() < upstream_debounce_seconds) }}
 
   any_source_unavailable: >-
     {% set ns = namespace(any=false) %}
@@ -906,6 +931,27 @@ action:
     then:
       - stop: Setup error, see the debug log and the README.
 
+  - alias: Hold a run fired by a source returning from unavailable or unknown, its fresh answers are not trusted until it reports on its own settled cycle
+    if:
+      - condition: template
+        value_template: >-
+          {{ trigger.id == 'source_change' and trigger.from_state is not none
+             and trigger.from_state.state in ['unavailable', 'unknown'] }}
+    then:
+      - alias: Log that this run is held for a post-unavailable transition
+        if:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        then:
+          - action: system_log.write
+            continue_on_error: true
+            data:
+              level: info
+              logger: sentinel_notify
+              message: >-
+                Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | post-unavailable hold: the source just returned from {{ trigger.from_state.state }}, its answers are not trusted until it reports on its own settled cycle | flagged now: {{ flagged_count }}
+      - stop: The triggering source just returned from unavailable; this run is held, and the source's next contentful evaluation acts instead.
+
   - alias: Ride out the restart, hold the list, the helper, and notifications while the source Sentinels settle after a reboot
     if:
       - condition: template
@@ -1003,11 +1049,23 @@ action:
           {% endif %}
         {% endfor %}
         {{ ns.any }}
+      sources_settling_live: >-
+        {% set ns = namespace(latest=none, blind=false) %}
+        {% for s in source_sensors %}
+          {% set st = states(s) %}
+          {% set bt = state_attr(s, 'boot_time') | as_datetime(none) %}
+          {% if bt is not none and (ns.latest is none or bt > ns.latest) %}
+            {% set ns.latest = bt %}
+          {% elif bt is none and states[s] is not none and st not in ['unavailable', 'unknown', 'setup_error'] and state_attr(s, 'ok') != false %}
+            {% set ns.blind = true %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.blind or (ns.latest is not none and (now() - ns.latest).total_seconds() < upstream_debounce_seconds) }}
 
-  - alias: Blip hold, stop while a source is briefly unavailable inside the debounce, so an incomplete flagged list cannot disturb the to-do memory or fire false alerts; the source_broken trigger re-runs at the debounce if it stays down, and a recovery re-runs via its own state change
+  - alias: Blip and settle hold, judged live after any refresh, stop while a source is briefly unavailable inside the debounce or the sources are inside their startup grace, so an untrustworthy flagged list cannot disturb the to-do memory or fire false alerts
     if:
       - condition: template
-        value_template: "{{ sources_blipping_live }}"
+        value_template: "{{ sources_blipping_live or sources_settling_live }}"
     then:
       - alias: Log that this run is held for a blip
         if:
@@ -1020,8 +1078,8 @@ action:
               level: info
               logger: sentinel_notify
               message: >-
-                Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | blip: a source is unavailable but inside the {{ upstream_debounce_seconds }}s debounce, holding the list and notifications until it recovers or is declared broken | flagged now: {{ flagged_count }}
-      - stop: A source is unavailable but still inside the debounce; the list and notifications are held so a brief blip cannot disturb the pre-blip state.
+                Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | live hold: {{ 'a source is unavailable inside the debounce' if sources_blipping_live else 'the sources are inside their startup grace after the refresh' }}, holding the list and notifications | flagged now: {{ flagged_count }}
+      - stop: A source is blipping or freshly rebooted (judged live, after any refresh); the list and notifications are held so an untrustworthy flagged list cannot disturb the pre-blip state.
 
   - alias: Read the to-do memory, both open and acknowledged items
     action: todo.get_items

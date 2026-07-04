@@ -1,4 +1,4 @@
-# Dashboard Sentinel (Alpha)
+# Dashboard Sentinel (Beta)
 
 A dashboard for your Sentinels: a status board that shows what has gone quiet and what is running low across your whole house, and the optional aggregator sensor that some of those dashboards need.
 
@@ -195,7 +195,8 @@ The point of this sensor is to be read, so these are the interface a card or aut
 | --- | --- |
 | state | The deduped count of gone-quiet entities across all accepted sources. |
 | `devices` | The merged, deduped, entity-id-sorted list. Each entry mirrors Entity Sentinel: `name`, `entity_id`, `area`, `reason`, `since`, `last_seen`, `age`. |
-| `ok` | `true` only when every source was accepted (none down, none rejected). |
+| `ok` | `true` only when the setup is valid and every source was accepted (none down, none rejected). |
+| `error` | Empty when the setup is valid. On a setup error (no sources selected, or the same source listed twice) it carries the diagnosis and the fix, and the sensor's state reads `setup_error` with all outputs empty. |
 | `unavailable_count` / `frozen_count` | Sub-counts within `devices`. |
 | `sources` | The valid Entity Sentinels that are currently down, each with `sensor`, `name`, `status` (`setup_error`, `unavailable`), and `error`. Empty when all sources are healthy. |
 | `rejected` | The misconfigured inputs, each with `sensor`, `name`, `status` (`not_a_sentinel`, `wrong_family`, `aggregate`, `missing`), and a `note` explaining the problem. Empty when all inputs are valid. |
@@ -227,7 +228,7 @@ Once it is built, point the Entities card above at `sensor.dashboard_sentinel` i
 
 ## What I am asking for
 
-This is an alpha, and unlike the Sentinels themselves, it is the newest and least-settled idea in the set. I am putting it out because I run it, not because it is finished, and I am genuinely unsure it is the right long-term shape. I would rather hear that now than after building a lot on top of it.
+This is a beta. It graduated from alpha after an adversarial torture suite of 27 scenario checks, which found and fixed one real bug on the way (a down source misdiagnosed as not-a-Sentinel), and it runs live on my own system combining three tiers. The aggregator's shape, one deduped mirror sensor, has settled; what beta still asks of you is time in varied homes and your read on where the dashboard layer should go next.
 
 So, plainly:
 
@@ -243,6 +244,7 @@ This tracks the decisions and changes as the project develops, so the thinking b
 
 | Version | Notes |
 | --- | --- |
+| 1.0.0-beta | Graduation from alpha, gated by an adversarial torture suite (27 checks) that found one real bug and drove two hardening rules. Down-source fix: an unavailable entity carries no attributes, so the identity checks read nothing and a genuinely down Entity Sentinel was misreported as `not_a_sentinel` in `rejected` instead of a down source in `sources`; the state check now comes first, so a dead or restarting source is truthfully reported as down. Fail-loud setup: an empty source list, or the same source listed more than once, now stops the sensor with state `setup_error`, `ok: false`, and a new `error` attribute carrying the diagnosis and the fix, naming each duplicated sensor, instead of a silent green board or a silently deduped duplicate that miscounted `total_monitored`. The `error` attribute joins the contract permanently, empty when healthy. Merge, dedupe, precedence, sort, and rejection behavior are otherwise unchanged from alpha.2 and re-proven by the suite. |
 | 1.0.0-alpha.1 | First build. Reads any number of Entity Sentinel sensors and presents them as one deduped, sorted mirror. Validates each source by its marker attribute: a healthy Entity Sentinel is merged; a broken one is reported in the `sources` list while the rest still aggregate; a wrong input (a non-Sentinel, a wrong-family Sentinel such as Battery, another aggregate or itself, or a missing entity) is surfaced in the `rejected` list rather than silently dropped. Dedupes across sources with the genuinely-gone-beats-frozen precedence used by Sentinel Notify, sorts by entity id, and carries identity markers. Event-driven off the named sources and Home Assistant start, with no detection engine of its own. |
 
 ## License

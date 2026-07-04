@@ -194,6 +194,18 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.9.1 - Form reorganization only; the engine is untouched and no
+#           input keys changed, so existing automations are unaffected. The
+#           one-input Mode section and the collapsed Battery Settings section
+#           (which existed to hold a single battery-only toggle, hidden from
+#           Battery users and dead weight for Entity users) are dissolved: Mode,
+#           the sensors, the to-do list, the helper, and the battery-only
+#           offline toggle now form one section, "Mode, Sensors, and Memory",
+#           the complete "what this copy is" in one card. The notification tag
+#           moved to Advanced, where its only real audience (multi-copy users
+#           pushing to one device) lives. Heavy input descriptions trimmed
+#           roughly a third with no load-bearing fact removed; the
+#           action-name-versus-entity rule is stated once and referenced.
 #   2.0.0-alpha.9 - THE RELIABLE REMINDER. Two fixes from the first live morning.
 #           (1) REMINDER AS A DUTY. The reminder was identified by its time
 #           trigger; when that trigger landed on the same instant as a sensor scan
@@ -289,24 +301,24 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.9
+    2.0.0-alpha.9.1
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
     min_version: 2024.10.0
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.yaml
   input:
-    mode_section:
-      name: Mode
-      icon: mdi:shape-outline
-      description: Choose which Sentinel family this companion watches. One family per instance.
+    setup_section:
+      name: Mode, Sensors, and Memory
+      icon: mdi:radar
+      description: What this copy is and what it reads. One family, one to-do list, and one helper per copy.
       input:
         family_mode:
           name: Sentinel family
           description: >-
             Battery watches Battery Sentinel sensors and reports low batteries.
             Entity watches Entity Sentinel sensors and reports entities that have
-            gone quiet. Pick one. If you run both Sentinels, build two copies of
+            gone quiet. Pick one; to cover both families, build two copies of
             this companion.
           default: battery
           selector:
@@ -316,12 +328,6 @@ blueprint:
                   value: battery
                 - label: Entity (report entities gone quiet)
                   value: entity
-
-    source_section:
-      name: Sensors and Memory
-      icon: mdi:radar
-      description: The Sentinel sensors this companion reads, the to-do list that holds its items, and the helper that holds its internal state.
-      input:
         source_sensors:
           name: Sentinel sensors
           description: >-
@@ -336,15 +342,12 @@ blueprint:
         todo_list:
           name: To-do list
           description: >-
-            REQUIRED. The to-do list that holds one item per flagged device, the
-            companion's memory and your live report. Create a dedicated Local
-            To-do list first (Settings, Devices & Services, Add Integration,
-            Local To-do) and select it here. CRITICAL: every copy of this
-            companion must have its OWN list; two copies sharing one list will
-            fight over its items. The companion only manages items it created
-            (identified internally) and never touches anything else on the list,
-            but a dedicated list is strongly recommended. Do not rename the list
-            after selecting it.
+            REQUIRED. Holds one item per flagged device, the companion's memory
+            and your live report. Create a dedicated Local To-do list first
+            (Settings, Devices & Services, Add Integration, Local To-do) and
+            select it here. One list per copy, never shared, and do not rename
+            it after selecting. The companion only touches items it created,
+            but a dedicated list is strongly recommended.
           selector:
             entity:
               filter:
@@ -353,29 +356,24 @@ blueprint:
         memory_helper:
           name: Memory helper (input_text)
           description: >-
-            REQUIRED. An input_text helper for the companion's internal state
-            (the broken-Sentinel fingerprint and the quiet-hours held flag).
-            Create one first (Settings, Devices & Services, Helpers, Create
-            Helper, Text) and select it here. One dedicated helper per copy. A
-            helper carried over from the 1.x release works as-is.
+            REQUIRED. An input_text holding the companion's internal state (the
+            broken-Sentinel record, the quiet-hours held flag, and the last
+            daily-send date). Create one first (Settings, Devices & Services,
+            Helpers, Create Helper, Text); the defaults are fine. One dedicated
+            helper per copy. A helper carried over from the 1.x release works
+            as-is.
           selector:
             entity:
               filter:
                 - domain: input_text
               multiple: false
-
-    battery_section:
-      name: Battery Settings
-      icon: mdi:battery-alert
-      description: Fill this in only if the mode above is Battery. Ignored for Entity.
-      collapsed: true
-      input:
         battery_report_offline:
           name: Also report offline batteries
           description: >-
-            When on, batteries that are currently unavailable or unknown (the
-            sensor's unavailable_entities) are tracked alongside the low ones. Off
-            by default, so you hear only about low batteries.
+            (Battery mode only.) When on, batteries that are currently
+            unavailable or unknown are tracked alongside the low ones, shown as
+            (offline). Off by default, so you hear only about low batteries.
+            Ignored in Entity mode.
           default: false
           selector:
             boolean: {}
@@ -388,14 +386,12 @@ blueprint:
         high_priority_targets:
           name: High-priority push targets
           description: >-
-            The mobile_app notify ACTIONS that should receive HIGH-priority pushes,
-            one per line, each in the form notify.mobile_app_your_phone. High
-            priority bypasses Do Not Disturb (an alarm sound on Android, a
-            time-sensitive alert on iOS) AND pierces quiet hours. Use the ACTION
-            name (notify.mobile_app_...), NOT the notify entity: only the action
-            carries the priority and sound options. Find the exact name in
-            Settings, Developer tools, Actions, search mobile_app. Leave empty for
-            no high-priority pushes.
+            The mobile_app notify ACTIONS to receive HIGH-priority pushes, one
+            per line, in the form notify.mobile_app_your_phone. Use the ACTION
+            name, not the notify entity; only the action carries the priority
+            and sound payload (find it in Developer Tools, Actions, search
+            mobile_app). High priority bypasses Do Not Disturb and pierces
+            quiet hours. Leave empty for none.
           default: []
           selector:
             text:
@@ -424,20 +420,10 @@ blueprint:
           default: true
           selector:
             boolean: {}
-        notification_tag:
-          name: Notification tag
-          description: >-
-            The tag used to replace this companion's push in place rather than
-            stacking new ones. Leave the default unless you run several copies
-            pushing to the same device, in which case give each a distinct tag.
-          default: sentinel_notify
-          selector:
-            text: {}
-
     quiet_hours_section:
       name: Quiet Hours
       icon: mdi:sleep
-      description: An optional daily window during which phone pushes to normal-priority targets are held back. The to-do list and the persistent card still update. Pair it with the Daily Reminder's overnight mode to hear in the morning about an addition held overnight. Off by default.
+      description: An optional daily window that holds phone pushes to normal-priority targets. Off by default.
       collapsed: true
       input:
         quiet_hours_enabled:
@@ -483,21 +469,17 @@ blueprint:
           name: Daily reminder mode
           description: >-
             What the once-a-day send at the time below does. NONE: nothing
-            scheduled ever fires; you are notified only when something new is
-            flagged. OVERNIGHT CHANGES: fires only when an addition occurred
-            during your quiet hours, and sends the current open items
-            (acknowledged ones excluded); a quiet night stays silent. Requires
-            quiet hours to be enabled (with quiet hours off nothing is ever held,
-            so this behaves as none), and the time below should be at or after
-            the quiet-hours end. DAILY SUMMARY: fires every day; the open items
-            when something needs attention, or an all-clear when nothing is
-            flagged at all. The all-clear goes to the persistent card and to
-            high-priority targets only, at normal delivery settings. When every
-            remaining item is acknowledged, the daily run stays silent instead of
-            claiming all clear. In either active mode the send reuses the same
-            tag, delivers to normal-priority targets even if the time falls
-            inside quiet hours, and re-raises the broken-Sentinel alert if a
-            source is still broken.
+            scheduled fires; you are notified only when something new is
+            flagged. OVERNIGHT CHANGES: fires only when something appeared
+            during your quiet hours, and lists only those items, judged by each
+            item's own detection time; a quiet night stays silent. Requires
+            quiet hours (with it off, this behaves as none), and the time below
+            should be at or after the quiet-hours end. DAILY SUMMARY: fires
+            every day; the open items, or an all-clear when nothing is flagged
+            at all (persistent card plus high-priority targets only). When
+            every remaining item is acknowledged, the daily run stays silent.
+            The send is delivered exactly once per day and cannot be lost to a
+            busy instant or a reboot.
           default: none
           selector:
             select:
@@ -511,9 +493,11 @@ blueprint:
         daily_reminder_time:
           name: Reminder time
           description: >-
-            The time of day the reminder fires, when the mode above is not none.
-            For the overnight mode, set it at or after the quiet-hours end. For
-            example 08:00:00 for 8 in the morning.
+            When the daily send is owed, when the mode above is not none. The
+            time is only a wake-up; the send is computed on every run and a
+            send missed during a reboot is caught up by the next run. For the
+            overnight mode, set it at or after the quiet-hours end. For example
+            08:00:00 for 8 in the morning.
           default: "08:00:00"
           selector:
             time: {}
@@ -524,6 +508,16 @@ blueprint:
       description: Broken-Sentinel timing, optional active refresh, and diagnostics. The defaults suit most systems.
       collapsed: true
       input:
+        notification_tag:
+          name: Notification tag
+          description: >-
+            The tag that replaces this companion's push in place rather than
+            stacking. It only matters when several copies push to the same
+            device; give each copy a distinct tag then. Otherwise leave the
+            default.
+          default: sentinel_notify
+          selector:
+            text: {}
         upstream_debounce_seconds:
           name: Broken-Sentinel debounce (seconds)
           description: >-
@@ -589,7 +583,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.9
+  version: 2.0.0-alpha.9.1
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list

@@ -175,11 +175,11 @@ blueprint:
 
     Its companions, **Entity Sentinel** and **Battery Sentinel**, are the sensors that do the watching; this one only combines Entity Sentinels for display. Build at least one Entity Sentinel first.
 
-    This is an alpha and a direction under development. It is not warranted and not claimed to work; it is offered for feedback. The README has the full reasoning and the ask.
+    This is a beta: graduated from alpha by a 27-check adversarial torture suite (which found and fixed a down-source misdiagnosis on the way) and running live combining three tiers. What beta still needs is time in varied homes. The README has the full reasoning and the feedback ask.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.0.0-alpha.2
+    1.0.0-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.yaml

@@ -541,17 +541,16 @@ blueprint:
           selector:
             text: {}
         upstream_debounce_seconds:
-          name: Broken-Sentinel debounce (seconds)
+          name: Source debounce and settle window (seconds)
           description: >-
-            Three jobs in one number. How long a source must stay unavailable
-            before it is reported as not working (a dedicated trigger fires the
-            report the moment this elapses). How long after a reboot the run is
-            held while the sources settle. And the window during which a briefly
-            unavailable source holds the run as a blip rather than disturbing the
-            list. 240 (four minutes) clears a normal restart; it matches the
-            startup grace the Sentinel sensors use. A source in setup_error,
-            reporting ok:false, or genuinely missing is reported immediately
-            regardless.
+            One window, three jobs. How long a source must stay unavailable
+            before it is reported broken (a dedicated trigger fires the report
+            on time). How long runs are held while sources settle after a
+            reboot or reload, judged live, with a source lacking a readable
+            boot_time treated as still settling. And how long a brief source
+            blip holds the run instead of disturbing the list. 240 clears a
+            normal restart and matches the Sentinels' startup grace. A
+            setup_error, ok:false, or missing source is reported immediately.
           default: 240
           selector:
             number:

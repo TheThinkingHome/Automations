@@ -1,21 +1,4 @@
-# Sentinel Notify (2.0 Development)
-
-> **This is the active development branch.** The blueprint here is the 2.0 line: rebuilt, bench-proven, and running live on my own system, but young. Inputs and behavior may still change between commits. **If you want the settled, frozen release, use the stable branch below.**
-
-## The Stable Release: 1.0.0-alpha.7.2
-
-The frozen stable release is **1.0.0-alpha.7.2**. It uses the 1.x hash-memory engine, works differently from 2.0, and receives no further changes except critical fixes:
-
-- [**Stable README**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify_1.0.0a7.2.md), setup, parameters, and behavior.
-- [**Stable blueprint YAML**](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify_1.0.0a7.2.yaml), the file to import.
-
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Fautomation%2Fsentinel_notify_1.0.0a7.2.yaml)
-
-If you imported Sentinel Notify from this repository before the 2.0 split, your imported copy is a snapshot and keeps working as-is. Re-import from the stable URL above to stay on 1.x, or from this branch to move to 2.0.
-
----
-
-# Sentinel Notify 2.0
+# Sentinel Notify
 
 A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into a live to-do list and addition-only notifications: every problem becomes an item on a list you can see, check off, and watch resolve, and your phone hears only about what is new.
 
@@ -34,7 +17,7 @@ Because it reads the structured attributes, it can do three things the common no
 
 The 1.x engine remembered what it last reported as a hashed fingerprint inside an `input_text` helper, because a helper caps at 255 characters and a hash was the only way to fit. A hash can answer one question, did the set change, and nothing else. 2.0 moves the memory into a **Local To-do list**: the actual items, however many there are. That single change gives the engine real set arithmetic (it knows *what* changed, not just *that* something did), gives you the list as a living report, and deletes the 255-character wall for good.
 
-The 2.0 engine is new. It has passed an adversarial simulation suite of 41 scenario checks and two external code reviews, and it runs live on my own system, both families, real notifications. But it has not yet had months on real hardware, and real homes are more varied than any one setup. That is why it is an **alpha**: if you run it, you are also helping test it, and the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where anything you hit gets found and fixed. The frozen 1.x release above remains the settled choice until this line graduates.
+The 2.0 engine is young but proven where it counts: it has passed an adversarial simulation suite of 49 scenario checks and external code review, and it runs live on my own system, both families, real notifications, through real nightly reboot cycles. What it has not had is months of varied homes, and real homes are more varied than any one setup. That is why it is still an **alpha**: if you run it, you are also helping test it, and the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where anything you hit gets found and fixed.
 
 ## How it Works
 
@@ -54,7 +37,7 @@ It does not poll. It re-evaluates the moment a watched Sentinel sensor changes, 
 - **Sends where you want.** Push to any number of mobile devices, and optionally a persistent notification in the Home Assistant UI showing the current open items, replaced in place so it never stacks.
 - **Priority is per device.** Two lists, high and normal. High bypasses Do Not Disturb (alarm sound on Android, time-sensitive on iOS); normal is standard delivery.
 - **Optional quiet hours.** Off by default. Hold normal-priority pushes during a daily window; high-priority pushes still come through. The to-do list and the persistent card keep updating. Pair it with the daily reminder's overnight mode to hear in the morning about anything added overnight.
-- **Optional daily reminder, in one of two modes.** Off by default. Overnight changes: fires only when something was added during your quiet hours, listing the open items; a quiet night stays silent. Daily summary: fires every day, with the open items or an all-clear when nothing is flagged.
+- **Optional daily reminder, in one of two modes.** Off by default. Overnight changes: fires only when something appeared during your quiet hours, and lists only those items, judged by each item's own detection time; a quiet night stays silent. Daily summary: fires every day, with the open items or an all-clear when nothing is flagged. Either way the send cannot be lost: the scheduled time is only a wake-up, the send itself is checked on every run and delivered exactly once per day, so a busy instant or a reboot at the wrong moment only delays it to the next run.
 - **Rides out restarts and blips, on both streams.** The "Sentinel not working" alert is debounced so a reboot never fires it falsely, and fires on time when a source really dies. The whole run is held while sources settle after a reboot or blip briefly unavailable, so the to-do list can never be mass-deleted and re-announced by a restart.
 - **Fails loud if set up wrong.** A wrong-family sensor, a missing or deleted to-do list, or a missing or deleted helper stops with a clear log message rather than failing quietly.
 
@@ -92,7 +75,7 @@ Or paste this URL into Settings, Automations & Scenes, Blueprints, Import Bluepr
 https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/automation/sentinel_notify.yaml
 ```
 
-Your imported copy is a snapshot; re-import to pick up newer development builds, and check the version number in the blueprint description. Upgrading from 1.x: re-import, then open each existing automation, select its new to-do list, and save. The helper carries over; the first run after upgrade announces everything currently flagged once, since the list starts empty, and the addition-only gate takes over from there.
+Your imported copy is a snapshot; re-import to pick up newer releases, and check the version number in the blueprint description. Upgrading from 1.x: re-import, then open each existing automation, select its new to-do list, and save. The helper carries over; the first run after upgrade announces everything currently flagged once, since the list starts empty, and the addition-only gate takes over from there.
 
 ## Setting Up the Automation
 
@@ -117,7 +100,7 @@ The Battery Settings section applies only to Battery mode; in Entity mode, leave
 | Sentinel family | Yes | Battery | Battery or Entity. One family per copy. |
 | Sentinel sensors | Yes | none | One or more Sentinel sensors of the chosen family. Combined into one list. Pointing at the wrong family stops with a setup error. |
 | To-do list | Yes | none | The dedicated Local To-do list that holds one item per flagged device. One per copy; do not rename it after selecting. |
-| Memory helper | Yes | none | The `input_text` holding the companion's internal state. One per copy. A 1.x helper works as-is. |
+| Memory helper | Yes | none | The `input_text` holding the companion's internal state: the broken-Sentinel record, the quiet-hours held flag, and the last daily-send date. One per copy. A 1.x helper works as-is. |
 | Also report offline batteries | No | off | Battery mode only. When on, batteries that are currently unavailable are tracked alongside the low ones. |
 | High-priority push targets | No | none | The mobile_app notify action(s) to receive high-priority pushes, one per line, in the form `notify.mobile_app_yourphone` (the action name, not the `notify.yourphone` entity, which cannot carry the priority and sound payload). High bypasses Do Not Disturb and pierces quiet hours. Find the exact name in Developer Tools, Actions, search mobile_app. |
 | Normal-priority push targets | No | none | The mobile_app notify action(s) to receive normal-priority pushes, same form. Normal is standard delivery and respects quiet hours; use the daily reminder's overnight mode to hear in the morning about an addition that was held. A target in both lists is treated as high. Leave both lists empty for a list-and-card-only setup. |
@@ -126,8 +109,8 @@ The Battery Settings section applies only to Battery mode; in Entity mode, leave
 | Enable quiet hours | No | off | When on, normal-priority pushes are held during the window below; high-priority pushes still come through. The list, the card, and the internal state keep updating. Nothing fires when the window ends. |
 | Quiet hours start | No | `22:00:00` | When the quiet window begins. A start later than the end is treated as crossing midnight. |
 | Quiet hours end | No | `08:00:00` | When the quiet window ends. Nothing fires at this time; it only defines the window. |
-| Daily reminder mode | No | None | What the once-a-day send does. None: nothing scheduled ever fires. Overnight changes: fires only when something was added during quiet hours, listing the open items (acknowledged ones excluded); requires quiet hours, and the time should be at or after the quiet-hours end. Daily summary: fires every day, with the open items or an all-clear when nothing is flagged at all (persistent card plus high-priority targets only). When every remaining item is acknowledged, the daily run stays silent rather than claiming all clear. |
-| Reminder time | No | `08:00:00` | The time of day the reminder fires, when the mode is not None. For overnight mode, set it at or after the quiet-hours end. |
+| Daily reminder mode | No | None | What the once-a-day send does. None: nothing scheduled ever fires. Overnight changes: fires only when something appeared during quiet hours, and lists only those items, judged by each item's own detection time (acknowledged ones excluded); requires quiet hours, and the time should be at or after the quiet-hours end. Daily summary: fires every day, with the open items or an all-clear when nothing is flagged at all (persistent card plus high-priority targets only). When every remaining item is acknowledged, the daily run stays silent rather than claiming all clear. |
+| Reminder time | No | `08:00:00` | When the daily send is owed, when the mode is not None. The time is only a wake-up: the send is computed on every run and delivered once per day, so any time works, colliding with a sensor scan is harmless, and a send missed during a reboot is caught up by the next run. For overnight mode, set it at or after the quiet-hours end so the window has ended. |
 | Broken-Sentinel debounce (seconds) | No | `240` | Three jobs in one number: how long a source must stay unavailable before it is reported as not working (a dedicated trigger fires the report the moment this elapses), how long a run is held while sources settle after a reboot, and the window during which a briefly unavailable source holds the run as a blip. A setup error or missing source is reported immediately regardless. |
 | Source refresh button (optional) | No | none | An `input_button` that re-evaluates your source Sentinels, the same one you set as their refresh button. When set, a briefly unavailable source is prompted to re-check and confirm recovery fast. A source already down past the debounce is never pressed. Left unset, nothing is pressed. |
 | Source refresh timeout (seconds) | No | `15` | The most time to wait for sources to recover after a refresh press. The wait ends as soon as every source is healthy. Ignored when no refresh button is set. |
@@ -163,9 +146,11 @@ Optionally, you can point the **source refresh button** input at the same `input
 
 Change detection tells you the moment something new appears. The daily reminder is the one scheduled send, and its mode decides what that send means. Off (None) by default.
 
-**Overnight changes** is the partner to quiet hours. When something is added during the quiet window, your normal-priority devices are held; this mode delivers at the time you set, listing the open items (acknowledged ones excluded). If nothing was added during the window, the morning stays silent. A problem that appeared and cleared on its own overnight also stays silent. A high-priority phone that already got the alert live overnight simply sees the card refresh under the same tag. This mode requires quiet hours; with quiet hours off, nothing is ever held, so it behaves as None. Set the reminder time at or after the quiet-hours end.
+**Overnight changes** is the partner to quiet hours, and it is a true summary of the window. When something is added during the quiet window, your normal-priority devices are held; this mode delivers at the time you set, listing **only the items that appeared during the window**, judged by each item's own detection time, so a week-old known problem never rides along in a morning summary (it shows only in the trailing "Also open" count). If nothing was added during the window, the morning stays silent. A problem that appeared and cleared on its own overnight, or one you acknowledged before morning, also stays silent. A high-priority phone that already got the alert live overnight simply sees the card refresh under the same tag. This mode requires quiet hours; with quiet hours off, nothing is ever held, so it behaves as None. Set the reminder time at or after the quiet-hours end.
 
 **Daily summary** is the once-a-day nudge for things you keep meaning to deal with. Every day at the time you set, it sends the open items if there are any. When nothing is flagged at all, it sends an all-clear instead: a persistent card in the UI, plus a push to high-priority targets only, at standard delivery, so a high-priority phone gets exactly one guaranteed touch per day. When the only remaining items are ones you have acknowledged, the daily run stays silent, acknowledged is not fixed, and the companion will not claim all clear over a problem you have merely accepted.
+
+**The send cannot be lost.** The scheduled time is only a wake-up. Whether the day's send is owed is computed on every run, and whichever run first finds it owed performs it and records the date, exactly once per day. So the reminder time may sit on the same instant as a sensor's scan without a conflict, a send missed because Home Assistant was rebooting at that moment is caught up by the next run, and a run that both owes the send and carries a brand-new detection merges the two into one notification rather than sending twice.
 
 In either mode, the send reuses the same notification tag, delivers to normal-priority targets even if its time falls inside the quiet window (you chose that time explicitly), and re-raises the "Sentinel not working" alert if a source is still broken. The reminder never disturbs change detection.
 
@@ -205,9 +190,10 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 2.0.0-alpha.9 | The reliable reminder, two fixes from the first live morning. The daily send is now a duty, not a trigger: the scheduled time is only a wake-up, and whether the send is owed is computed on every run against a delivery date kept in the helper, so a reminder whose time collides with a sensor scan is delivered by the colliding run itself, any time is valid on or off the scan grid, and a send missed during a reboot is caught up by the next run, exactly once per day. And the overnight mode became a true summary of the quiet window: it lists only the open items whose own detection time falls inside the just-ended window (midnight crossing handled), so a long-known problem never rides along in a morning delivery; overnight arrivals that self-cleared or were acknowledged before morning stay silent, and a send that coincides with a brand-new detection merges into one notification under a dedicated overnight title. No input changes; existing automations upgrade in place, and an older helper value is read as never-delivered, so the first run past the reminder time performs that day's send once. |
 | 2.0.0-alpha.8 | The to-do rebuild. The item memory moves from a hashed fingerprint in an `input_text` to a dedicated Local To-do list, one item per flagged device: the visible text is the report line, the description carries the machine identity, the date is the detection time. Change detection becomes true set arithmetic with an addition-only gate: a notification names what is new (a new device, or a known problem whose reason changed) instead of re-listing the set; a recovery removes its item silently; a restart or staggered device refill can never re-announce known items. The checkbox is an acknowledgment: a checked item stays known, leaves the daily summary and the card's open list, is kept textually current in silence, and re-arms automatically when its device recovers and later fails again. Recovery always removes, never checks off; the checkmark belongs to the user. The `input_text` helper remains for the broken-Sentinel record and the quiet-hours held flag; a 1.x helper carries over as-is. New required input: the dedicated to-do list, one per copy. Items the companion did not create are never touched. Everything from 1.x carries over: the two alert streams, the on-time broken-source trigger, the restart and blip holds (now protecting the list from mass deletion), the recovery-candidate-only refresh, quiet hours with per-device priority, the three-mode daily reminder, and the loud setup errors, now covering a deleted to-do list as well. **Breaking**: this is a new engine; upgrading from 1.x requires creating and selecting a to-do list per copy, and the first run announces everything currently flagged once. |
 
-The full 1.x history is in the [stable README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify_1.0.0a7.2.md#changelog).
+The retired 1.x line and its full history remain in the repository's frozen 1.x files for reference.
 
 ## License
 

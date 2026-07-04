@@ -83,15 +83,13 @@ Unlike the Sentinels (which are template blueprints), this is an **automation** 
 
 The form is organized into sections:
 
-1. **Mode**, choose Battery or Entity.
-2. **Sensors and Memory**, pick your Sentinel sensor(s) of the chosen family, the to-do list, and the helper you created.
-3. **Battery Settings**, an optional toggle used only in Battery mode.
-4. **Notification Targets and Style**, where and how to send, including the high- and normal-priority lists.
-5. **Quiet Hours**, an optional window that holds normal-priority pushes overnight.
-6. **Daily Reminder**, the optional once-a-day send, its mode, and its time.
-7. **Advanced**, the broken-Sentinel debounce, an optional source refresh, and debug logging.
+1. **Mode, Sensors, and Memory**, everything that defines this copy: the family, your Sentinel sensor(s), the to-do list, the helper, and the battery-only offline toggle.
+2. **Notification Targets and Style**, where and how to send, including the high- and normal-priority lists.
+3. **Quiet Hours**, an optional window that holds normal-priority pushes overnight.
+4. **Daily Reminder**, the optional once-a-day send, its mode, and its time.
+5. **Advanced**, the notification tag, the broken-Sentinel debounce, an optional source refresh, and debug logging.
 
-The Battery Settings section applies only to Battery mode; in Entity mode, leave it alone. Entity mode has no extra options of its own, the sensor decides what is flagged, and this companion reports it.
+Entity mode has no options of its own, the sensor decides what is flagged and this companion reports it; the one battery-only toggle is labeled as such.
 
 ## Parameters
 
@@ -190,6 +188,7 @@ More worked examples are in the article: <https://xeazy.com/battery-entity-senti
 
 | Version | Notes |
 | --- | --- |
+| 2.0.0-alpha.9.1 | Form reorganization only; the engine is untouched and no input keys changed, so existing automations are unaffected. The one-input Mode section and the collapsed Battery Settings section are dissolved into a single "Mode, Sensors, and Memory" section holding everything that defines a copy; the notification tag moved to Advanced, where its only real audience lives; and the heavier input descriptions were trimmed by roughly a third with no rule removed. |
 | 2.0.0-alpha.9 | The reliable reminder, two fixes from the first live morning. The daily send is now a duty, not a trigger: the scheduled time is only a wake-up, and whether the send is owed is computed on every run against a delivery date kept in the helper, so a reminder whose time collides with a sensor scan is delivered by the colliding run itself, any time is valid on or off the scan grid, and a send missed during a reboot is caught up by the next run, exactly once per day. And the overnight mode became a true summary of the quiet window: it lists only the open items whose own detection time falls inside the just-ended window (midnight crossing handled), so a long-known problem never rides along in a morning delivery; overnight arrivals that self-cleared or were acknowledged before morning stay silent, and a send that coincides with a brand-new detection merges into one notification under a dedicated overnight title. No input changes; existing automations upgrade in place, and an older helper value is read as never-delivered, so the first run past the reminder time performs that day's send once. |
 | 2.0.0-alpha.8 | The to-do rebuild. The item memory moves from a hashed fingerprint in an `input_text` to a dedicated Local To-do list, one item per flagged device: the visible text is the report line, the description carries the machine identity, the date is the detection time. Change detection becomes true set arithmetic with an addition-only gate: a notification names what is new (a new device, or a known problem whose reason changed) instead of re-listing the set; a recovery removes its item silently; a restart or staggered device refill can never re-announce known items. The checkbox is an acknowledgment: a checked item stays known, leaves the daily summary and the card's open list, is kept textually current in silence, and re-arms automatically when its device recovers and later fails again. Recovery always removes, never checks off; the checkmark belongs to the user. The `input_text` helper remains for the broken-Sentinel record and the quiet-hours held flag; a 1.x helper carries over as-is. New required input: the dedicated to-do list, one per copy. Items the companion did not create are never touched. Everything from 1.x carries over: the two alert streams, the on-time broken-source trigger, the restart and blip holds (now protecting the list from mass deletion), the recovery-candidate-only refresh, quiet hours with per-device priority, the three-mode daily reminder, and the loud setup errors, now covering a deleted to-do list as well. **Breaking**: this is a new engine; upgrading from 1.x requires creating and selecting a to-do list per copy, and the first run announces everything currently flagged once. |
 

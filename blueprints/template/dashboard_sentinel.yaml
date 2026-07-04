@@ -12,7 +12,11 @@
 # It does NOT detect anything itself. Each Entity Sentinel has already done the work
 # of scanning, electing representatives, and classifying gone-quiet entities into its
 # devices attribute. This sensor only reads those finished lists and combines them, so
-# it runs no detection engine, no entity scan, no uptime math.
+# it runs no detection engine, no entity scan, no uptime math. One ordering rule
+# in the source health check: a source's STATE is tested before its identity
+# markers, because an unavailable entity carries no attributes, so identity is
+# unknowable while it is down; checking identity first would misread a dead
+# Entity Sentinel as not-a-Sentinel.
 #
 # WHY IT IS TRIGGER-BASED: it reads its sources through states[sid], where sid is a
 # runtime loop variable over the chosen source list. Home Assistant works out which
@@ -92,6 +96,28 @@
 #      two problem lists with their counts, the identity markers, and last_evaluated.
 #
 # Changelog:
+#   1.0.0-beta - Graduation from alpha, gated by an adversarial torture suite
+#           (dash_brutal.py, 26 checks) that found one real bug and drove two
+#           hardening rules.
+#           (1) DOWN-SOURCE MISDIAGNOSIS FIXED. An unavailable entity has no
+#           attributes, so the identity checks (sentinel_type, sentinel_role) read
+#           None and a genuinely down Entity Sentinel was classified as
+#           'not_a_sentinel' in the rejected list instead of a down source,
+#           contradicting the documented promise and sending the user hunting a
+#           config error instead of a dead sensor. The unavailable/unknown state
+#           check now comes FIRST in the classification chain, before any identity
+#           check, because identity is unknowable while an entity is down. A
+#           restart transient now truthfully reads as a down source for a minute.
+#           (2) SETUP ERRORS, FAIL LOUD. A duplicate source (the same sensor listed
+#           twice) previously deduped silently while total_monitored counted it
+#           twice; an empty source list previously showed a green all-clear over
+#           nothing monitored. Both now stop the engine cold: state setup_error,
+#           ok false, empty outputs, and a new error attribute carrying the
+#           diagnosis and the fix, naming each duplicated id. The error attribute
+#           joins the contract permanently (empty string when healthy), matching
+#           the fail-loud convention of the other Sentinels.
+#           No input changes; the merge, dedupe, precedence, sort, and rejection
+#           behavior is otherwise identical to alpha.2 and re-proven by the suite.
 #   1.0.0-alpha.2 - Fix: the sensor was state-based and read its sources through a
 #           dynamic states[sid] over the chosen list, which Home Assistant's load-time
 #           dependency analysis cannot see, so it never tracked its sources and did not
@@ -125,9 +151,9 @@
 #           development, offered for feedback rather than as a finished tool.
 
 blueprint:
-  name: Dashboard Sentinel (Alpha)
+  name: Dashboard Sentinel (Beta)
   description: |
-    # Dashboard Sentinel (Alpha)
+    # Dashboard Sentinel (Beta)
 
     *One sensor that combines all your Entity Sentinels into a single, deduped list for a dashboard.*
 
@@ -211,11 +237,41 @@ trigger:
     event: start
 
 variables:
-  sentinel_version: 1.0.0-alpha.2
+  sentinel_version: 1.0.0-beta
   source_sensors: !input source_sensors
   result: |
     {%- set severe = ['unavailable', 'unknown', 'missing', 'never_reported'] -%}
     {%- set sources = source_sensors if (source_sensors is iterable and source_sensors is not string) else [source_sensors] -%}
+    {%- set dup = namespace(ids=[]) -%}
+    {%- for sid in sources -%}
+      {%- if sources.count(sid) > 1 and sid not in dup.ids -%}
+        {%- set dup.ids = dup.ids + [sid] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set setup_err = '' -%}
+    {%- if sources | length == 0 -%}
+      {%- set setup_err = 'No sources selected. Pick one or more Entity Sentinel sensors.' -%}
+    {%- elif dup.ids | length > 0 -%}
+      {%- set setup_err = 'Duplicate source: ' ~ (dup.ids | join(', ')) ~ ' is listed more than once. Each source may appear only once; remove the duplicate entry from the source list and re-save.' -%}
+    {%- endif -%}
+    {%- if setup_err != '' -%}
+    {{
+      {
+        'state': 'setup_error',
+        'ok': False,
+        'error': setup_err,
+        'total_monitored': 0,
+        'devices': [],
+        'unavailable_count': 0,
+        'frozen_count': 0,
+        'source_error_count': 0,
+        'rejected_count': 0,
+        'sources': [],
+        'rejected': [],
+        'last_evaluated': now().isoformat()
+      }
+    }}
+    {%- else -%}
     {%- set heal = namespace(items=[]) -%}
     {%- set down = namespace(items=[]) -%}
     {%- set rej = namespace(items=[]) -%}
@@ -234,7 +290,14 @@ variables:
         {%- set srole = state_attr(sid, 'sentinel_role') -%}
         {%- set sstate = sobj.state -%}
         {%- set sok = state_attr(sid, 'ok') -%}
-        {%- if srole == 'aggregate' -%}
+        {%- if sstate in ['unavailable', 'unknown'] -%}
+          {%- set down.items = down.items + [{
+            'sensor': sid,
+            'name': sname,
+            'status': sstate,
+            'error': ''
+          }] -%}
+        {%- elif srole == 'aggregate' -%}
           {%- set rej.items = rej.items + [{
             'sensor': sid,
             'name': sname,
@@ -254,13 +317,6 @@ variables:
             'name': sname,
             'status': 'wrong_family',
             'note': 'this is a ' ~ stype ~ ' Sentinel, not an Entity Sentinel'
-          }] -%}
-        {%- elif sstate in ['unavailable', 'unknown'] -%}
-          {%- set down.items = down.items + [{
-            'sensor': sid,
-            'name': sname,
-            'status': sstate,
-            'error': ''
           }] -%}
         {%- elif sstate == 'setup_error' or sok == false or sok == 'False' -%}
           {%- set down.items = down.items + [{
@@ -298,6 +354,7 @@ variables:
       {
         'state': merged | length,
         'ok': (down.items | length == 0) and (rej.items | length == 0),
+        'error': '',
         'total_monitored': accepted,
         'devices': merged,
         'unavailable_count': un,
@@ -309,6 +366,7 @@ variables:
         'last_evaluated': now().isoformat()
       }
     }}
+    {%- endif -%}
 
 sensor:
   - name: !input sensor_name
@@ -319,6 +377,7 @@ sensor:
       %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
     attributes:
       ok: '{{ result.ok }}'
+      error: '{{ result.error }}'
       sentinel_type: entity
       sentinel_role: aggregate
       sentinel_version: '{{ sentinel_version }}'

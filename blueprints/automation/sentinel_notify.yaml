@@ -194,6 +194,20 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.9.3 - THE STALE-SOURCE GUARD, from a live near-miss on
+#           2026-07-05: a source configured with a slow scan interval had not
+#           re-evaluated since its own boot, so its last report was the honest
+#           grace-empty one; the reminder duty fires on a time trigger, and by
+#           its time the boot was outside the settle window, so the duty would
+#           have trusted the stale empty report, wiped every item as a recovery,
+#           and posted a false all-clear. New rule, added to both the top-of-run
+#           settle gate and the post-refresh live recheck: a source whose
+#           last_evaluated predates its own boot_time plus the window counts as
+#           settling, whatever its scan interval; a source missing last_evaluated
+#           while looking alive is held the same way. A held duty run stamps
+#           nothing, so the daily send carries forward to the first settled run,
+#           which then sweeps and reports in one truthful shot. The window input
+#           description now names this fourth job. No input changes.
 #   2.0.0-alpha.9.2 - THE RELOAD GUARD, from a live failure on 2026-07-04: during
 #           an HA Core restart plus template reload, the source sensors passed
 #           through an attribute-less instant; the settle gate, reading boot_time
@@ -323,7 +337,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.9.2
+    2.0.0-alpha.9.3
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -543,14 +557,17 @@ blueprint:
         upstream_debounce_seconds:
           name: Source debounce and settle window (seconds)
           description: >-
-            One window, three jobs. How long a source must stay unavailable
+            One window, four jobs. How long a source must stay unavailable
             before it is reported broken (a dedicated trigger fires the report
             on time). How long runs are held while sources settle after a
-            reboot or reload, judged live, with a source lacking a readable
-            boot_time treated as still settling. And how long a brief source
-            blip holds the run instead of disturbing the list. 240 clears a
-            normal restart and matches the Sentinels' startup grace. A
-            setup_error, ok:false, or missing source is reported immediately.
+            reboot or reload, judged live. How long after a source's own boot
+            its reports are treated as still settling, so a source that has
+            not re-evaluated since booting (a slow scan interval) is never
+            trusted stale; a source lacking a readable boot_time or
+            last_evaluated is held the same way. And how long a brief source
+            blip holds the run. 240 clears a normal restart and matches the
+            Sentinels' startup grace. A setup_error, ok:false, or missing
+            source is reported immediately.
           default: 240
           selector:
             number:
@@ -604,7 +621,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.9.2
+  version: 2.0.0-alpha.9.3
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list
@@ -664,9 +681,16 @@ variables:
     {% for s in source_sensors %}
       {% set st = states(s) %}
       {% set bt = state_attr(s, 'boot_time') | as_datetime(none) %}
-      {% if bt is not none and (ns.latest is none or bt > ns.latest) %}
-        {% set ns.latest = bt %}
-      {% elif bt is none and states[s] is not none and st not in ['unavailable', 'unknown', 'setup_error'] and state_attr(s, 'ok') != false %}
+      {% set alive = states[s] is not none and st not in ['unavailable', 'unknown', 'setup_error'] and state_attr(s, 'ok') != false %}
+      {% if bt is not none %}
+        {% if ns.latest is none or bt > ns.latest %}
+          {% set ns.latest = bt %}
+        {% endif %}
+        {% set le = state_attr(s, 'last_evaluated') | as_datetime(none) %}
+        {% if alive and (le is none or le < bt + timedelta(seconds=upstream_debounce_seconds)) %}
+          {% set ns.blind = true %}
+        {% endif %}
+      {% elif alive %}
         {% set ns.blind = true %}
       {% endif %}
     {% endfor %}
@@ -1053,9 +1077,16 @@ action:
         {% for s in source_sensors %}
           {% set st = states(s) %}
           {% set bt = state_attr(s, 'boot_time') | as_datetime(none) %}
-          {% if bt is not none and (ns.latest is none or bt > ns.latest) %}
-            {% set ns.latest = bt %}
-          {% elif bt is none and states[s] is not none and st not in ['unavailable', 'unknown', 'setup_error'] and state_attr(s, 'ok') != false %}
+          {% set alive = states[s] is not none and st not in ['unavailable', 'unknown', 'setup_error'] and state_attr(s, 'ok') != false %}
+          {% if bt is not none %}
+            {% if ns.latest is none or bt > ns.latest %}
+              {% set ns.latest = bt %}
+            {% endif %}
+            {% set le = state_attr(s, 'last_evaluated') | as_datetime(none) %}
+            {% if alive and (le is none or le < bt + timedelta(seconds=upstream_debounce_seconds)) %}
+              {% set ns.blind = true %}
+            {% endif %}
+          {% elif alive %}
             {% set ns.blind = true %}
           {% endif %}
         {% endfor %}

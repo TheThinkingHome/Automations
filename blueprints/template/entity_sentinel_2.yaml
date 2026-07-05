@@ -1,0 +1,782 @@
+# ==============================================================================
+# Entity Sentinel 2.0 (Alpha) - The Tiered Rebuild
+# A template blueprint from The Thinking Home (xeazy.com)
+# License: GPL-3.0-or-later. Copyright (C) 2026 James Lander.
+# ==============================================================================
+#
+# One sensor, up to five tiers. Each tier carries its own targets and its own
+# freeze window; the sensor evaluates every tier on one shared cadence and
+# publishes one merged, tier-annotated list. This replaces the old pattern of
+# one sensor per cadence class plus the Dashboard Sentinel aggregator: the
+# tiers live where they always belonged, inside the detector.
+#
+# WHY IT WORKS (cadence vs lookback): the scan interval is only the trigger;
+# the freeze math applies each entity's own tier window. A Sleepy device judged
+# at 36 hours cannot false-flag on a 30-minute cadence; it is simply detected
+# within one tick of its own window expiring, instead of waiting for a separate
+# slow sensor's tick.
+#
+# DESIGN CHOICE (five hardcoded tiers): blueprint inputs cannot be dynamic
+# dictionaries, so the schema carries five fixed slots (name, targets, freeze
+# window each). A tier with no targets is skipped silently; unused slots never
+# appear in a package file. All five empty is a loud setup error.
+#
+# DESIGN CHOICE (duplicates are a reported error, not a precedence puzzle):
+# tier priority is 1 > 2 > 3 > 4 > 5. An entity appearing in two tiers stays
+# monitored in its lowest-numbered tier; every higher-numbered tier that also
+# contains it excludes it and names it in that tier's error while the tier's
+# healthy entries still render. No intent-guessing; the human fixes the config.
+#
+# DESIGN CHOICE (per-tier validation, partial rendering): a tier's problems are
+# that tier's problems. Each tier reports its own error and note in the tiers
+# attribute; healthy tiers render normally. A target that resolves to zero
+# entities is a note, not an error (a freshly created label with nothing tagged
+# is a normal mid-setup state). The sensor-level ok stays true while any tier
+# renders; only a global fault (missing uptime sensor, no tiers configured)
+# is state setup_error / ok false, so a consumer like Sentinel Notify never
+# drops a partially-healthy sensor. tier_error_count is the badge hook.
+#
+# DESIGN CHOICE (global exclude, per-tier includes): membership is per-tier,
+# suppression is per-house. One exclude input trims every tier.
+#
+# DESIGN CHOICE (the contract is a superset of 1.x): same devices shape, same
+# ok / error / boot_time / last_evaluated / total_monitored / counts, so
+# Sentinel Notify and every dashboard card consume 2.0 unchanged. New: each
+# devices entry carries tier (the display name); a tiers attribute lists
+# per-tier name, monitored, flagged, error, and note; tier_error_count counts
+# tiers currently in error. The merged list is entity-id sorted (domain
+# grouping), matching what Dashboard Sentinel used to hand the cards.
+#
+# Everything else is carried from 1.x verbatim: the label/device/area roll-up
+# on both include and exclude sides, the representative-entity election for
+# swept devices, the unavailable/unknown debounce (global; unavailability is
+# not cadence-dependent), the freeze check judged against the freshest report
+# across the whole device, the startup grace measured from the required uptime
+# sensor in timestamp mode, and the loud uptime setup error.
+#
+# Changelog:
+#   2.0.0-alpha.1 - THE TIERED REBUILD. Up to five tiers in one sensor, each
+#           with its own targets and freeze window on one shared cadence and
+#           one shared unavailable debounce. Duplicates across tiers resolve
+#           to the lowest-numbered tier and are reported as the higher tier's
+#           error. Per-tier validation with partial rendering. Output contract
+#           is a strict superset of 1.x (new: tier on each entry, the tiers
+#           attribute, tier_error_count, entity-id sorted list). BREAKING:
+#           freeze_lookback and include_target are replaced by the tier slots;
+#           exclude_target and all cadence inputs are unchanged. The 1.x line
+#           is frozen stable in its own file; its changelog lives there.
+# ==============================================================================
+blueprint:
+  name: Entity Sentinel 2.0 (Alpha)
+  description: |
+    # Entity Sentinel 2.0 (Alpha)
+
+    *One sensor, up to five tiers: every critical entity that has gone quiet, offline or frozen, each judged by its own tier's freeze window.*
+
+    A free blueprint from **The Thinking Home** at [xeazy.com](https://xeazy.com).
+
+    > **Read the [Entity Sentinel README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) before you import.** This is a template sensor, not an automation, so it does not walk you through a setup form. The README has the directions and a sample `use_blueprint:` snippet.
+
+    - 📖 [Read the article](https://xeazy.com/battery-entity-sentinel-blueprints/) - the design and worked examples.
+    - 📄 [Read the README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) - import instructions, parameters, and attribute reference.
+    - 💬 [Discuss in the community](https://xeazy.com/logbook/) - the forum thread for these blueprints.
+    - ⭐ [More blueprints](https://github.com/TheThinkingHome/Automations) - on GitHub.
+
+    ---
+
+    Creates one trigger-based template sensor whose state is the count of watched entities that have gone quiet across every tier. Each is listed in the `devices` attribute with the reason and its tier, for any automation, dashboard, or notification to read.
+
+    ## How it works
+
+    Give each tier the entities that share a rhythm (a lively tier, a quiet tier, a sleepy tier) and a freeze window matching that rhythm. One evaluation on one cadence judges every entity against its own tier's window, so a slow device can never false-flag on a fast window, and a fast device is never stuck waiting on a slow sensor. Unavailable and unknown entities are flagged after a shared debounce, whatever their tier.
+
+    An entity may live in exactly one tier: duplicates resolve to the lowest-numbered tier and are reported as the higher tier's error, while that tier's healthy entities keep rendering. A single global exclude trims every tier.
+
+    This one sensor replaces the old one-sensor-per-tier pattern and the Dashboard Sentinel aggregator. Its companion, **Battery Sentinel**, counts the batteries running low; **Sentinel Notify** turns both into to-do lists and notifications, unchanged, since the output contract is a superset of 1.x.
+
+    This is an alpha of the 2.0 line. The frozen 1.x release remains available for settled setups; see the README.
+
+    License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
+
+    2.0.0-alpha.1
+  author: James Lander (xeazy.com)
+  domain: template
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
+  homeassistant:
+    min_version: 2026.5.4
+  input:
+    tier_1_settings:
+      name: Tier 1
+      icon: mdi:layers-outline
+      description: >-
+        One tier of entities sharing a freeze window. A tier with no targets is skipped entirely. Duplicates resolve downward: an entity already claimed by a lower-numbered tier is excluded here and reported as this tier's error.
+      input:
+        tier_1_name:
+          name: Tier 1 name
+          description: The display name for this tier, carried on every flagged entry and in the per-tier counts. The tier you will probably rename Lively, Quiet, or Sleepy.
+          default: Tier 1
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        tier_1_target:
+          name: Tier 1 targets
+          description: >-
+            Entities, labels, areas, or devices for this tier. Explicit entities
+            and labels are watched precisely; areas and devices are swept to one
+            representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_1_freeze:
+          name: Tier 1 freeze lookback
+          description: >-
+            How long a device in this tier may go without reporting anything
+            before it counts as frozen. Set it a little longer than the longest
+            normal silence among this tier's devices.
+          default:
+            hours: 8
+          selector:
+            duration:
+              enable_second: true
+    tier_2_settings:
+      name: Tier 2
+      icon: mdi:layers-outline
+      collapsed: true
+      description: >-
+        Leave the targets empty if you do not need this tier.
+      input:
+        tier_2_name:
+          name: Tier 2 name
+          description: The display name for this tier, carried on every flagged entry and in the per-tier counts.
+          default: Tier 2
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        tier_2_target:
+          name: Tier 2 targets
+          description: >-
+            Entities, labels, areas, or devices for this tier. Explicit entities
+            and labels are watched precisely; areas and devices are swept to one
+            representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_2_freeze:
+          name: Tier 2 freeze lookback
+          description: >-
+            How long a device in this tier may go without reporting anything
+            before it counts as frozen. Set it a little longer than the longest
+            normal silence among this tier's devices.
+          default:
+            hours: 16
+          selector:
+            duration:
+              enable_second: true
+    tier_3_settings:
+      name: Tier 3
+      icon: mdi:layers-outline
+      collapsed: true
+      description: >-
+        Leave the targets empty if you do not need this tier.
+      input:
+        tier_3_name:
+          name: Tier 3 name
+          description: The display name for this tier, carried on every flagged entry and in the per-tier counts.
+          default: Tier 3
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        tier_3_target:
+          name: Tier 3 targets
+          description: >-
+            Entities, labels, areas, or devices for this tier. Explicit entities
+            and labels are watched precisely; areas and devices are swept to one
+            representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_3_freeze:
+          name: Tier 3 freeze lookback
+          description: >-
+            How long a device in this tier may go without reporting anything
+            before it counts as frozen. Set it a little longer than the longest
+            normal silence among this tier's devices.
+          default:
+            hours: 36
+          selector:
+            duration:
+              enable_second: true
+    tier_4_settings:
+      name: Tier 4
+      icon: mdi:layers-outline
+      collapsed: true
+      description: >-
+        Leave the targets empty if you do not need this tier.
+      input:
+        tier_4_name:
+          name: Tier 4 name
+          description: The display name for this tier, carried on every flagged entry and in the per-tier counts.
+          default: Tier 4
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        tier_4_target:
+          name: Tier 4 targets
+          description: >-
+            Entities, labels, areas, or devices for this tier. Explicit entities
+            and labels are watched precisely; areas and devices are swept to one
+            representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_4_freeze:
+          name: Tier 4 freeze lookback
+          description: >-
+            How long a device in this tier may go without reporting anything
+            before it counts as frozen. Set it a little longer than the longest
+            normal silence among this tier's devices.
+          default:
+            hours: 36
+          selector:
+            duration:
+              enable_second: true
+    tier_5_settings:
+      name: Tier 5
+      icon: mdi:layers-outline
+      collapsed: true
+      description: >-
+        Leave the targets empty if you do not need this tier.
+      input:
+        tier_5_name:
+          name: Tier 5 name
+          description: The display name for this tier, carried on every flagged entry and in the per-tier counts.
+          default: Tier 5
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        tier_5_target:
+          name: Tier 5 targets
+          description: >-
+            Entities, labels, areas, or devices for this tier. Explicit entities
+            and labels are watched precisely; areas and devices are swept to one
+            representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_5_freeze:
+          name: Tier 5 freeze lookback
+          description: >-
+            How long a device in this tier may go without reporting anything
+            before it counts as frozen. Set it a little longer than the longest
+            normal silence among this tier's devices.
+          default:
+            hours: 36
+          selector:
+            duration:
+              enable_second: true
+    scope_settings:
+      name: Global exclude
+      icon: mdi:select-group
+      input:
+        exclude_target:
+          name: Exclude (all tiers)
+          description: >-
+            Entities, labels, areas, or devices to leave out of every tier.
+            Exclude always wins over any tier's include. Use it to trim a broad
+            area sweep.
+          default: {}
+          selector:
+            target: {}
+    detection_settings:
+      name: Liveness detection
+      icon: mdi:radar
+      input:
+        unavailable_debounce:
+          name: Unavailable debounce (all tiers)
+          description: >-
+            How long an entity must stay unavailable or unknown before it is
+            flagged, whatever its tier. Absorbs brief blips on flaky WiFi or
+            cloud devices. Set to zero to flag immediately.
+          default:
+            minutes: 3
+          selector:
+            duration:
+              enable_second: true
+    cadence_settings:
+      name: Evaluation cadence
+      icon: mdi:timer-sync-outline
+      input:
+        scan_interval:
+          name: Re-evaluation interval
+          description: >-
+            How often the sensor re-evaluates, in minutes. This is the only
+            latency knob: an entity is caught within one tick of its own tier's
+            window expiring.
+          default: /2
+          selector:
+            select:
+              options:
+                - label: Every 1
+                  value: /1
+                - label: Every 2
+                  value: /2
+                - label: Every 3
+                  value: /3
+                - label: Every 5
+                  value: /5
+                - label: Every 10
+                  value: /10
+                - label: Every 15
+                  value: /15
+                - label: Every 30
+                  value: /30
+              sort: false
+              custom_value: false
+              multiple: false
+        startup_grace_seconds:
+          name: Startup grace period (seconds)
+          description: >-
+            How long after Home Assistant starts to hold the unavailable list
+            empty while the system and the mesh come up, so a restart does not
+            report a false outage. Measured from the uptime sensor (process
+            start), so it must cover your hub's FULL startup: boot time PLUS
+            mesh settle time plus a margin. Freeze is not held (it cannot
+            false-fire at startup). Set to 0 to disable.
+          default: 240
+          selector:
+            number:
+              min: 0.0
+              max: 1800.0
+              step: 10.0
+              unit_of_measurement: seconds
+              mode: box
+        uptime_sensor:
+          name: Uptime sensor (required)
+          description: >-
+            REQUIRED. The Home Assistant uptime sensor, in TIMESTAMP mode (its
+            state is an ISO time, not a number). The startup grace is measured
+            from this. Add the Uptime integration if you do not have it. If
+            this sensor is missing or is not a timestamp, the Sentinel reports
+            a setup_error state and does nothing until it is fixed.
+          default: sensor.uptime
+          selector:
+            entity:
+              filter:
+                - domain:
+                    - sensor
+                  device_class:
+                    - timestamp
+              multiple: false
+              reorder: false
+        refresh_button:
+          name: Manual refresh button (optional)
+          description: >-
+            An optional input_button. Press it to make the sensor re-evaluate
+            immediately. It re-scans; it does not force a device to report.
+            Point several Sentinel sensors at the same button to refresh them
+            all with one press. Leave blank to disable.
+          default: input_button.none
+          selector:
+            entity:
+              filter:
+                - domain:
+                    - input_button
+              multiple: false
+              reorder: false
+    naming_settings:
+      name: Sensor identity
+      icon: mdi:tag-outline
+      input:
+        sensor_name:
+          name: Sensor name
+          description: The name for the sensor this blueprint creates.
+          default: Entity Sentinel
+          selector:
+            text:
+              multiple: false
+              multiline: false
+        unique_id:
+          name: Unique ID
+          description: >-
+            A unique id so the sensor is registered and you can rename it or
+            place it in an area from the interface. Make it distinct for every
+            sensor you build, for example entity_sentinel.
+          selector:
+            text:
+              multiple: false
+              multiline: false
+    debug_settings:
+      name: Debugging
+      icon: mdi:bug-outline
+      input:
+        debug_enabled:
+          name: Write a debug line to the log
+          description: >-
+            When on, the sensor writes one summary line to the system log each
+            time it evaluates, naming each tier's counts and the flagged
+            entities. Leave off for normal use.
+          default: false
+          selector:
+            boolean: {}
+
+variables:
+  sentinel_version: 2.0.0-alpha.1
+  tier_1_name: !input tier_1_name
+  tier_1_target: !input tier_1_target
+  tier_1_freeze: !input tier_1_freeze
+  tier_2_name: !input tier_2_name
+  tier_2_target: !input tier_2_target
+  tier_2_freeze: !input tier_2_freeze
+  tier_3_name: !input tier_3_name
+  tier_3_target: !input tier_3_target
+  tier_3_freeze: !input tier_3_freeze
+  tier_4_name: !input tier_4_name
+  tier_4_target: !input tier_4_target
+  tier_4_freeze: !input tier_4_freeze
+  tier_5_name: !input tier_5_name
+  tier_5_target: !input tier_5_target
+  tier_5_freeze: !input tier_5_freeze
+  exclude_target: !input exclude_target
+  unavailable_debounce: !input unavailable_debounce
+  startup_grace_seconds: !input startup_grace_seconds
+  uptime_sensor: !input uptime_sensor
+  debug_enabled: !input debug_enabled
+  result: |
+    {%- set debounce_s = (timedelta(**unavailable_debounce).total_seconds() if (unavailable_debounce is mapping and unavailable_debounce) else 0) -%}
+    {%- set grace = startup_grace_seconds | int(120) -%}
+    {%- set uptime_raw = states(uptime_sensor) -%}
+    {%- set uptime_dt = uptime_raw | as_datetime(none) -%}
+    {%- set uptime_ok = uptime_dt is not none -%}
+    {%- if not uptime_ok -%}
+      {%- if uptime_raw in ['unknown', 'unavailable', none] -%}
+        {%- set uptime_status = uptime_raw if uptime_raw is not none else 'unknown' -%}
+        {%- set error_msg = 'uptime_sensor ' ~ uptime_sensor ~ ' not found or unavailable (got: ' ~ uptime_status ~ '). This blueprint requires the uptime integration with the entity in timestamp mode.' -%}
+      {%- else -%}
+        {%- set uptime_status = uptime_raw -%}
+        {%- set error_msg = 'uptime_sensor ' ~ uptime_sensor ~ ' is not a timestamp (got: ' ~ uptime_raw ~ '). Set the uptime integration to timestamp mode.' -%}
+      {%- endif -%}
+    {%- else -%}
+      {%- set uptime_status = uptime_dt.isoformat() -%}
+      {%- set error_msg = '' -%}
+    {%- endif -%}
+    {%- set boot_dt = uptime_dt if uptime_ok else now() -%}
+    {%- set settled = uptime_ok and (as_timestamp(now()) - as_timestamp(boot_dt)) >= grace -%}
+    {%- set priority = ['occupancy', 'motion', 'door', 'window', 'opening', 'garage_door', 'lock', 'moisture', 'smoke', 'gas', 'carbon_monoxide', 'temperature', 'humidity', 'connectivity', 'battery'] -%}
+    {%- set primary_domains = ['binary_sensor', 'sensor', 'light', 'switch', 'lock', 'cover', 'fan', 'climate', 'vacuum', 'lawn_mower', 'water_heater', 'humidifier', 'media_player', 'camera', 'valve', 'siren', 'device_tracker'] -%}
+    {%- set telemetry_dc = ['power', 'energy', 'current', 'voltage', 'apparent_power', 'power_factor', 'illuminance'] -%}
+    {%- set junk_domains = ['update', 'button', 'number', 'select', 'text', 'image', 'scene', 'configurator', 'event'] -%}
+    {%- set tier_defs = [
+      {'i': 1, 'name': tier_1_name, 'target': tier_1_target, 'freeze': tier_1_freeze},
+      {'i': 2, 'name': tier_2_name, 'target': tier_2_target, 'freeze': tier_2_freeze},
+      {'i': 3, 'name': tier_3_name, 'target': tier_3_target, 'freeze': tier_3_freeze},
+      {'i': 4, 'name': tier_4_name, 'target': tier_4_target, 'freeze': tier_4_freeze},
+      {'i': 5, 'name': tier_5_name, 'target': tier_5_target, 'freeze': tier_5_freeze}
+    ] -%}
+    {%- if uptime_ok -%}
+    {%- set exc = exclude_target -%}
+    {%- set xset = namespace(ents=[]) -%}
+    {%- if exc is mapping -%}
+      {%- if exc.entity_id is defined -%}
+        {%- set elist = exc.entity_id if (exc.entity_id is iterable and exc.entity_id is not string) else [exc.entity_id] -%}
+        {%- set xset.ents = xset.ents + elist -%}
+      {%- endif -%}
+      {%- if exc.label_id is defined -%}
+        {%- set llist = exc.label_id if (exc.label_id is iterable and exc.label_id is not string) else [exc.label_id] -%}
+        {%- for l in llist -%}
+          {%- set xset.ents = xset.ents + label_entities(l) -%}
+          {%- for d in label_devices(l) -%}{%- set xset.ents = xset.ents + device_entities(d) -%}{%- endfor -%}
+          {%- for a in label_areas(l) -%}{%- set xset.ents = xset.ents + area_entities(a) -%}{%- endfor -%}
+        {%- endfor -%}
+      {%- endif -%}
+      {%- if exc.device_id is defined -%}
+        {%- set dlist = exc.device_id if (exc.device_id is iterable and exc.device_id is not string) else [exc.device_id] -%}
+        {%- for d in dlist -%}{%- set xset.ents = xset.ents + device_entities(d) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if exc.area_id is defined -%}
+        {%- set alist = exc.area_id if (exc.area_id is iterable and exc.area_id is not string) else [exc.area_id] -%}
+        {%- for a in alist -%}{%- set xset.ents = xset.ents + area_entities(a) -%}{%- endfor -%}
+      {%- endif -%}
+    {%- endif -%}
+    {%- set acc = namespace(seen=[], tiers=[], flagged=[], monitored_total=0, tier_err=0) -%}
+    {%- for t in tier_defs -%}
+      {%- set inc = t.target -%}
+      {%- set active = inc is mapping and (inc.entity_id is defined or inc.label_id is defined or inc.device_id is defined or inc.area_id is defined) -%}
+      {%- if active -%}
+        {%- set freeze_s = (timedelta(**t.freeze).total_seconds() if (t.freeze is mapping and t.freeze) else 21600) -%}
+        {%- set trusted = namespace(ents=[]) -%}
+        {%- set swept = namespace(ents=[]) -%}
+        {%- if inc.entity_id is defined -%}
+          {%- set elist = inc.entity_id if (inc.entity_id is iterable and inc.entity_id is not string) else [inc.entity_id] -%}
+          {%- set trusted.ents = trusted.ents + elist -%}
+        {%- endif -%}
+        {%- if inc.label_id is defined -%}
+          {%- set llist = inc.label_id if (inc.label_id is iterable and inc.label_id is not string) else [inc.label_id] -%}
+          {%- for l in llist -%}
+            {%- set trusted.ents = trusted.ents + label_entities(l) -%}
+            {%- for d in label_devices(l) -%}{%- set swept.ents = swept.ents + [('device', d)] -%}{%- endfor -%}
+            {%- for a in label_areas(l) -%}{%- set swept.ents = swept.ents + [('area', a)] -%}{%- endfor -%}
+          {%- endfor -%}
+        {%- endif -%}
+        {%- if inc.device_id is defined -%}
+          {%- set dlist = inc.device_id if (inc.device_id is iterable and inc.device_id is not string) else [inc.device_id] -%}
+          {%- for d in dlist -%}{%- set swept.ents = swept.ents + [('device', d)] -%}{%- endfor -%}
+        {%- endif -%}
+        {%- if inc.area_id is defined -%}
+          {%- set alist = inc.area_id if (inc.area_id is iterable and inc.area_id is not string) else [inc.area_id] -%}
+          {%- for a in alist -%}{%- set swept.ents = swept.ents + [('area', a)] -%}{%- endfor -%}
+        {%- endif -%}
+        {%- set rep = namespace(ents=[]) -%}
+        {%- set devset = namespace(ids=[]) -%}
+        {%- for kind, ref in swept.ents -%}
+          {%- if kind == 'device' -%}
+            {%- if ref not in devset.ids -%}{%- set devset.ids = devset.ids + [ref] -%}{%- endif -%}
+          {%- else -%}
+            {%- for d in area_devices(ref) -%}
+              {%- if d not in devset.ids -%}{%- set devset.ids = devset.ids + [d] -%}{%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- for d in devset.ids -%}
+          {%- set chosen = namespace(eid=none, rank=999) -%}
+          {%- set fb = namespace(primary=none, telemetry=none, any=none) -%}
+          {%- for de in device_entities(d) -%}
+            {%- set dom = de.split('.')[0] -%}
+            {%- set dc = state_attr(de, 'device_class') -%}
+            {%- set r = priority.index(dc) if dc in priority else 999 -%}
+            {%- if r < chosen.rank -%}
+              {%- set chosen.rank = r -%}
+              {%- set chosen.eid = de -%}
+            {%- endif -%}
+            {%- if fb.primary is none and dom in primary_domains and dc not in telemetry_dc -%}
+              {%- set fb.primary = de -%}
+            {%- endif -%}
+            {%- if fb.telemetry is none and dc in telemetry_dc -%}
+              {%- set fb.telemetry = de -%}
+            {%- endif -%}
+            {%- if fb.any is none and dom not in junk_domains -%}
+              {%- set fb.any = de -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set elected = chosen.eid if chosen.eid is not none else (fb.primary if fb.primary is not none else (fb.telemetry if fb.telemetry is not none else fb.any)) -%}
+          {%- if elected is not none -%}
+            {%- set rep.ents = rep.ents + [elected] -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set all_trusted = trusted.ents | unique | list -%}
+        {%- set trusted_devices = namespace(ids=[]) -%}
+        {%- for te in all_trusted -%}
+          {%- set td = device_id(te) -%}
+          {%- if td is not none and td not in trusted_devices.ids -%}
+            {%- set trusted_devices.ids = trusted_devices.ids + [td] -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set rep_keep = namespace(ents=[]) -%}
+        {%- for re in (rep.ents | unique | list) -%}
+          {%- if re not in all_trusted and device_id(re) not in trusted_devices.ids -%}
+            {%- set rep_keep.ents = rep_keep.ents + [re] -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set tmon = (all_trusted + rep_keep.ents) | reject('in', xset.ents) | list -%}
+        {%- set kept = namespace(e=[]) -%}
+        {%- set dup = namespace(e=[]) -%}
+        {%- for e in tmon -%}
+          {%- if e in acc.seen -%}
+            {%- set dup.e = dup.e + [e] -%}
+          {%- else -%}
+            {%- set kept.e = kept.e + [e] -%}
+            {%- set acc.seen = acc.seen + [e] -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set terr = ('duplicate of a lower-numbered tier: ' ~ (dup.e | sort | join(', ')) ~ '. Each entity may live in exactly one tier; remove it from this tier.') if dup.e | length > 0 else '' -%}
+        {%- set tnote = ('the target resolves to no entities (nothing tagged yet?)' if (kept.e | length == 0 and dup.e | length == 0) else '') -%}
+        {%- set fl = namespace(items=[]) -%}
+        {%- for eid in kept.e -%}
+          {%- set st = states(eid) -%}
+          {%- set sobj = states[eid] -%}
+          {%- set ename = (state_attr(eid, 'friendly_name') or (device_attr(device_id(eid), 'name') if device_id(eid) else none) or eid) -%}
+          {%- set earea = (area_name(eid) or 'Unassigned') -%}
+          {%- if sobj is none or st in ['unavailable', 'unknown', 'none'] -%}
+            {%- set lc = sobj.last_changed if (sobj is not none and sobj.last_changed is not none) else none -%}
+            {%- set bad_for = (now() - lc).total_seconds() if lc is not none else (debounce_s + 1) -%}
+            {%- if settled and bad_for >= debounce_s -%}
+              {%- set fl.items = fl.items + [{
+                'name': ename,
+                'entity_id': eid,
+                'area': earea,
+                'tier': t.name,
+                'reason': ('missing' if sobj is none else st),
+                'since': (lc.isoformat() if lc is not none else none),
+                'last_seen': (sobj.last_reported.isoformat() if (sobj is not none and sobj.last_reported is not none) else none),
+                'age': (relative_time(sobj.last_reported) if (sobj is not none and sobj.last_reported is not none) else 'unknown')
+              }] -%}
+            {%- endif -%}
+          {%- else -%}
+            {%- set did = device_id(eid) -%}
+            {%- set hb = namespace(latest=none) -%}
+            {%- if did is not none -%}
+              {%- for de in device_entities(did) -%}
+                {%- set deo = states[de] -%}
+                {%- if deo is not none and deo.last_reported is not none -%}
+                  {%- if hb.latest is none or deo.last_reported > hb.latest -%}{%- set hb.latest = deo.last_reported -%}{%- endif -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- else -%}
+              {%- if sobj is not none and sobj.last_reported is not none -%}{%- set hb.latest = sobj.last_reported -%}{%- endif -%}
+            {%- endif -%}
+            {%- if hb.latest is not none -%}
+              {%- set age_s = (now() - hb.latest).total_seconds() -%}
+              {%- if age_s > freeze_s -%}
+                {%- set fl.items = fl.items + [{
+                  'name': ename,
+                  'entity_id': eid,
+                  'area': earea,
+                  'tier': t.name,
+                  'reason': 'frozen',
+                  'since': hb.latest.isoformat(),
+                  'last_seen': hb.latest.isoformat(),
+                  'age': relative_time(hb.latest)
+                }] -%}
+              {%- endif -%}
+            {%- elif settled -%}
+              {%- set fl.items = fl.items + [{
+                'name': ename,
+                'entity_id': eid,
+                'area': earea,
+                'tier': t.name,
+                'reason': 'never_reported',
+                'since': none,
+                'last_seen': none,
+                'age': 'never reported'
+              }] -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set acc.flagged = acc.flagged + fl.items -%}
+        {%- set acc.monitored_total = acc.monitored_total + (kept.e | length) -%}
+        {%- if terr != '' -%}{%- set acc.tier_err = acc.tier_err + 1 -%}{%- endif -%}
+        {%- set acc.tiers = acc.tiers + [{
+          'tier': t.i,
+          'name': t.name,
+          'monitored': kept.e | length,
+          'flagged': fl.items | length,
+          'error': terr,
+          'note': tnote
+        }] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set flagged = acc.flagged | sort(attribute='entity_id') -%}
+    {%- endif -%}
+    {%- if not uptime_ok -%}
+    {{
+      {
+        'state': 'setup_error',
+        'ok': false,
+        'error': error_msg,
+        'uptime_status': uptime_status,
+        'total_monitored': 0,
+        'devices': [],
+        'tiers': [],
+        'tier_error_count': 0,
+        'unavailable_count': 0,
+        'frozen_count': 0,
+        'boot_time': none,
+        'settled': false,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+    {%- elif acc.tiers | length == 0 -%}
+    {{
+      {
+        'state': 'setup_error',
+        'ok': false,
+        'error': 'No tiers configured. Give at least one tier a target (entities, a label, an area, or a device).',
+        'uptime_status': uptime_status,
+        'total_monitored': 0,
+        'devices': [],
+        'tiers': [],
+        'tier_error_count': 0,
+        'unavailable_count': 0,
+        'frozen_count': 0,
+        'boot_time': boot_dt.isoformat(),
+        'settled': settled,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+    {%- else -%}
+    {{
+      {
+        'state': flagged | length,
+        'ok': true,
+        'error': '',
+        'uptime_status': uptime_status,
+        'total_monitored': acc.monitored_total,
+        'devices': flagged,
+        'tiers': acc.tiers,
+        'tier_error_count': acc.tier_err,
+        'unavailable_count': (flagged | selectattr('reason', 'in', ['unavailable', 'unknown', 'missing', 'never_reported']) | list | length),
+        'frozen_count': (flagged | selectattr('reason', 'eq', 'frozen') | list | length),
+        'boot_time': boot_dt.isoformat(),
+        'settled': settled,
+        'last_evaluated': now().isoformat()
+      }
+    }}
+    {%- endif -%}
+
+trigger:
+  - trigger: time_pattern
+    alias: Re-evaluate on the cadence interval
+    hours: '*'
+    minutes: !input scan_interval
+  - trigger: homeassistant
+    alias: Latch the startup grace boot time on Home Assistant start
+    event: start
+    id: ha_start
+  - trigger: state
+    alias: Manual refresh button press
+    entity_id: !input refresh_button
+    id: manual_refresh
+
+action:
+  - if:
+      - condition: template
+        value_template: "{{ debug_enabled }}"
+    then:
+      - action: system_log.write
+        data:
+          level: info
+          logger: entity_sentinel
+          message: >-
+            {%- macro loc(v) -%}{{ (v | as_datetime(none) | as_local).strftime('%Y-%m-%d %H:%M:%S') if (v | as_datetime(none)) is not none else v }}{%- endmacro -%}
+            Entity Sentinel v{{ sentinel_version }} @ {{ loc(result.last_evaluated) }}
+            | state: {{ result.state }} | uptime_status: {{ result.uptime_status }}{% if result.error %} | ERROR: {{ result.error }}{% endif %}
+            | settled: {{ result.settled }} | boot: {{ loc(result.boot_time) }}
+            | monitored: {{ result.total_monitored }} | flagged: {{ result.state }} (unavailable {{ result.unavailable_count }}, frozen {{ result.frozen_count }})
+            | tiers: {% for t in result.tiers %}{{ t.name }} {{ t.flagged }}/{{ t.monitored }}{% if t.error %} ERROR: {{ t.error }}{% endif %}{% if t.note %} note: {{ t.note }}{% endif %}{{ '' if loop.last else ', ' }}{% endfor %}
+            {%- for d in result.devices %} | {{ d.name }} ({{ d.entity_id }}) [{{ d.reason }}] tier={{ d.tier }} area={{ d.area }} age={{ d.age }} since={{ loc(d.since) }} last_seen={{ loc(d.last_seen) }}{% endfor %}
+
+sensor:
+  - name: !input sensor_name
+    unique_id: !input unique_id
+    state: "{{ result.state }}"
+    icon: >-
+      {% if result.state == 'setup_error' %}mdi:cog-off{% elif result.tier_error_count | int(0) > 0 %}mdi:alert-circle-outline{% elif result.state | int(0) > 0 %}mdi:alert-circle{% else %}mdi:check-circle-outline{% endif %}
+    attributes:
+      ok: "{{ result.ok }}"
+      error: "{{ result.error }}"
+      sentinel_type: entity
+      sentinel_version: "{{ sentinel_version }}"
+      uptime_status: "{{ result.uptime_status }}"
+      total_monitored: "{{ result.total_monitored }}"
+      devices: "{{ result.devices }}"
+      tiers: "{{ result.tiers }}"
+      tier_error_count: "{{ result.tier_error_count }}"
+      unavailable_count: "{{ result.unavailable_count }}"
+      frozen_count: "{{ result.frozen_count }}"
+      boot_time: "{{ result.boot_time }}"
+      settled: "{{ result.settled }}"
+      last_evaluated: "{{ result.last_evaluated }}"

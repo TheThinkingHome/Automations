@@ -208,12 +208,12 @@ The point of this sensor is to be read, so these are the interface a card or aut
 
 ## A sample configuration
 
-This is a template blueprint, so it is normally set up in the UI. If you prefer YAML, a `use_blueprint` entry looks like this (the `path` is relative to your `config/blueprints/template/` folder and reflects where the blueprint was saved on import):
+This is a template blueprint, so it is set up through a `use_blueprint` entry in your configuration, the same way as the Sentinels; the [Battery Sentinel README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md) walks the package setup step by step, and the [packages documentation](https://www.home-assistant.io/docs/configuration/packages/) covers packages in full. The `path` is relative to your `config/blueprints/template/` folder (only the part after it), and the package filename must end in `.yaml`:
 
 ```yaml
 template:
   - use_blueprint:
-      path: dashboard_sentinel.yaml
+      path: TheThinkingHome/dashboard_sentinel.yaml
       input:
         source_sensors:
           - sensor.entity_sentinel_lively

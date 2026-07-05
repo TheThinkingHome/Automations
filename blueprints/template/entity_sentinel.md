@@ -76,7 +76,7 @@ Or paste this URL into Settings, Automations & Scenes, Blueprints, Import Bluepr
 https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
 ```
 
-Importing only registers a blueprint. It does not create a sensor yet. After import, the file lands at `config/blueprints/template/TheThinkingHome/entity_sentinel.yaml`. Verify it is there, you will need that path next.
+Importing only registers a blueprint. It does not create a sensor yet. After import, the file lands at `config/blueprints/template/TheThinkingHome/entity_sentinel.yaml`; verify it is there. One thing to know for the next step: the `path:` you write in `use_blueprint` is relative to `config/blueprints/template/`, so only the last part is used, exactly `TheThinkingHome/entity_sentinel.yaml`.
 
 ## Setting Up the Sensor
 
@@ -86,7 +86,7 @@ Automation blueprints get a Create automation button on the Blueprints page. Tem
 
 ### What a Package Is, and How to Create One
 
-A package is a single YAML file holding a bundle of related configurations that Home Assistant folds in at startup. Packages are optional, but they keep related things together.
+A package is a single YAML file holding a bundle of related configurations that Home Assistant folds in at startup. Packages are optional, but they keep related things together. Packages are a core Home Assistant feature; the [packages documentation](https://www.home-assistant.io/docs/configuration/packages/) covers them in full.
 
 If you have never used packages, switch them on once. In `configuration.yaml`, add the `packages:` line (under your existing `homeassistant:` section if you have one):
 
@@ -95,7 +95,7 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-Then create a folder named `packages` next to your `configuration.yaml`. Every YAML file you drop in there is a package.
+Then create a folder named `packages` next to your `configuration.yaml`. Every YAML file you drop in there is a package. **The filename must end in `.yaml`**; a file without the extension is silently ignored, with no error anywhere.
 
 Now make a package file, for example `packages/blueprint_entity_sentinel.yaml`, and put the `use_blueprint` block inside a `template:` list:
 
@@ -125,6 +125,16 @@ If you also build Battery Sentinel, put both `use_blueprint` blocks in the same 
 A brand-new package file needs a full Home Assistant restart to register the first time. After that, adding more blocks to the same file only needs a reload through Developer Tools, YAML, Reload Template Entities.
 
 When it comes up you will have a sensor named after `sensor_name`. Watch it in Developer Tools, States. The state is the count; the `devices` attribute lists the flagged entities. If you see `setup_error` instead of a number, read the `error` attribute; it almost always means the uptime sensor needs attention.
+
+### If the Sensor Does Not Appear
+
+Work down this list; every item on it has produced exactly this symptom for someone.
+
+1. **The package filename ends in `.yaml`.** A file without the extension is silently ignored, with no error to find.
+2. **The `packages:` line exists** in `configuration.yaml`, and the `packages` folder sits next to that file.
+3. **The `path:` is exactly `TheThinkingHome/entity_sentinel.yaml`.** It is relative to `config/blueprints/template/`, not to your config folder, so any longer path cannot match.
+4. **The blueprint is actually imported.** It must appear under Settings, Automations & Scenes, Blueprints; if not, run the import first.
+5. **Settings, System, Logs names any YAML error** in the package file itself. Fix what it names, then restart or reload.
 
 ## Parameters
 

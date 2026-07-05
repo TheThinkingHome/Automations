@@ -36,8 +36,14 @@
 # is state setup_error / ok false, so a consumer like Sentinel Notify never
 # drops a partially-healthy sensor. tier_error_count is the badge hook.
 #
-# DESIGN CHOICE (global exclude, per-tier includes): membership is per-tier,
-# suppression is per-house. One exclude input trims every tier.
+# DESIGN CHOICE (global exclude + per-tier excludes): membership is per-tier.
+# The global exclude trims every tier (per-house suppression). Each tier also
+# has its own exclude that trims only that tier. This is how a broad area or
+# label sweep in one tier coexists with a specific entity named in a faster
+# tier: exclude the entity from the sweeping tier, and the cross-tier duplicate
+# error clears without removing it from the tier that should keep it. Any
+# duplicate the user has NOT resolved this way stays a loud, named per-tier
+# error (report and fail; the engine never silently picks a winner).
 #
 # DESIGN CHOICE (the contract is a superset of 1.x): same devices shape, same
 # ok / error / boot_time / last_evaluated / total_monitored / counts, so
@@ -63,7 +69,9 @@
 #           is a strict superset of 1.x (new: tier on each entry, the tiers
 #           attribute, tier_error_count, entity-id sorted list). BREAKING:
 #           freeze_lookback and include_target are replaced by the tier slots;
-#           exclude_target and all cadence inputs are unchanged. The 1.x line
+#           each tier also gains its own exclude (tier_N_exclude) so a broad
+#           sweep and a specific override can coexist; the global exclude_target
+#           and all cadence inputs are unchanged. The 1.x line
 #           is frozen stable in its own file; its changelog lives there.
 # ==============================================================================
 blueprint:
@@ -101,7 +109,7 @@ blueprint:
     2.0.0-alpha.1
   author: James Lander (xeazy.com)
   domain: template
-  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel_2.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
@@ -125,6 +133,16 @@ blueprint:
             Entities, labels, areas, or devices for this tier. Explicit entities
             and labels are watched precisely; areas and devices are swept to one
             representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_1_exclude:
+          name: Tier 1 exclude
+          description: >-
+            Entities, labels, areas, or devices to leave out of THIS tier only.
+            Use it to carve a specific entity out of this tier's area or label
+            sweep while another tier still watches it. The global exclude below
+            removes from every tier; this removes from this one.
           default: {}
           selector:
             target: {}
@@ -163,6 +181,16 @@ blueprint:
           default: {}
           selector:
             target: {}
+        tier_2_exclude:
+          name: Tier 2 exclude
+          description: >-
+            Entities, labels, areas, or devices to leave out of THIS tier only.
+            Use it to carve a specific entity out of this tier's area or label
+            sweep while another tier still watches it. The global exclude below
+            removes from every tier; this removes from this one.
+          default: {}
+          selector:
+            target: {}
         tier_2_freeze:
           name: Tier 2 freeze lookback
           description: >-
@@ -195,6 +223,16 @@ blueprint:
             Entities, labels, areas, or devices for this tier. Explicit entities
             and labels are watched precisely; areas and devices are swept to one
             representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_3_exclude:
+          name: Tier 3 exclude
+          description: >-
+            Entities, labels, areas, or devices to leave out of THIS tier only.
+            Use it to carve a specific entity out of this tier's area or label
+            sweep while another tier still watches it. The global exclude below
+            removes from every tier; this removes from this one.
           default: {}
           selector:
             target: {}
@@ -233,6 +271,16 @@ blueprint:
           default: {}
           selector:
             target: {}
+        tier_4_exclude:
+          name: Tier 4 exclude
+          description: >-
+            Entities, labels, areas, or devices to leave out of THIS tier only.
+            Use it to carve a specific entity out of this tier's area or label
+            sweep while another tier still watches it. The global exclude below
+            removes from every tier; this removes from this one.
+          default: {}
+          selector:
+            target: {}
         tier_4_freeze:
           name: Tier 4 freeze lookback
           description: >-
@@ -265,6 +313,16 @@ blueprint:
             Entities, labels, areas, or devices for this tier. Explicit entities
             and labels are watched precisely; areas and devices are swept to one
             representative entity per device. Empty means this tier is unused.
+          default: {}
+          selector:
+            target: {}
+        tier_5_exclude:
+          name: Tier 5 exclude
+          description: >-
+            Entities, labels, areas, or devices to leave out of THIS tier only.
+            Use it to carve a specific entity out of this tier's area or label
+            sweep while another tier still watches it. The global exclude below
+            removes from every tier; this removes from this one.
           default: {}
           selector:
             target: {}
@@ -428,18 +486,23 @@ variables:
   sentinel_version: 2.0.0-alpha.1
   tier_1_name: !input tier_1_name
   tier_1_target: !input tier_1_target
+  tier_1_exclude: !input tier_1_exclude
   tier_1_freeze: !input tier_1_freeze
   tier_2_name: !input tier_2_name
   tier_2_target: !input tier_2_target
+  tier_2_exclude: !input tier_2_exclude
   tier_2_freeze: !input tier_2_freeze
   tier_3_name: !input tier_3_name
   tier_3_target: !input tier_3_target
+  tier_3_exclude: !input tier_3_exclude
   tier_3_freeze: !input tier_3_freeze
   tier_4_name: !input tier_4_name
   tier_4_target: !input tier_4_target
+  tier_4_exclude: !input tier_4_exclude
   tier_4_freeze: !input tier_4_freeze
   tier_5_name: !input tier_5_name
   tier_5_target: !input tier_5_target
+  tier_5_exclude: !input tier_5_exclude
   tier_5_freeze: !input tier_5_freeze
   exclude_target: !input exclude_target
   unavailable_debounce: !input unavailable_debounce
@@ -471,11 +534,11 @@ variables:
     {%- set telemetry_dc = ['power', 'energy', 'current', 'voltage', 'apparent_power', 'power_factor', 'illuminance'] -%}
     {%- set junk_domains = ['update', 'button', 'number', 'select', 'text', 'image', 'scene', 'configurator', 'event'] -%}
     {%- set tier_defs = [
-      {'i': 1, 'name': tier_1_name, 'target': tier_1_target, 'freeze': tier_1_freeze},
-      {'i': 2, 'name': tier_2_name, 'target': tier_2_target, 'freeze': tier_2_freeze},
-      {'i': 3, 'name': tier_3_name, 'target': tier_3_target, 'freeze': tier_3_freeze},
-      {'i': 4, 'name': tier_4_name, 'target': tier_4_target, 'freeze': tier_4_freeze},
-      {'i': 5, 'name': tier_5_name, 'target': tier_5_target, 'freeze': tier_5_freeze}
+      {'i': 1, 'name': tier_1_name, 'target': tier_1_target, 'exclude': tier_1_exclude, 'freeze': tier_1_freeze},
+      {'i': 2, 'name': tier_2_name, 'target': tier_2_target, 'exclude': tier_2_exclude, 'freeze': tier_2_freeze},
+      {'i': 3, 'name': tier_3_name, 'target': tier_3_target, 'exclude': tier_3_exclude, 'freeze': tier_3_freeze},
+      {'i': 4, 'name': tier_4_name, 'target': tier_4_target, 'exclude': tier_4_exclude, 'freeze': tier_4_freeze},
+      {'i': 5, 'name': tier_5_name, 'target': tier_5_target, 'exclude': tier_5_exclude, 'freeze': tier_5_freeze}
     ] -%}
     {%- if uptime_ok -%}
     {%- set exc = exclude_target -%}
@@ -581,7 +644,31 @@ variables:
             {%- set rep_keep.ents = rep_keep.ents + [re] -%}
           {%- endif -%}
         {%- endfor -%}
-        {%- set tmon = (all_trusted + rep_keep.ents) | reject('in', xset.ents) | list -%}
+        {%- set texc = namespace(ents=[]) -%}
+        {%- set tex = t.exclude -%}
+        {%- if tex is mapping -%}
+          {%- if tex.entity_id is defined -%}
+            {%- set elist = tex.entity_id if (tex.entity_id is iterable and tex.entity_id is not string) else [tex.entity_id] -%}
+            {%- set texc.ents = texc.ents + elist -%}
+          {%- endif -%}
+          {%- if tex.label_id is defined -%}
+            {%- set llist = tex.label_id if (tex.label_id is iterable and tex.label_id is not string) else [tex.label_id] -%}
+            {%- for l in llist -%}
+              {%- set texc.ents = texc.ents + label_entities(l) -%}
+              {%- for d in label_devices(l) -%}{%- set texc.ents = texc.ents + device_entities(d) -%}{%- endfor -%}
+              {%- for a in label_areas(l) -%}{%- set texc.ents = texc.ents + area_entities(a) -%}{%- endfor -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {%- if tex.device_id is defined -%}
+            {%- set dlist = tex.device_id if (tex.device_id is iterable and tex.device_id is not string) else [tex.device_id] -%}
+            {%- for d in dlist -%}{%- set texc.ents = texc.ents + device_entities(d) -%}{%- endfor -%}
+          {%- endif -%}
+          {%- if tex.area_id is defined -%}
+            {%- set alist = tex.area_id if (tex.area_id is iterable and tex.area_id is not string) else [tex.area_id] -%}
+            {%- for a in alist -%}{%- set texc.ents = texc.ents + area_entities(a) -%}{%- endfor -%}
+          {%- endif -%}
+        {%- endif -%}
+        {%- set tmon = (all_trusted + rep_keep.ents) | reject('in', xset.ents) | reject('in', texc.ents) | list -%}
         {%- set kept = namespace(e=[]) -%}
         {%- set dup = namespace(e=[]) -%}
         {%- for e in tmon -%}

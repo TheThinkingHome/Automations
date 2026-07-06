@@ -6,7 +6,7 @@ This page builds the board below in three steps: first the **aggregator**, the s
 
 This is a beta: graduated from alpha by a 27-check adversarial torture suite and running live on my own system combining three tiers. What it still needs is time in varied homes, and the ask at the bottom of the page is genuine.
 
-![Sentinel Status dashboard: one low battery on the shopping list, two quiet entities on the outage board with one acknowledged, and green status cards above](IMAGE-URL-HERE)
+![Sentinel Status dashboard: one low battery on the shopping list, two quiet entities on the outage board with one acknowledged, and green status cards above](https://xeazy.com/wp-content/uploads/sentinel-status-detected-todo-2.png)
 
 *The board this page builds, live on my own system: one battery at 32% on the shopping list, the two sensors on my truck on the outage board, one of them checked off as acknowledged, and the status cards reporting the counts. Nothing in the picture is managed by hand.*
 

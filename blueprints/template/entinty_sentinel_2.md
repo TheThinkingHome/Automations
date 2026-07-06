@@ -4,7 +4,7 @@ One sensor, up to five tiers. Each tier carries its own targets and its own free
 
 **This is the development line, currently 2.0.0-alpha.1.** It has passed a first-light bench, not yet the full torture gate, and it is not yet running anywhere. For a settled setup today, use the stable [Entity Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md) and, to combine several of them, [Dashboard Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/dashboard_sentinel.md). Everything those two do together, this one sensor will do alone.
 
-The output contract is a strict superset of Entity Sentinel 1.x: the same `devices` shape and attributes, so [Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) and your dashboard cards consume it unchanged. New: each `devices` entry carries `tier`, a `tiers` attribute reports per-tier counts and per-tier errors, and `tier_error_count` is the badge hook.
+The output contract is a strict superset of Entity Sentinel 1.x: the same `devices` shape and attributes, so [Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) and your dashboard cards consume it unchanged. New: each `devices` entry carries `tier`, a `tiers` attribute reports per-tier counts and a per-tier `status`, and `tier_error_count` is the badge hook.
 
 ## How the tiers work
 
@@ -13,8 +13,8 @@ Give each tier the entities that share a reporting rhythm and a freeze window ma
 Three rules:
 
 1. **A tier with no targets is skipped silently.** Unused slots never appear in your package. All five empty is a loud `setup_error`.
-2. **An entity may live in exactly one tier.** Tier priority is 1 over 2 over 3 over 4 over 5: a duplicate stays monitored in its lowest-numbered tier, and every higher-numbered tier that also contains it excludes it and names it in that tier's `error`, while the tier's healthy entities keep rendering. The sensor stays `ok: true`; `tier_error_count` tells you a tier needs fixing.
-3. **A target that resolves to no entities is a `note`, not an error.** A freshly created label with nothing tagged yet is a normal mid-setup state.
+2. **An entity may live in exactly one tier.** Tier priority is 1 over 2 over 3 over 4 over 5: a duplicate stays monitored in its lowest-numbered tier, and every higher-numbered tier that also contains it excludes it and names it in that tier's `status`, while the tier's healthy entities keep rendering. The sensor stays `ok: true`; `tier_error_count` tells you a tier needs fixing.
+3. **A target that resolves to no entities sets a `status` note, not an error.** A freshly created label with nothing tagged yet is a normal mid-setup state. A tier whose own exclude removes every resolved entity gets a distinct `status` message, so "nothing tagged" and "all excluded" are told apart.
 
 ## Import the blueprint
 
@@ -94,15 +94,15 @@ The five tier slots take the same three inputs each; N is 1 through 5.
 
 ## Attributes
 
-Everything Entity Sentinel 1.x publishes, unchanged: `ok`, `error`, `sentinel_type`, `sentinel_version`, `uptime_status`, `total_monitored`, `devices` (each entry: `name`, `entity_id`, `area`, `reason`, `since`, `last_seen`, `age`), `unavailable_count`, `frozen_count`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count, entity-id sorted.
+Everything Entity Sentinel 1.x publishes, unchanged. Attributes are ordered so the useful summary sits on top and the reference fields below: `ok`, `error`, `total_monitored`, `unavailable_count`, `frozen_count`, `tier_error_count`, `devices` (each entry: `name`, `entity_id`, `area`, `tier`, `reason`, `since`, `last_seen`, `age`), `tiers`, then `sentinel_type`, `sentinel_version`, `uptime_status`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count, entity-id sorted.
 
 New in 2.0:
 
 | Attribute | What it carries |
 | --- | --- |
-| `tier` (on each `devices` entry) | The display name of the tier that flagged the entity. |
-| `tiers` | One entry per active tier: `tier` (slot number), `name`, `monitored`, `flagged`, `error` (duplicates, naming each entity), `note` (zero-resolving target). |
-| `tier_error_count` | How many tiers currently report an error. Zero when the configuration is clean. |
+| `tier` (on each `devices` entry) | The name of the tier that flagged the entity. |
+| `tiers` | One entry per active tier: `tier` (the tier's name), `monitored`, `flagged`, and a single `status` string. `status` is empty when the tier is healthy; otherwise it carries one message: a cross-tier duplicate (naming each entity), a target that resolved to nothing (nothing tagged yet), or a target whose own exclude removed every resolved entity. |
+| `tier_error_count` | How many tiers have a hard error (a cross-tier duplicate). A benign `status` note (nothing tagged, or all excluded) does not count. Zero when the configuration is clean. |
 
 ## If the sensor does not appear
 
@@ -112,7 +112,7 @@ The checklist in the [Entity Sentinel README](https://github.com/TheThinkingHome
 
 | Version | Notes |
 | --- | --- |
-| 2.0.0-alpha.1.1 | Attribute presentation only; no logic change. The engine does exactly what alpha.1 did. Three improvements to how the `tiers` attribute reads and how attributes are ordered: each `tiers` entry now shows `tier: <name>` instead of a `tier: <number>` plus a separate `name:` field; the old `error` and `note` fields are merged into a single `status` string (empty when the tier is healthy), which also now distinguishes a tier whose own exclude removed every resolved entity from one whose target simply resolved to nothing; and the attributes are reordered so the useful summary sits on top (`ok`, `error`, `total_monitored`, the counts, `devices`, `tiers`) with the reference fields below. `tier_error_count` is unchanged in meaning. |
+| 2.0.0-alpha.1.1 | Attribute presentation only; no logic change. The engine does exactly what alpha.1 did. Each `tiers` entry now shows `tier: <name>` instead of a `tier: <number>` plus a separate `name:` field; the old `error` and `note` fields are merged into a single `status` string (empty when the tier is healthy), which also distinguishes a tier whose own exclude removed every resolved entity from one whose target simply resolved to nothing; and the attributes are reordered so the useful summary sits on top (`ok`, `error`, `total_monitored`, the counts, `devices`, `tiers`) with the reference fields below. `tier_error_count` is unchanged in meaning. |
 | 2.0.0-alpha.1 | The tiered rebuild. Up to five tiers in one sensor, each with its own targets and freeze window on one shared cadence and one shared unavailable debounce. Duplicates across tiers resolve to the lowest-numbered tier and are reported as the higher tier's error, with partial rendering. Output contract is a strict superset of 1.x: `tier` on each entry, the `tiers` attribute, `tier_error_count`, entity-id sorted list. Supersedes the multi-sensor pattern and the Dashboard Sentinel aggregator for new builds. First-light bench, 12 checks. |
 
 The 1.x line and its full history live in the [Entity Sentinel README](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel.md).

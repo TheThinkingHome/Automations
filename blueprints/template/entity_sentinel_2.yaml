@@ -62,6 +62,21 @@
 # sensor in timestamp mode, and the loud uptime setup error.
 #
 # Changelog:
+#   2.0.0-alpha.1.1 - Attribute presentation only; no logic change. The blueprint
+#           does exactly what alpha.1 did, the detection engine is untouched.
+#           Three improvements to how the tiers attribute reads and how the
+#           attributes are ordered: (1) each tiers entry now shows tier: <name>
+#           instead of tier: <number> plus a separate name: field, one line
+#           shorter per tier; (2) the old error and note fields are merged into a
+#           single status string, empty when the tier is healthy, so a clean tier
+#           is just tier / monitored / flagged; status also now distinguishes a
+#           tier whose own exclude removed every resolved entity from a tier
+#           whose target simply resolved to nothing; (3) attributes are reordered
+#           so the useful summary sits at the top (ok, error, total_monitored,
+#           the counts, devices, tiers) and the reference fields (versions,
+#           timestamps, boot_time, settled) sit below. tier_error_count is
+#           unchanged in meaning and now derives from the engine's internal
+#           duplicate detection rather than string state.
 #   2.0.0-alpha.1 - THE TIERED REBUILD. Up to five tiers in one sensor, each
 #           with its own targets and freeze window on one shared cadence and
 #           one shared unavailable debounce. Duplicates across tiers resolve
@@ -108,7 +123,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.1
+    2.0.0-alpha.1.1
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel_2.yaml
@@ -485,7 +500,7 @@ blueprint:
             boolean: {}
 
 variables:
-  sentinel_version: 2.0.0-alpha.1
+  sentinel_version: 2.0.0-alpha.1.1
   tier_1_name: !input tier_1_name
   tier_1_target: !input tier_1_target
   tier_1_exclude: !input tier_1_exclude
@@ -864,15 +879,15 @@ sensor:
     attributes:
       ok: "{{ result.ok }}"
       error: "{{ result.error }}"
+      total_monitored: "{{ result.total_monitored }}"
+      unavailable_count: "{{ result.unavailable_count }}"
+      frozen_count: "{{ result.frozen_count }}"
+      tier_error_count: "{{ result.tier_error_count }}"
+      devices: "{{ result.devices }}"
+      tiers: "{{ result.tiers }}"
       sentinel_type: entity
       sentinel_version: "{{ sentinel_version }}"
       uptime_status: "{{ result.uptime_status }}"
-      total_monitored: "{{ result.total_monitored }}"
-      devices: "{{ result.devices }}"
-      tiers: "{{ result.tiers }}"
-      tier_error_count: "{{ result.tier_error_count }}"
-      unavailable_count: "{{ result.unavailable_count }}"
-      frozen_count: "{{ result.frozen_count }}"
       boot_time: "{{ result.boot_time }}"
       settled: "{{ result.settled }}"
       last_evaluated: "{{ result.last_evaluated }}"

@@ -194,6 +194,27 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.10 - THE SETTLE-RECONCILE TRIGGER. Fixes a stranded-recovery
+#           bug found live on 2026-07-06: a source recovered (its flagged item
+#           cleared) while the source was still inside its startup grace after a
+#           reboot, so the run was correctly held by the settle guard and the
+#           recovery was not processed. The source then held steady, so no state
+#           change fired, and because the daily reminder had already run, nothing
+#           woke the notifier to reconcile until the next day's reminder. The
+#           item sat on the to-do list, wrongly, for up to a day, and a manual
+#           refresh could not clear it (the source state was unchanged, so the
+#           press produced no delta to act on). Fix: a new per-source trigger,
+#           source_settled, fires when a source's settled attribute goes false to
+#           true (the moment it leaves grace). That run flows through every
+#           existing gate unchanged; finding the source genuinely settled, it
+#           reads the to-do memory and reconciles, sweeping any recovery that
+#           became visible during the hold. With several sources, each settles
+#           on its own, and the all-sources-settled gate holds every fire until
+#           the last source is ready, so early per-source fires are harmless
+#           no-ops. A settle run with nothing to reconcile is silent (no push,
+#           no list change). The 9.3 stale-source guard is unaffected: the
+#           settle trigger fires only when data is trustworthy, the exact case
+#           the guards allow. No input change.
 #   2.0.0-alpha.9.4 - Debug logging only; no engine or input change. The result
 #           summary log line now names the entities in its list-mutating fields,
 #           not just their counts: additions, kind_changed, silent_updates, and
@@ -347,7 +368,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.9.4
+    2.0.0-alpha.10
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -631,7 +652,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.9.4
+  version: 2.0.0-alpha.10
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list
@@ -920,6 +941,13 @@ trigger:
       seconds: !input upstream_debounce_seconds
     id: source_broken
     alias: A source has stayed unavailable for the full debounce, wake up and report it broken
+  - trigger: state
+    entity_id: !input source_sensors
+    attribute: settled
+    from: false
+    to: true
+    id: source_settled
+    alias: A source finished its startup grace (settled false to true). This wakes the notifier to reconcile a recovery that became visible while the source was still settling, when the source then holds steady and no state change would otherwise fire. Fires per source; the settle gate still holds the run until all sources are settled, so an early per-source fire is a harmless no-op.
   - trigger: time
     at: !input daily_reminder_time
     id: daily_reminder
@@ -1279,6 +1307,7 @@ action:
       today_iso: "{{ now().date().isoformat() }}"
       reminder_due: >-
         {{ daily_reminder_mode != 'none'
+           and trigger.id != 'source_settled'
            and now().strftime('%H:%M:%S') >= daily_reminder_time
            and previous_reminder_date != today_iso }}
       is_reminder: "{{ reminder_due }}"

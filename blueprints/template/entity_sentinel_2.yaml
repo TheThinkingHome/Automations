@@ -49,7 +49,8 @@
 # ok / error / boot_time / last_evaluated / total_monitored / counts, so
 # Sentinel Notify and every dashboard card consume 2.0 unchanged. New: each
 # devices entry carries tier (the display name); a tiers attribute lists
-# per-tier name, monitored, flagged, error, and note; tier_error_count counts
+# per-tier name, monitored, flagged, and a single status string (empty when the
+# tier is healthy); tier_error_count counts
 # tiers currently in error. The merged list is entity-id sorted (domain
 # grouping), matching what Dashboard Sentinel used to hand the cards.
 #
@@ -67,7 +68,8 @@
 #           to the lowest-numbered tier and are reported as the higher tier's
 #           error. Per-tier validation with partial rendering. Output contract
 #           is a strict superset of 1.x (new: tier on each entry, the tiers
-#           attribute, tier_error_count, entity-id sorted list). BREAKING:
+#           attribute (each entry: tier name, monitored, flagged, status),
+#           tier_error_count, entity-id sorted list). BREAKING:
 #           freeze_lookback and include_target are replaced by the tier slots;
 #           each tier also gains its own exclude (tier_N_exclude) so a broad
 #           sweep and a specific override can coexist; the global exclude_target
@@ -534,11 +536,11 @@ variables:
     {%- set telemetry_dc = ['power', 'energy', 'current', 'voltage', 'apparent_power', 'power_factor', 'illuminance'] -%}
     {%- set junk_domains = ['update', 'button', 'number', 'select', 'text', 'image', 'scene', 'configurator', 'event'] -%}
     {%- set tier_defs = [
-      {'i': 1, 'name': tier_1_name, 'target': tier_1_target, 'exclude': tier_1_exclude, 'freeze': tier_1_freeze},
-      {'i': 2, 'name': tier_2_name, 'target': tier_2_target, 'exclude': tier_2_exclude, 'freeze': tier_2_freeze},
-      {'i': 3, 'name': tier_3_name, 'target': tier_3_target, 'exclude': tier_3_exclude, 'freeze': tier_3_freeze},
-      {'i': 4, 'name': tier_4_name, 'target': tier_4_target, 'exclude': tier_4_exclude, 'freeze': tier_4_freeze},
-      {'i': 5, 'name': tier_5_name, 'target': tier_5_target, 'exclude': tier_5_exclude, 'freeze': tier_5_freeze}
+      {'name': tier_1_name, 'target': tier_1_target, 'exclude': tier_1_exclude, 'freeze': tier_1_freeze},
+      {'name': tier_2_name, 'target': tier_2_target, 'exclude': tier_2_exclude, 'freeze': tier_2_freeze},
+      {'name': tier_3_name, 'target': tier_3_target, 'exclude': tier_3_exclude, 'freeze': tier_3_freeze},
+      {'name': tier_4_name, 'target': tier_4_target, 'exclude': tier_4_exclude, 'freeze': tier_4_freeze},
+      {'name': tier_5_name, 'target': tier_5_target, 'exclude': tier_5_exclude, 'freeze': tier_5_freeze}
     ] -%}
     {%- if uptime_ok -%}
     {%- set exc = exclude_target -%}
@@ -668,7 +670,8 @@ variables:
             {%- for a in alist -%}{%- set texc.ents = texc.ents + area_entities(a) -%}{%- endfor -%}
           {%- endif -%}
         {%- endif -%}
-        {%- set tmon = (all_trusted + rep_keep.ents) | reject('in', xset.ents) | reject('in', texc.ents) | list -%}
+        {%- set pre_exclude = (all_trusted + rep_keep.ents) | reject('in', xset.ents) | list -%}
+        {%- set tmon = pre_exclude | reject('in', texc.ents) | list -%}
         {%- set kept = namespace(e=[]) -%}
         {%- set dup = namespace(e=[]) -%}
         {%- for e in tmon -%}
@@ -679,8 +682,16 @@ variables:
             {%- set acc.seen = acc.seen + [e] -%}
           {%- endif -%}
         {%- endfor -%}
-        {%- set terr = ('duplicate of a lower-numbered tier: ' ~ (dup.e | sort | join(', ')) ~ '. Each entity may live in exactly one tier; remove it from this tier.') if dup.e | length > 0 else '' -%}
-        {%- set tnote = ('the target resolves to no entities (nothing tagged yet?)' if (kept.e | length == 0 and dup.e | length == 0) else '') -%}
+        {%- set tstatus = '' -%}
+        {%- set tis_error = false -%}
+        {%- if dup.e | length > 0 -%}
+          {%- set tstatus = 'duplicate of a lower-numbered tier: ' ~ (dup.e | sort | join(', ')) ~ '. Each entity may live in exactly one tier; remove it from this tier.' -%}
+          {%- set tis_error = true -%}
+        {%- elif kept.e | length == 0 and pre_exclude | length > 0 -%}
+          {%- set tstatus = 'all ' ~ (pre_exclude | length) ~ ' resolved entities were removed by this tier''s exclude; nothing is being monitored.' -%}
+        {%- elif kept.e | length == 0 -%}
+          {%- set tstatus = 'no entities resolved from this tier''s target (nothing tagged yet?).' -%}
+        {%- endif -%}
         {%- set fl = namespace(items=[]) -%}
         {%- for eid in kept.e -%}
           {%- set st = states(eid) -%}
@@ -745,14 +756,12 @@ variables:
         {%- endfor -%}
         {%- set acc.flagged = acc.flagged + fl.items -%}
         {%- set acc.monitored_total = acc.monitored_total + (kept.e | length) -%}
-        {%- if terr != '' -%}{%- set acc.tier_err = acc.tier_err + 1 -%}{%- endif -%}
+        {%- if tis_error -%}{%- set acc.tier_err = acc.tier_err + 1 -%}{%- endif -%}
         {%- set acc.tiers = acc.tiers + [{
-          'tier': t.i,
-          'name': t.name,
+          'tier': t.name,
           'monitored': kept.e | length,
           'flagged': fl.items | length,
-          'error': terr,
-          'note': tnote
+          'status': tstatus
         }] -%}
       {%- endif -%}
     {%- endfor -%}
@@ -843,7 +852,7 @@ action:
             | state: {{ result.state }} | uptime_status: {{ result.uptime_status }}{% if result.error %} | ERROR: {{ result.error }}{% endif %}
             | settled: {{ result.settled }} | boot: {{ loc(result.boot_time) }}
             | monitored: {{ result.total_monitored }} | flagged: {{ result.state }} (unavailable {{ result.unavailable_count }}, frozen {{ result.frozen_count }})
-            | tiers: {% for t in result.tiers %}{{ t.name }} {{ t.flagged }}/{{ t.monitored }}{% if t.error %} ERROR: {{ t.error }}{% endif %}{% if t.note %} note: {{ t.note }}{% endif %}{{ '' if loop.last else ', ' }}{% endfor %}
+            | tiers: {% for t in result.tiers %}{{ t.tier }} {{ t.flagged }}/{{ t.monitored }}{% if t.status %} [{{ t.status }}]{% endif %}{{ '' if loop.last else ', ' }}{% endfor %}
             {%- for d in result.devices %} | {{ d.name }} ({{ d.entity_id }}) [{{ d.reason }}] tier={{ d.tier }} area={{ d.area }} age={{ d.age }} since={{ loc(d.since) }} last_seen={{ loc(d.last_seen) }}{% endfor %}
 
 sensor:

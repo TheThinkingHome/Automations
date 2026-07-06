@@ -62,6 +62,13 @@
 # sensor in timestamp mode, and the loud uptime setup error.
 #
 # Changelog:
+#   2.0.0-alpha.1.2 - Count bucketing fix. An entity whose state is the literal
+#           string 'none' (a badly behaved custom integration quirk) was flagged
+#           in devices and counted in the state, but fell into neither
+#           unavailable_count nor frozen_count, so the two counts did not sum to
+#           the state. 'none' now buckets into unavailable_count. Found by an
+#           externally proposed test case (Gemini review round 2); reproduced,
+#           fixed, and proven in the suite (57 checks).
 #   2.0.0-alpha.1.1 - Attribute presentation only; no logic change. The blueprint
 #           does exactly what alpha.1 did, the detection engine is untouched.
 #           Three improvements to how the tiers attribute reads and how the
@@ -123,7 +130,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.1.1
+    2.0.0-alpha.1.2
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel_2.yaml
@@ -500,7 +507,7 @@ blueprint:
             boolean: {}
 
 variables:
-  sentinel_version: 2.0.0-alpha.1.1
+  sentinel_version: 2.0.0-alpha.1.2
   tier_1_name: !input tier_1_name
   tier_1_target: !input tier_1_target
   tier_1_exclude: !input tier_1_exclude
@@ -829,7 +836,7 @@ variables:
         'devices': flagged,
         'tiers': acc.tiers,
         'tier_error_count': acc.tier_err,
-        'unavailable_count': (flagged | selectattr('reason', 'in', ['unavailable', 'unknown', 'missing', 'never_reported']) | list | length),
+        'unavailable_count': (flagged | selectattr('reason', 'in', ['unavailable', 'unknown', 'none', 'missing', 'never_reported']) | list | length),
         'frozen_count': (flagged | selectattr('reason', 'eq', 'frozen') | list | length),
         'boot_time': boot_dt.isoformat(),
         'settled': settled,

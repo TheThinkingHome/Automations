@@ -194,6 +194,16 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.9.4 - Debug logging only; no engine or input change. The result
+#           summary log line now names the entities in its list-mutating fields,
+#           not just their counts: additions, kind_changed, silent_updates, and
+#           recovered each print a bracketed [entity_id, ...] list when non-empty
+#           (and nothing extra when zero, so idle runs read as before). Prompted
+#           by a live incident where a frozen entity was flagged overnight and
+#           silently recovered at the next scan: the recovery WAS logged, but as
+#           "recovered: 1" with no name, so identifying which entity left the
+#           list required cross-referencing the source sensor's own log. Now the
+#           notifier's stream is self-documenting for every list change.
 #   2.0.0-alpha.9.3 - THE STALE-SOURCE GUARD, from a live near-miss on
 #           2026-07-05: a source configured with a slow scan interval had not
 #           re-evaluated since its own boot, so its last report was the honest
@@ -337,7 +347,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.9.3
+    2.0.0-alpha.9.4
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -621,7 +631,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.9.3
+  version: 2.0.0-alpha.9.4
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list
@@ -1538,4 +1548,4 @@ action:
           level: info
           logger: sentinel_notify
           message: >-
-            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | open: {{ open_count }} | acked: {{ acked_open_count }} | additions: {{ additions | length }} | kind_changed: {{ kind_changed | length }} | silent_updates: {{ silent_updates | length }} | recovered: {{ recovered | length }} | notify: {{ should_push }} ({{ 'daily' if reminder_daily_sends else 'overnight' if overnight_sends else 'new' if event_should_notify else 'none' }}) | reminder_due: {{ reminder_due }} | overnight_window: {{ overnight_items | length }} | all_clear: {{ is_all_clear }} | held_prev: {{ previous_held }} | held_new: {{ held_new | string | trim }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_notify: {{ upstream_should_notify }} | quiet: {{ in_quiet_hours }} | targets: {{ push_plan | length }} (high {{ high_priority_targets | length }}, normal {{ normal_priority_targets | length }})
+            Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | flagged: {{ flagged_count }} | open: {{ open_count }} | acked: {{ acked_open_count }} | additions: {{ additions | length }}{{ ' [' ~ (additions | map(attribute='entity_id') | join(', ')) ~ ']' if additions | length > 0 else '' }} | kind_changed: {{ kind_changed | length }}{{ ' [' ~ (kind_changed | map(attribute='entity_id') | join(', ')) ~ ']' if kind_changed | length > 0 else '' }} | silent_updates: {{ silent_updates | length }}{{ ' [' ~ (silent_updates | map(attribute='entity_id') | join(', ')) ~ ']' if silent_updates | length > 0 else '' }} | recovered: {{ recovered | length }}{{ ' [' ~ (recovered | map(attribute='entity_id') | join(', ')) ~ ']' if recovered | length > 0 else '' }} | notify: {{ should_push }} ({{ 'daily' if reminder_daily_sends else 'overnight' if overnight_sends else 'new' if event_should_notify else 'none' }}) | reminder_due: {{ reminder_due }} | overnight_window: {{ overnight_items | length }} | all_clear: {{ is_all_clear }} | held_prev: {{ previous_held }} | held_new: {{ held_new | string | trim }} | upstream_broken(live): {{ upstream_broken_live }} | upstream_notify: {{ upstream_should_notify }} | quiet: {{ in_quiet_hours }} | targets: {{ push_plan | length }} (high {{ high_priority_targets | length }}, normal {{ normal_priority_targets | length }})

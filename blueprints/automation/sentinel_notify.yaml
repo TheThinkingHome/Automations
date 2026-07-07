@@ -194,6 +194,19 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.11 - THE DIFF-READ SNAPSHOT, from a live incident on 2026-07-06
+#           16:19:46: a template reload during a deploy swapped a source entity
+#           mid-run. The gates passed honestly on the pre-swap entity, but the
+#           diff consumed the trigger-time flagged list, captured during the
+#           reload's empty instant, and computed recovered: 2, silently deleting
+#           an acknowledged item and an open item; a restart then re-added both
+#           unchecked. Fix: a new step just before the to-do read re-declares the
+#           flagged chain (shadowing the trigger-time values with a fresh read)
+#           and re-evaluates the blip and settle-stale predicates on that same
+#           read; if either holds, the run stops with a diff-read hold. The
+#           gates and the diff now see one world: a swap before the step is
+#           caught by the fresh predicates, a swap after it leaves the diff on
+#           the already-validated read. No input change.
 #   2.0.0-alpha.10 - THE SETTLE-RECONCILE TRIGGER. Fixes a stranded-recovery
 #           bug found live on 2026-07-06: a source recovered (its flagged item
 #           cleared) while the source was still inside its startup grace after a
@@ -368,7 +381,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.10
+    2.0.0-alpha.11
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -652,7 +665,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.10
+  version: 2.0.0-alpha.11
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list
@@ -1148,6 +1161,175 @@ action:
               message: >-
                 Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | live hold: {{ 'a source is unavailable inside the debounce' if sources_blipping_live else 'the sources are inside their startup grace after the refresh' }}, holding the list and notifications | flagged now: {{ flagged_count }}
       - stop: A source is blipping or freshly rebooted (judged live, after any refresh); the list and notifications are held so an untrustworthy flagged list cannot disturb the pre-blip state.
+
+
+  - alias: Re-read the sources at the diff point, so the gates and the diff see the same world. A template reload can swap a source entity mid-run (after the gates pass, before the diff reads); the trigger-time flagged list would then be stale. These re-declared variables shadow the trigger-time ones for every later step, and the fresh hold predicates catch a source that swapped to an untrustworthy state. A swap after this step is harmless, the diff then uses this already-validated read.
+    variables:
+      flagged_items: >-
+        {% set ns = namespace(items=[]) %}
+        {% if ok and family_mode == 'battery' %}
+          {% for s in source_sensors %}
+            {% for d in (state_attr(s, 'devices') or []) %}
+              {% set ns.items = ns.items + [{
+                'entity_id': d.entity_id,
+                'name': d.name,
+                'area': d.area,
+                'level': d.level,
+                'battery_type': d.battery_type | default(''),
+                'reason': '',
+                'age': '',
+                'kind': 'low'
+              }] %}
+            {% endfor %}
+            {% if battery_report_offline %}
+              {% for u in (state_attr(s, 'unavailable_entities') or []) %}
+                {% set ns.items = ns.items + [{
+                  'entity_id': u.entity_id,
+                  'name': u.name,
+                  'area': u.area,
+                  'level': none,
+                  'battery_type': '',
+                  'reason': '',
+                  'age': '',
+                  'kind': 'offline'
+                }] %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+        {% elif ok and family_mode == 'entity' %}
+          {% for s in source_sensors %}
+            {% for d in (state_attr(s, 'devices') or []) %}
+              {% set ns.items = ns.items + [{
+                'entity_id': d.entity_id,
+                'name': d.name,
+                'area': d.area,
+                'level': none,
+                'battery_type': '',
+                'reason': d.reason | default('unavailable'),
+                'age': d.age | default(''),
+                'kind': d.reason | default('unavailable')
+              }] %}
+            {% endfor %}
+          {% endfor %}
+        {% endif %}
+        {{ ns.items }}
+
+      flagged_items_unique: >-
+        {% if family_mode == 'entity' %}
+          {% set severe_reasons = ['unavailable', 'unknown', 'missing', 'never_reported'] %}
+          {% set severe_ids = flagged_items | selectattr('kind', 'in', severe_reasons)
+                              | map(attribute='entity_id') | list %}
+        {% else %}
+          {% set severe_ids = flagged_items | selectattr('kind', 'eq', 'offline')
+                              | map(attribute='entity_id') | list %}
+        {% endif %}
+        {% set ns = namespace(items=[], seen=[]) %}
+        {% for d in flagged_items %}
+          {% if d.entity_id not in ns.seen %}
+            {% set ns.seen = ns.seen + [d.entity_id] %}
+            {% if family_mode == 'entity' %}
+              {% if d.entity_id in severe_ids and d.kind not in ['unavailable', 'unknown', 'missing', 'never_reported'] %}
+                {% set sev = (flagged_items | selectattr('entity_id', 'eq', d.entity_id)
+                              | selectattr('kind', 'in', ['unavailable', 'unknown', 'missing', 'never_reported'])
+                              | list | first) %}
+                {% set ns.items = ns.items + [sev] %}
+              {% else %}
+                {% set ns.items = ns.items + [d] %}
+              {% endif %}
+            {% else %}
+              {% if d.entity_id in severe_ids and d.kind != 'offline' %}
+                {% set ns.items = ns.items + [{
+                  'entity_id': d.entity_id,
+                  'name': d.name,
+                  'area': d.area,
+                  'level': none,
+                  'battery_type': '',
+                  'reason': '',
+                  'age': '',
+                  'kind': 'offline'
+                }] %}
+              {% else %}
+                {% set ns.items = ns.items + [d] %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.items }}
+
+      flagged_render: >-
+        {% set out = namespace(items=[]) %}
+        {% for d in flagged_items_unique | sort(attribute='name') %}
+          {% set nm = d.name | default('Unknown') %}
+          {% set ar = d.area | default('') %}
+          {% set suffix = (' - ' ~ ar) if ar not in [none, '', 'Unassigned'] else '' %}
+          {% if family_mode == 'entity' %}
+            {% set rs = d.reason | default('unavailable') %}
+            {% set line = nm ~ ' (' ~ rs ~ ')' ~ suffix %}
+          {% else %}
+            {% set lvl = d.level | default(none) %}
+            {% set has_pct = lvl is not none and lvl not in ['unknown', 'unavailable', ''] and (lvl | string | float(none)) is not none %}
+            {% if d.kind == 'offline' %}
+              {% set line = nm ~ ' (offline)' ~ suffix %}
+            {% elif not has_pct %}
+              {% set line = nm ~ ' (low)' ~ suffix %}
+            {% else %}
+              {% set bt = d.battery_type | default('') %}
+              {% set line = nm ~ ' (' ~ (lvl | float | round(0) | int) ~ '%' ~ ((', ' ~ bt) if bt else '') ~ ')' ~ suffix %}
+            {% endif %}
+          {% endif %}
+          {% set out.items = out.items + [{'entity_id': d.entity_id, 'kind': d.kind, 'name': nm, 'line': line}] %}
+        {% endfor %}
+        {{ out.items }}
+
+      flagged_count: "{{ flagged_items_unique | length }}"
+      diff_blipping_fresh: >-
+        {% set ns = namespace(any=false) %}
+        {% for s in source_sensors %}
+          {% if states(s) in ['unavailable', 'unknown'] and states[s] is not none %}
+            {% if (now() - states[s].last_changed).total_seconds() < upstream_debounce_seconds %}
+              {% set ns.any = true %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.any }}
+      diff_settling_fresh: >-
+        {% set ns = namespace(latest=none, blind=false) %}
+        {% for s in source_sensors %}
+          {% set st = states(s) %}
+          {% set bt = state_attr(s, 'boot_time') | as_datetime(none) %}
+          {% set alive = states[s] is not none and st not in ['unavailable', 'unknown', 'setup_error'] and state_attr(s, 'ok') != false %}
+          {% if bt is not none %}
+            {% if ns.latest is none or bt > ns.latest %}
+              {% set ns.latest = bt %}
+            {% endif %}
+            {% set le = state_attr(s, 'last_evaluated') | as_datetime(none) %}
+            {% if alive and (le is none or le < bt + timedelta(seconds=upstream_debounce_seconds)) %}
+              {% set ns.blind = true %}
+            {% endif %}
+          {% elif alive %}
+            {% set ns.blind = true %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.blind or (ns.latest is not none and (now() - ns.latest).total_seconds() < upstream_debounce_seconds) }}
+
+  - alias: Diff-read hold, stop if the fresh read is untrustworthy (a source swapped mid-run, the reload race)
+    if:
+      - condition: template
+        value_template: "{{ diff_blipping_fresh or diff_settling_fresh }}"
+    then:
+      - alias: Log the diff-read hold
+        if:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        then:
+          - action: system_log.write
+            continue_on_error: true
+            data:
+              level: info
+              logger: sentinel_notify
+              message: >-
+                Sentinel Notify v{{ version }} | mode: {{ family_mode }} | trigger: {{ trigger.id }} | diff-read hold: the sources changed between the gates and the diff read ({{ 'blipping' if diff_blipping_fresh else 'settling or stale' }}), holding the list and notifications | flagged at trigger: {{ flagged_count }}
+      - stop: The fresh source read at the diff point is untrustworthy (a source was swapped or reloaded mid-run); the list and notifications are held so stale data cannot disturb the to-do memory.
 
   - alias: Read the to-do memory, both open and acknowledged items
     action: todo.get_items

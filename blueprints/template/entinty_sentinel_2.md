@@ -16,13 +16,13 @@ The 1.x Entity Sentinel was limited to one freeze window: you told it how long s
 
 ## How the Tiers Work
 
-Give each tier the entities that share a reporting rhythm, and a freeze window matching that rhythm. One evaluation on one cadence judges every entity against its own tier's window, so a slow device can never false-flag on a fast window. Unavailable and unknown entities are flagged after one shared debounce, whatever their tier.
+Give each tier the entities that share a reporting rhythm, and a freeze window matching that rhythm. One evaluation on one cadence judges every entity against its own tier's window, so a slow device can never false-flag on a fast window. 
 
 Three rules:
 
-1. **A tier with no targets is skipped silently.** Unused slots never appear in your package. All five empty is a loud `setup_error`.
-2. **An entity may live in exactly one tier.** Tier priority is 1 over 2 over 3 over 4 over 5: a duplicate stays monitored in its lowest-numbered tier, and every higher-numbered tier that also contains it excludes it and names it in that tier's `status`, while the tier's healthy entities keep rendering. The sensor stays `ok: true`; `tier_error_count` tells you a tier needs fixing, and that tier's own `tier_N_exclude` is the fix.
-3. **A target that resolves to no entities sets a `status` note, not an error.** A freshly created label with nothing tagged yet is a normal mid-setup state. A tier whose own exclude removes every resolved entity gets a distinct `status` message, so "nothing tagged" and "all excluded" are told apart.
+1. **A tier with no targets is skipped silently.** Most homes need only three, so leaving tiers 4 and 5 empty is normal, not a problem. All five empty is a loud `setup_error`.
+2. **An entity may live in exactly one tier.** Tier priority runs 1 over 2 over 3 over 4 over 5: a duplicate stays monitored in its lowest-numbered tier. Any higher-numbered tier that also claims the entity drops it and names it in that tier's `status` attribute, so you can either remove the entity from that tier's target or exclude it with `tier_N_exclude` parameter.
+3. **A tier watching nothing is a note, not an error.** Its `status` tells you why, an untagged label, or an exclude that covered everything, so a half-finished setup never looks broken.
 
 ## What It Detects
 
@@ -30,11 +30,11 @@ Each flagged entity carries the raw reason, exactly as classified:
 
 - **`unavailable`**, the entity's own state is `unavailable`.
 - **`unknown`**, the entity's own state is `unknown`.
-- **`missing`**, the entity does not exist (renamed, removed, or never created).
-- **`frozen`**, the entity still has a value but has not reported within its tier's window: it presents as healthy while the device behind it has gone quiet.
+- **`missing`**, the entity does not exist. It has been renamed, removed, or it never existed.
+- **`frozen`**, the entity still has a value but has not reported within its tier's freeze window: it presents as healthy while the device behind it has gone quiet.
 - **`never_reported`**, the entity exists but has never produced a reading.
 
-Freeze is judged against the freshest report across the whole device, so an entity that is quiet while a sibling on the same device is chatting is not frozen; the device is demonstrably alive.
+Freeze is judged against the freshest report from any entity on the same device. An entity that is quiet while a sibling on the same device is chatting is not frozen; the device is demonstrably alive. A motion sensor is a good example: its motion entity fires often, its signal strength updates constantly, and its battery percentage barely moves. Any one of them reporting keeps the whole device counted as alive, so the slow battery entity is never mistaken for frozen.
 
 ## Import the Blueprint
 

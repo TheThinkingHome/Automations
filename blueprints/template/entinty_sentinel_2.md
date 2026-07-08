@@ -50,26 +50,34 @@ Your imported copy is a snapshot; re-import to pick up newer releases, and check
 
 ## Setting Up the Sensor
 
-This is a **template** blueprint, so importing only registers it; there is no _Create_ button. It becomes a sensor through a `use_blueprint` entry in your configuration. The whole setup is four steps:
+This is a **template** blueprint, so importing only registers it in your configuration; there is no _Create_ button. It becomes a sensor through a `use_blueprint` entry, which you can add in one of two places.
+
+**The quick way, straight in `configuration.yaml`.** Good for trying it out or if this is the only Sentinel you plan to run. Add the `use_blueprint` block under a `template:` key in `configuration.yaml` (if you already have a `template:` key, add this as another entry under it rather than making a second one), then restart. Skip to the sample configuration below.
+
+**The organized way, a package file.** Better once you run more than one Sentinel, or if you like keeping related config together. A [package](https://www.home-assistant.io/docs/configuration/packages/) is just a file whose contents fold into your configuration at startup, so the same `use_blueprint` block lives in its own tidy file instead of crowding your `configuration.yaml`. Four steps:
 
 1. **Enable packages** (once, if you have not already). In `configuration.yaml`:
 
 ```yaml
-homeassistant:
-  packages: !include_dir_named packages
+   homeassistant:
+     packages: !include_dir_named packages
 ```
 
 2. **Create the folder and file.** Make a `packages` folder inside your `config` folder if it does not exist, and create a file in it, for example `entity_sentinel.yaml`. The **`.yaml` extension is required**; a file without it is silently ignored, which is the single most common reason the sensor never appears.
 
-3. **Paste a configuration** (the sample below is a working start). The `path:` is relative to `config/blueprints/template/`, so only the last part is used, exactly `TheThinkingHome/entity_sentinel_2.yaml`, whatever folder your file lives in.
+3. **Build the package file.** Open the file you just created and give it a `template:` block holding a `use_blueprint:` entry for this sensor. (A `template:` block is a list, so a second Sentinel, a Battery Sentinel, say, is just another `use_blueprint:` entry alongside it.) This is where the sensor is defined: the `use_blueprint:` points at the imported blueprint by its `path:`, and everything under `input:` configures your tiers. Paste the sample configuration below as a working starting point and edit its tiers to match your labels. The `path:` value, if you imported using the link above, is exactly:
 
-4. **Restart Home Assistant once.** A brand-new package file registers at startup. After that, edits to the same file reload through Developer Tools, YAML, Reload Template Entities.
+```yaml
+   path: TheThinkingHome/entity_sentinel_2.yaml
+```
 
-You will also need an **uptime sensor in timestamp mode**: Settings, Devices & Services, Add Integration, Uptime. The sensor uses it to know when Home Assistant started, which drives the startup grace.
+4. **Restart Home Assistant.** A brand-new package file registers at startup. After that, edits to the same file reload through Developer Tools, YAML, Reload `Template Entities`.
+
+You will also need an **uptime sensor in timestamp mode**: Settings, Devices & Services, Add Integration, Uptime. The Sentinel uses it to know when Home Assistant last started, which drives the startup grace.
 
 ## A Sample Configuration
 
-Four tiers on a real system: three cadence classes plus a battery-liveness tier (which detects battery *entities gone silent*, a different question from [Battery Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md)'s low-level detection; run both). Tier 5 is simply absent, unused slots never appear:
+Three tiers on a real system, three cadence classes, with the Sleepy tier doing double duty: alongside its once-a-day sensors it also carries the `battery_watch` label, so battery *entities gone silent* are caught on the same 36-hour window (a different question from [Battery Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md)'s low-charge detection; run both). Tiers 4 and 5 are simply absent, unused slots never appear. Note that a tier's target takes a list, so `tier_3_target` here watches two labels at once; add as many as share that tier's freeze window.
 
 ```yaml
 template:
@@ -100,17 +108,12 @@ template:
         tier_3_target:
           label_id:
             - entity_watch_sleepy
-        tier_3_freeze:
-          hours: 36
-        tier_4_name: Batteries
-        tier_4_target:
-          label_id:
             - battery_watch
-        tier_4_freeze:
+        tier_3_freeze:
           hours: 36
 ```
 
-Labels are the recommended targeting: create a label per rhythm (Settings, Areas & Zones, Labels), tag the entities whose silence you care about, and point each tier at its label. Adding a device to the watch later is then a tag, not a config edit.
+**Labels are the recommended targeting:** create a label per rhythm (Settings, Areas & Zones, Labels), tag the entities whose silence you care about, and point each tier at its label. Labels are the recommended targeting: make a label per rhythm (Settings, Areas & Zones, Labels), tag the entities whose silence you care about, and point each tier at its label. Later, adding a new sensor to the watch is just applying the label to it, no package edit or restart needed.
 
 ## Upgrading from 1.x
 

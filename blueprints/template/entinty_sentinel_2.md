@@ -117,11 +117,15 @@ template:
 
 ## Upgrading from 1.x
 
-If you run the 1.x pattern, one or more Entity Sentinel copies plus Dashboard Sentinel, the migration is one package edit:
+If you are currently running the older 1.x pattern, one or more Entity Sentinel copies plus Dashboard Sentinel, the migration is one package edit:
 
-1. **Replace the blocks.** Delete each 1.x `use_blueprint` block and the Dashboard Sentinel block, and add one 2.0 block. Each old copy becomes a tier: its `include_target` becomes that tier's `tier_N_target`, and its freeze window becomes `tier_N_freeze`. Your labels carry over untouched.
-2. **Restart.** The new sensor appears under the `unique_id` you gave it.
-3. **Repoint the consumers.** Anything that read the aggregator (dashboard cards, Sentinel Notify's source input) points at the new sensor instead. The `devices` list is shape-identical, so cards need only the entity_id swap; 2.0 additionally has `tier_error_count` where the aggregator had `source_error_count`.
+1. **Re-import the blueprint** using the link above. Re-importing updates your existing Entity Sentinel blueprint to 2.0. Its inputs are different, so migrate the package in this same sitting; your existing sensors are in limbo until you do. (Staying on 1.x instead? Import the frozen [entity_sentinel_1.x.yaml](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel_1.x.yaml) and leave your blocks as they are.)
+
+2. **Fold your Sentinels into one block, each old copy becoming a tier.** In a single 2.0 `use_blueprint` block, turn each old Entity Sentinel into one tier: its `include_target` becomes that tier's `tier_N_target`, and its `freeze_lookback` becomes `tier_N_freeze`. A tier needs three things, a name (`tier_N_name`), a target (`tier_N_target`), and a freeze window (`tier_N_freeze`); order them by window, shortest first, so tier 1 is your liveliest. Your labels carry over untouched, so a Lively copy watching `entity_watch_lively` at 8 hours becomes `tier_1_target: entity_watch_lively` with `tier_1_freeze: 8 hours`. Then delete the old 1.x blocks and the Dashboard Sentinel block.
+
+3. **Restart.** The new sensor appears under the `unique_id` you gave it.
+
+4. **Repoint the consumers.** Anything that read the old aggregator, dashboard cards, Sentinel Notify's source input, points at the new sensor instead. The `devices` list is shape-identical, so cards need only the entity_id swap; 2.0 has `tier_error_count` where the aggregator had `source_error_count`.
 
 The first evaluation after migration re-detects whatever was flagged before, same entities, same reasons, now annotated with their tier.
 

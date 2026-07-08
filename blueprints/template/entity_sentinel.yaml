@@ -1,5 +1,5 @@
 # ==============================================================================
-# Entity Sentinel 2.0 (Alpha) - The Tiered Rebuild
+# Entity Sentinel 2.0 (Beta) - The Tiered Rebuild
 # A template blueprint from The Thinking Home (xeazy.com)
 # License: GPL-3.0-or-later. Copyright (C) 2026 James Lander.
 # ==============================================================================
@@ -62,6 +62,15 @@
 # sensor in timestamp mode, and the loud uptime setup error.
 #
 # Changelog:
+#   2.0.0-beta - Graduation to beta. The engine is unchanged from alpha.1.2; this
+#           release marks the end of structural change. Behind it: a 57-check
+#           adversarial simulation suite, two external code reviews (one of which
+#           surfaced a real counting bug, fixed before this release), and live
+#           duty on the author's system through a week of nightly reboot cycles,
+#           a real power-loss outage, and natural detections including a frozen
+#           Lively-tier sensor caught at exactly its window on live hardware. The
+#           one-sensor-per-window pattern and the Dashboard Sentinel aggregator
+#           are superseded for new builds.
 #   2.0.0-alpha.1.2 - Count bucketing fix. An entity whose state is the literal
 #           string 'none' (a badly behaved custom integration quirk) was flagged
 #           in devices and counted in the state, but fell into neither
@@ -99,9 +108,9 @@
 #           is frozen stable in its own file; its changelog lives there.
 # ==============================================================================
 blueprint:
-  name: Entity Sentinel 2.0 (Alpha)
+  name: Entity Sentinel 2.0 (Beta)
   description: |
-    # Entity Sentinel 2.0 (Alpha)
+    # Entity Sentinel 2.0 (Beta)
 
     *One sensor, up to five tiers: every critical entity that has gone quiet, offline or frozen, each judged by its own tier's freeze window.*
 
@@ -126,14 +135,14 @@ blueprint:
 
     This one sensor replaces the old one-sensor-per-tier pattern and the Dashboard Sentinel aggregator. Its companion, **Battery Sentinel**, counts the batteries running low; **Sentinel Notify** turns both into to-do lists and notifications, unchanged, since the output contract is a superset of 1.x.
 
-    This is an alpha of the 2.0 line. The frozen 1.x release remains available for settled setups; see the README.
+    This is the 2.0 beta. The frozen 1.x release remains available for settled setups; see the README.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.1.2
+    2.0.0-beta
   author: James Lander (xeazy.com)
   domain: template
-  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel_2.yaml
+  source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
   homeassistant:
     min_version: 2026.5.4
   input:
@@ -507,7 +516,7 @@ blueprint:
             boolean: {}
 
 variables:
-  sentinel_version: 2.0.0-alpha.1.2
+  sentinel_version: 2.0.0-beta
   tier_1_name: !input tier_1_name
   tier_1_target: !input tier_1_target
   tier_1_exclude: !input tier_1_exclude

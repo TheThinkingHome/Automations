@@ -135,23 +135,62 @@ The five tier slots take the same four inputs each; N is 1 through 5.
 
 | Parameter | Required | Default | What it does |
 | --- | --- | --- | --- |
-| `tier_N_name` | No | `Tier N` | The display name for the tier, carried on every flagged entry (`tier`) and in the per-tier counts. |
+| `tier_N_name` | No | `Tier N` | The display name for the tier, carried on every flagged entry (`tier`) and in the per-tier counts. (Example: Quite, Lively, Sleepy) |
 | `tier_N_target` | No | empty | Entities, labels, areas, or devices for this tier. Explicit entities and labels are watched precisely; areas and devices are swept to one representative entity per device. Empty means the tier is unused. |
-| `tier_N_freeze` | No | 8h / 16h / 36h / 36h / 36h | How long a device in this tier may go without reporting anything before it counts as frozen, judged against the freshest report across the whole device. |
+| `tier_N_freeze` | No | 8h / 16h / 36h | How long a device in this tier may go without reporting before it counts as frozen, judged against the freshest report across the whole device. |
 | `tier_N_exclude` | No | empty | Entities, labels, areas, or devices to leave out of **this tier only**. The tool for resolving a cross-tier duplicate without touching the label. |
 | `exclude_target` | No | empty | Entities, labels, areas, or devices to leave out of **every** tier. Exclude always wins over any include. |
 | `unavailable_debounce` | No | 3 minutes | How long an entity must stay unavailable or unknown before it is flagged, whatever its tier. |
-| `scan_interval` | No | `/2` | How often the sensor re-evaluates, in minutes. The only latency knob: an entity is caught within one tick of its own tier's window expiring. |
-| `startup_grace_seconds` | No | `240` | How long after Home Assistant starts to hold the unavailable list empty while the system and mesh come up. Freeze is not held (it cannot false-fire at startup). |
+| `scan_interval` | No | `/2` | How often the sensor re-evaluates, in minutes. The only latency knob: an entity is caught within one tick of its own tier's window expiring. `/2` is fine for testing; raise it for everyday running: `/30` is every thirty minutes, or `"0"` is once an hour on the hour. |
+| `startup_grace_seconds` | No | `240` | How long after Home Assistant starts to hold the unavailable list empty while the system and mesh come up.|
 | `uptime_sensor` | Yes | `sensor.uptime` | The uptime sensor in TIMESTAMP mode. Missing or non-timestamp is a `setup_error`. |
 | `refresh_button` | No | none | An optional `input_button` for an immediate re-evaluation. Share one button across Sentinels. |
 | `sensor_name` | No | `Entity Sentinel` | The name of the created sensor. |
 | `unique_id` | Yes | none | A unique id so the sensor is registered and editable in the interface. |
-| `debug_enabled` | No | `false` | One summary log line per evaluation, with per-tier counts and every flagged entity. Needs a `logger` entry at info level to appear. |
+| `debug_enabled` | No | `false` | Writes one summary line to the log per evaluation when turned on: the version, per-tier counts, and every flagged entity by id. Off by default. To see the lines, set this `true` and add Sentinel's logger at info level in `configuration.yaml`: under `logger:`, set `logs:` with `sentinel_entity: info` (then restart). Useful when a sensor is flagging something you did not expect, or when you are tuning a tier's freeze window and want to watch what it catches. |
 
 ## Attributes
 
-Everything Entity Sentinel 1.x published, unchanged. Attributes are ordered so the useful summary sits on top and the reference fields below: `ok`, `error`, `total_monitored`, `unavailable_count`, `frozen_count`, `tier_error_count`, `devices` (each entry: `name`, `entity_id`, `area`, `tier`, `reason`, `since`, `last_seen`, `age`), `tiers`, then `sentinel_type`, `sentinel_version`, `uptime_status`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count, entity-id sorted.
+Everything Entity Sentinel 1.x published is unchanged, and 2.0 adds to it. Attributes are ordered so the useful summary sits on top and the reference fields below: `ok`, `error`, `total_monitored`, `unavailable_count`, `frozen_count`, `tier_error_count`, `devices` (each entry: `name`, `entity_id`, `area`, `tier`, `reason`, `since`, `last_seen`, `age`), `tiers`, then `sentinel_type`, `sentinel_version`, `uptime_status`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count, entity-id sorted.
+
+A full sensor with one entity flagged looks like this:
+
+```yaml
+ok: true
+error: ""
+total_monitored: 165
+unavailable_count: 1
+frozen_count: 0
+tier_error_count: 0
+devices:
+  - name: Hallway Motion
+    entity_id: binary_sensor.hallway_motion
+    area: Hallway
+    tier: Lively
+    reason: frozen
+    since: "2026-07-08T14:30:12.421265+00:00"
+    last_seen: "2026-07-08T06:30:44.954624+00:00"
+    age: 8 hours
+tiers:
+  - tier: Lively
+    monitored: 37
+    flagged: 1
+    status: ""
+  - tier: Quiet
+    monitored: 29
+    flagged: 0
+    status: ""
+  - tier: Sleepy
+    monitored: 99
+    flagged: 0
+    status: ""
+sentinel_type: entity
+sentinel_version: 2.0.0-beta
+uptime_status: "2026-07-08T09:45:17+00:00"
+boot_time: "2026-07-08T09:45:17+00:00"
+settled: true
+last_evaluated: "2026-07-08T14:30:00.188736-05:00"
+```
 
 New in 2.0:
 

@@ -1,4 +1,4 @@
-# Entity Sentinel (Beta)
+# Entity Sentinel (2.0 Beta)
 
 A Home Assistant template blueprint that catches entities gone quiet: `unavailable`, `unknown`, `missing`, and, most important, `frozen` at their last value while the device behind them has silently died. One sensor, up to five tiers, each tier with its own targets and its own freeze window. Entity Sentinel gives you the count of troubled entities and names each one, ready to send as a notification, show on a dashboard, or speak aloud through a voice assistant.
 

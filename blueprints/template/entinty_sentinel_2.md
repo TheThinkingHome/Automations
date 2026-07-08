@@ -38,12 +38,12 @@ Freeze is judged against the freshest report from any entity on the same device.
 
 ## Import the Blueprint
 
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Ftemplate%2Fentity_sentinel_2.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Ftemplate%2Fentity_sentinel.yaml)
 
 Or paste this URL into Settings, Automations & Scenes, Blueprints, Import Blueprint:
 
 ```
-https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel_2.yaml
+https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
 ```
 
 Your imported copy is a snapshot; re-import to pick up newer releases, and check the version number in the blueprint description.
@@ -119,7 +119,7 @@ template:
 
 If you are currently running the older 1.x pattern, one or more Entity Sentinel copies plus Dashboard Sentinel, the migration is one package edit:
 
-1. **Re-import the blueprint** using the link above. Re-importing updates your existing Entity Sentinel blueprint to 2.0. Its inputs are different, so migrate the package in this same sitting; your existing sensors are in limbo until you do. (Staying on 1.x instead? Import the frozen [entity_sentinel_1.x.yaml](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel_1.x.yaml) and leave your blocks as they are.)
+1. **Re-import the blueprint** using the link above. Re-importing updates your existing Entity Sentinel blueprint to 2.0. Its inputs are different, so migrate the package in this same sitting; your existing sensors are in limbo until you do. (Staying on 1.x instead? Import the frozen [entity_sentinel_1.x.yaml](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel_1.0.5-beta.yaml) and leave your blocks as they are.)
 
 2. **Fold your Sentinels into one block, each old copy becoming a tier.** In a single 2.0 `use_blueprint` block, turn each old Entity Sentinel into one tier: its `include_target` becomes that tier's `tier_N_target`, and its `freeze_lookback` becomes `tier_N_freeze`. A tier needs three things, a name (`tier_N_name`), a target (`tier_N_target`), and a freeze window (`tier_N_freeze`); order them by window, shortest first, so tier 1 is your liveliest. Your labels carry over untouched, so a Lively copy watching `entity_watch_lively` at 8 hours becomes `tier_1_target: entity_watch_lively` with `tier_1_freeze: 8 hours`. Then delete the old 1.x blocks and the Dashboard Sentinel block.
 

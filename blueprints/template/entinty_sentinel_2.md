@@ -50,7 +50,7 @@ Your imported copy is a snapshot; re-import to pick up newer releases, and check
 
 ## Setting Up the Sensor
 
-This is a **template** blueprint, so importing only registers it; there is no Create button. It becomes a sensor through a `use_blueprint` entry in a package file. The whole setup is four steps:
+This is a **template** blueprint, so importing only registers it; there is no _Create_ button. It becomes a sensor through a `use_blueprint` entry in your configuration. The whole setup is four steps:
 
 1. **Enable packages** (once, if you have not already). In `configuration.yaml`:
 

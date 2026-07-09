@@ -28,6 +28,23 @@ Each flagged entity carries the raw reason, exactly as classified:
 
 Freeze is judged against the freshest report from any entity on the same device, so an entity that is quiet while a sibling on the same device is chatting is not frozen; the device is demonstrably alive. A motion sensor is a good example: its motion entity fires often, its signal strength updates constantly, and its battery percentage barely moves for months. Any one of them reporting keeps the whole device counted as alive, so the slow battery entity is never mistaken for frozen.
 
+### The Freeze Clock, and Why last_seen Matters
+
+The reasons split across two levels. `unavailable`, `unknown`, `missing`, and `never_reported` are judged at the **entity** level, read straight from the entity you named. `frozen` is judged at the **device** level, from the freshest report across the whole device, and *which clock* supplies that freshness matters.
+
+Where a device exposes a **last-seen entity** (a sibling with `device_class: timestamp` and `last_seen` in its entity id, as Zigbee2MQTT and Z-Wave JS publish), the sensor reads that entity's **value** as the device's last report. That value is the protocol's own truth: it survives Home Assistant restarts and integration reconnects untouched. **Enable it on every device you watch for freezes.** It does not need a label or a tier; it only needs to be enabled. Many integrations ship it disabled by default, under the device's diagnostic entities: open the device page, show disabled entities, enable the last-seen entity, and it is on duty from that moment.
+
+Where no last-seen entity exists, the sensor falls back to Home Assistant's `last_reported` metadata, and the fallback has a failure you must understand: **`last_reported` is reset by any event that re-pushes states.** Each reset rewinds the freeze clock to that moment, silently un-flagging a standing freeze and restarting detection from zero. Events that reset it:
+
+1. **A Home Assistant restart.** Every entity in the system is re-pushed at startup, so every fallback freeze clock resets at every restart, scheduled or not.
+2. **An integration reload.** Reloading an integration (or a template reload that recreates entities) re-pushes its entities' states.
+3. **A connection loss and recovery.** An integration that reconnects and republishes, Zigbee2MQTT after losing its network-attached coordinator, an MQTT broker restart, a cloud integration re-syncing, stamps every one of its entities fresh.
+4. **A network event that triggers any of the above.** A router reboot that briefly severs the path to a network-attached coordinator resets every clock behind it, even though Home Assistant itself never restarted.
+
+The consequence, stated plainly: **on the fallback path, a freeze window longer than the time between resets can never fire.** A system that restarts nightly can never detect a fallback freeze with a window longer than a day; the clock is rewound before it matures. A frozen device is still caught eventually, detection restarts after each reset, and the `unavailable` path, which no republish erases, remains the backstop, but the fallback is the less reliable clock, and the last-seen entity is the fix.
+
+The practical rules: enable `last_seen` wherever it exists, Zigbee and Z-Wave both offer it. For devices without one, a Wi-Fi presence sensor, for example, give the device a genuinely fast-reporting sibling to vouch for it (a light or signal-strength entity that updates constantly), size its freeze window shorter than your restart cadence, and let the unavailable detection cover the rest.
+
 ## Import the Blueprint
 
 [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Ftemplate%2Fentity_sentinel.yaml)

@@ -36,6 +36,10 @@ Each flagged entity carries the raw reason, exactly as classified:
 
 Freeze is judged against the freshest report from any entity on the same device. An entity that is quiet while a sibling on the same device is chatting is not frozen; the device is demonstrably alive. A motion sensor is a good example: its motion entity fires often, its signal strength updates constantly, and its battery percentage barely moves. Any one of them reporting keeps the whole device counted as alive, so the slow battery entity is never mistaken for frozen.
 
+The reasons split across two levels. `unavailable`, `unknown`, `missing`, and `never_reported` are judged at the **entity** level, read straight from the entity you named. `frozen` is judged at the **device** level: the freshest report from any entity the device carries counts, whether or not that entity is watched by a tier.
+
+That device-level judgment is also your best tuning lever. A motion sensor in a rarely used room can be legitimately silent for days, far past any sensible freeze window. Do not stretch the window; give the device a heartbeat instead. Enable one of its fast-reporting diagnostic entities, `last_seen`, `linkquality`, or `rssi`, which update with routine radio traffic. It does not need a label or a tier, it only needs to be enabled. While the device is alive, its freshest report stays current and the quiet motion entity is never flagged; when the device truly dies, the heartbeat dies with it, and the freeze window measures from the real death.
+
 ## Import the Blueprint
 
 [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FTheThinkingHome%2FAutomations%2Fmain%2Fblueprints%2Ftemplate%2Fentity_sentinel.yaml)

@@ -1,10 +1,10 @@
-# Entity Sentinel (2.1 Beta)
+# Entity Sentinel (2.1.1 Beta)
 
 A Home Assistant template blueprint that catches entities gone quiet: `unavailable`, `unknown`, `missing`, and, most important, `frozen` at their last value while the device behind them has silently died. One sensor, up to five tiers, each tier with its own targets and its own freeze window. Entity Sentinel gives you the count of troubled entities and names each one, ready to send as a notification, show on a dashboard, or speak aloud through a voice assistant.
 
 Entity Sentinel comes from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design story and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/). It has a sister detector, [Battery Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md), and a companion built for both: [Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) reads this sensor and turns it into change-aware phone notifications and a live to-do list you check off as you fix things. Entity Sentinel detects; Sentinel Notify tells you. They are built to work together, and most installations will want both.
 
-**Current version: 2.1.0-beta.** The 2.x engine graduated through a 63-check adversarial simulation, two external code reviews (one of which surfaced a real bug, fixed before release), and live duty on the author's own system: nightly reboot cycles, real detections including a frozen sensor caught at exactly its tier's window, and planted-failure tests that shaped the engine itself. Beta means the inputs and the output contract are settled; the engine keeps improving behind them, and the remaining risk is variety, more homes, more integrations, more hardware weirdness. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
+**Current version: 2.1.1-beta.** The 2.x engine graduated through a 63-check adversarial simulation, two external code reviews (one of which surfaced a real bug, fixed before release), and live duty on the author's own system: nightly reboot cycles, real detections including a frozen sensor caught at exactly its tier's window, and planted-failure tests that shaped the engine itself. Beta means the inputs and the output contract are settled; the engine keeps improving behind them, and the remaining risk is variety, more homes, more integrations, more hardware weirdness. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
 
 ## Why It Exists
 
@@ -149,7 +149,7 @@ The five tier slots take the same four inputs each; N is 1 through 5.
 | `tier_N_exclude` | No | empty | Entities, labels, areas, or devices to leave out of **this tier only**. The tool for resolving a cross-tier duplicate without touching the label. |
 | `exclude_target` | No | empty | Entities, labels, areas, or devices to leave out of **every** tier. Exclude always wins over any include. |
 | `unavailable_debounce` | No | 3 minutes | How long an entity must stay unavailable or unknown before it is flagged, whatever its tier. |
-| `scan_interval` | No | `/2` | How often the sensor re-evaluates, in minutes. `/2` is fine for testing; raise it for everyday running: `/30` is every thirty minutes, or `"0"` is once an hour on the hour. |
+| `scan_interval` | No | `/2` | How often the sensor re-evaluates, in minutes. `/2` is fine for testing; raise it for everyday running: `/30` is every thirty minutes, or `"0"` is once an hour on the hour. Echoed as an attribute, so dashboards can display the cadence. |
 | `startup_grace_seconds` | No | `240` | How long after Home Assistant starts to hold the unavailable list empty. Freeze is not held (it cannot false-fire at startup). |
 | `uptime_sensor` | Yes | `sensor.uptime` | The uptime sensor in TIMESTAMP mode. Missing or non-timestamp is a `setup_error`. |
 | `refresh_button` | No | none | An optional `input_button` for an immediate re-evaluation. Share one button across Sentinels. |
@@ -159,7 +159,7 @@ The five tier slots take the same four inputs each; N is 1 through 5.
 
 ## Attributes
 
-Attributes are ordered so the useful summary sits on top and the reference fields below: `ok`, `error`, `total_monitored`, `unavailable_count`, `frozen_count`, `tier_error_count`, `devices` (each entry: `name`, `entity_id`, `area`, `tier`, `reason`, `since`, `last_seen`, `age`), `tiers` (per active tier: `tier`, `monitored`, `flagged`, `status`), then `sentinel_type`, `sentinel_version`, `uptime_status`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count, entity-id sorted.
+Attributes are ordered so the useful summary sits on top and the reference fields below: `ok`, `error`, `total_monitored`, `unavailable_count`, `frozen_count`, `tier_error_count`, `devices` (each entry: `name`, `entity_id`, `area`, `tier`, `reason`, `since`, `last_seen`, `age`), `tiers` (per active tier: `tier`, `monitored`, `flagged`, `status`), then `sentinel_type`, `sentinel_version`, `scan_interval`, `uptime_status`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count, entity-id sorted.
 
 A sensor with one frozen entity looks like this:
 
@@ -194,7 +194,8 @@ tiers:
     flagged: 0
     status: ""
 sentinel_type: entity
-sentinel_version: 2.1.0-beta
+sentinel_version: 2.1.1-beta
+scan_interval: /30
 uptime_status: "2026-07-09T08:42:08+00:00"
 boot_time: "2026-07-09T08:42:08+00:00"
 settled: true
@@ -235,6 +236,7 @@ If the sensor exists but reports `setup_error`, read its `error` attribute: it n
 
 | Version | Notes |
 | --- | --- |
+| 2.1.1-beta | Exposes the `scan_interval` input as an attribute, so dashboards can display the evaluation cadence. No behavior change. |
 | 2.1.0-beta | The device-truth freeze clock. Freeze is now judged, where available, from a device's own last-seen entity value (a sibling with `device_class: timestamp` and `last_seen` in its entity id, as Zigbee2MQTT and Z-Wave JS publish), falling back to `last_reported` where no such entity exists. Why: restarts and integration re-publishes reset `last_reported` for every entity, silently rewinding the freeze clock; on a system with a nightly network event, a freeze window longer than the reset cadence could never fire. The last-seen value carries the protocol's truth through every republish. Found live: two physically dead planted devices were swept as recovered by a router-reboot republish. No input or output change; proven by a six-check republish wave in the 63-check suite. |
 | 2.0.0-beta | The graduation release. Banked behind it: a 57-check adversarial simulation suite, two external code reviews with every finding reproduced against the file before acting (one real counting bug found and fixed), and a week of live duty through nightly reboot cycles and real detections. The engine unchanged from 2.0.0-alpha.1.2; the inputs and the output contract are settled from this release on. |
 | 2.0.0-alpha.1.2 | Count bucketing fix. An entity whose state is the literal string `none` was flagged in `devices` and counted in the state, but fell into neither `unavailable_count` nor `frozen_count`. `none` now buckets into `unavailable_count`. Found by an externally proposed test case. |

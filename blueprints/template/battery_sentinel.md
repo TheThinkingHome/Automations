@@ -16,7 +16,7 @@ Every other blueprint from _The Thinking Home_ series grew out of my own house. 
 
 This one is different. It was not refined over years while it ran quietly within my walls. It was asked for, by the community, for a problem the existing tools never solved. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allowed. I believe in it, but I cannot yet claim what years of uneventful running will allow me to claim.
 
-As of 1.1.0 this is a stable release. It earned that the slow way: an adversarial simulation suite, and sustained live duty on my own system through nightly reboot cycles, real detections, and a real power outage, without a fault. Stable does not mean finished. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
+As of 1.1.1 this is a stable release. It earned that the slow way: an adversarial simulation suite, and sustained live duty on my own system through nightly reboot cycles, real detections, and a real power outage, without a fault. Stable does not mean finished. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
 
 ## Why a Sensor, Not an Automation
 
@@ -204,7 +204,8 @@ devices:
     last_seen: '2026-06-24T13:55:47+00:00'
     age: 9 hours
 sentinel_type: battery
-sentinel_version: 1.1.0
+sentinel_version: 1.1.1
+scan_interval: "0"
 ```
 
 The state is the number you badge or trigger on, or the string `setup_error` if misconfigured. The attributes carry the detail:
@@ -217,7 +218,7 @@ The state is the number you badge or trigger on, or the string `setup_error` if 
 - **`devices`** the low batteries, each with `name`, `entity_id`, `area`, `level` (null for binary), `battery_type` if exposed, and the timing triple: `since`, `last_seen`, and `age`.
 - **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace. Each entry carries the same timing triple.
 - **`since` / `last_seen` / `age`** on every entry in both lists. For an unavailable entry, `since` is the moment it flipped. For a low battery, `since` means **below-threshold-since**: the first detection stamps the crossing, and every evaluation after carries that timestamp forward from the sensor's own memory, so the clock survives level drift (25 to 19 to 17 keeps the original crossing) and Home Assistant restarts. Recovery past the margin resets it, so a later re-drop starts a fresh clock. `last_seen` is the entity's most recent actual report, which tells you whether that 12% reading is an hour old or a week old, and `age` is how long since `since`. One footnote: Home Assistant bug [#115585](https://github.com/home-assistant/core/issues/115585) can very occasionally blank the sensor's read of its own previous attributes; that single evaluation falls back to the entity's `last_changed` and the clock self-heals at the next.
-- **`sentinel_type`** / **`sentinel_version`** constant identity fields (`battery` and the running version string), present even in `setup_error`, so dashboards and bug reports can identify the sensor without opening the blueprint.
+- **`sentinel_type`** / **`sentinel_version`** / **`scan_interval`** constant identity fields (`battery`, the running version string, and the evaluation cadence as configured), present even in `setup_error`, so dashboards and bug reports can identify the sensor, and display how often it checks, without opening the blueprint.
 - **`boot_time`** the start time the grace is measured from, or null in `setup_error`.
 - **`last_evaluated`** the timestamp of the most recent evaluation, a heartbeat you can watch to confirm the sensor is still running. Stored in UTC; see the timestamp note below.
 
@@ -284,7 +285,8 @@ Neither is built yet. If there is enough interest, I will build them, or you can
 
 | Version | Notes |
 | --- | --- |
-| 1.1.0 | First stable release, graduated after an adversarial simulation and sustained clean live duty. Adds the timing triple, `since`, `last_seen`, and `age`, to every entry in both lists. For a low battery, `since` means below-threshold-since: the crossing is stamped once and carried forward through level drift and restarts by the same memory that drives the hysteresis; recovery past the margin resets it. Output is a strict superset; nothing existing changed shape. |
+| 1.1.1 | Exposes the `scan_interval` input as an attribute, so dashboards can display the evaluation cadence. No behavior change. |
+| 1.1.0 | First stable release, graduated after an adversarial simulation suite and sustained clean live duty. Adds the timing triple, `since`, `last_seen`, and `age`, to every entry in both lists. For a low battery, `since` means below-threshold-since: the crossing is stamped once and carried forward through level drift and restarts by the same memory that drives the hysteresis; recovery past the margin resets it. Output is a strict superset; nothing existing changed shape. |
 | 1.0.3-beta | Added two identity attributes: sentinel_type (battery) and sentinel_version (the running version string). They let a dashboard, a companion, or a bug report identify the sensor and its version without opening the blueprint, and they are present even in the setup_error state. No detection change. |
 | 1.0.2-beta | Debug log line now prints its timestamps (`boot_time` and `last_evaluated`) in local time for readability. Display only: the stored attributes are unchanged and remain ISO-8601 UTC, the portable form anything downstream reads. |
 | 1.0.1-beta | Re-evaluation cadence moved to hours, the production setting (minutes was a development affordance for fast testing). The `scan_interval` selector now offers 1, 2, 3, 4, 6, 8, 12, and 24 hours, defaulting to hourly, and the sensor fires at the top of the chosen hour. |

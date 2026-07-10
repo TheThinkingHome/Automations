@@ -62,6 +62,8 @@
 # sensor in timestamp mode, and the loud uptime setup error.
 #
 # Changelog:
+#   2.1.1-beta - Exposes the scan_interval input as an attribute, so dashboards
+#           can display the evaluation cadence. No behavior change.
 #   2.1.0-beta - THE DEVICE-TRUTH FREEZE CLOCK. Freeze is now judged, where
 #           available, from a device's own last-seen entity VALUE (a sibling
 #           with device_class timestamp and last_seen in its entity id, as
@@ -154,7 +156,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.1.0-beta
+    2.1.1-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
@@ -531,7 +533,8 @@ blueprint:
             boolean: {}
 
 variables:
-  sentinel_version: 2.1.0-beta
+  sentinel_version: 2.1.1-beta
+  scan_interval: !input scan_interval
   tier_1_name: !input tier_1_name
   tier_1_target: !input tier_1_target
   tier_1_exclude: !input tier_1_exclude
@@ -927,6 +930,7 @@ sensor:
       tiers: "{{ result.tiers }}"
       sentinel_type: entity
       sentinel_version: "{{ sentinel_version }}"
+      scan_interval: "{{ scan_interval }}"
       uptime_status: "{{ result.uptime_status }}"
       boot_time: "{{ result.boot_time }}"
       settled: "{{ result.settled }}"

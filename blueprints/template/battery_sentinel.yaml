@@ -92,6 +92,8 @@
 #      stage 1 or 2 failed.
 #
 # Changelog:
+#   1.1.1 - Exposes the scan_interval input as an attribute, so dashboards can
+#           display the evaluation cadence. No behavior change.
 #   1.1.0 - FIRST STABLE RELEASE, after sustained clean live duty. Also adds
 #           three fields to every entry in both lists: since (when the entity
 #           entered its current state), last_seen (its last actual report),
@@ -184,7 +186,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.1.0
+    1.1.1
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -376,7 +378,8 @@ blueprint:
           selector:
             boolean: {}
 variables:
-  sentinel_version: 1.1.0
+  sentinel_version: 1.1.1
+  scan_interval: !input scan_interval
   low_threshold: !input low_threshold
   low_clear_margin: !input low_clear_margin
   include_target: !input include_target
@@ -621,6 +624,7 @@ sensor:
     error: '{{ result.error }}'
     sentinel_type: battery
     sentinel_version: '{{ sentinel_version }}'
+    scan_interval: '{{ scan_interval }}'
     uptime_status: '{{ result.uptime_status }}'
     total_monitored: '{{ result.total_monitored }}'
     devices: '{{ result.devices }}'

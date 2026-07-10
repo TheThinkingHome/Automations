@@ -1,4 +1,4 @@
-# Battery Sentinel (Beta)
+# Battery Sentinel
 
 A Home Assistant template blueprint that watches the battery devices you choose and reports the ones running low. It is a sensor anything in your system can read: an automation, a voice assistant, a notification, a dashboard card.
 
@@ -10,13 +10,13 @@ The forums carry a steady run of requests a notification-only design cannot reac
 
 Battery Sentinel starts with a different perspective. Instead of building down from a notification, it builds up from a sensor.
 
-## Built on Request, and Why it is a Beta
+## Built on Request
 
 Every other blueprint from _The Thinking Home_ series grew out of my own house. The sensors and automations behind them ran on my system for years before I shared them, so the reliability was already settled. My job generalized what already worked: made it configurable, documented it, smoothed the edges, and handed over something I already trusted.
 
 This one is different. It was not refined over years while it ran quietly within my walls. It was asked for, by the community, for a problem the existing tools never solved. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allowed. I believe in it, but I cannot yet claim what years of uneventful running will allow me to claim.
 
-That is why this is a beta release. It is genuinely useful today, and I run it on my own system. But if you use it, you are also helping test and refine it. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed. That is the deal: I have done my best to build it, and the community's use is what will make it solid.
+As of 1.1.0 this is a stable release. It earned that the slow way: an adversarial simulation suite, and sustained live duty on my own system through nightly reboot cycles, real detections, and a real power outage, without a fault. Stable does not mean finished. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
 
 ## Why a Sensor, Not an Automation
 
@@ -183,17 +183,28 @@ unavailable_entities:
     entity_id: sensor.hall_motion_battery
     area: Hall
     state: unavailable
+    since: '2026-06-23T14:02:11+00:00'
+    last_seen: '2026-06-23T14:02:40+00:00'
+    age: 20 hours
 devices:
   - name: Master Bath Motion
     entity_id: sensor.master_bath_motion_battery
     area: Master Bath
     level: 12
     battery_type: CR2450
+    since: '2026-06-22T02:15:44+00:00'
+    last_seen: '2026-06-24T13:58:12+00:00'
+    age: 2 days
   - name: Back Door
     entity_id: binary_sensor.back_door_battery
     area: Back Door
     level: null
     battery_type: ''
+    since: '2026-06-24T05:30:02+00:00'
+    last_seen: '2026-06-24T13:55:47+00:00'
+    age: 9 hours
+sentinel_type: battery
+sentinel_version: 1.1.0
 ```
 
 The state is the number you badge or trigger on, or the string `setup_error` if misconfigured. The attributes carry the detail:
@@ -203,8 +214,10 @@ The state is the number you badge or trigger on, or the string `setup_error` if 
 - **`error`** empty normally; names the bad input when in `setup_error`.
 - **`uptime_status`** the parsed uptime timestamp, or the raw bad value when the uptime sensor is the problem.
 - **`total_monitored`** how many battery entities fell within the scope.
-- **`devices`** the low batteries, each with `name`, `entity_id`, `area`, `level` (null for binary), and `battery_type` if exposed.
-- **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace.
+- **`devices`** the low batteries, each with `name`, `entity_id`, `area`, `level` (null for binary), `battery_type` if exposed, and the timing triple: `since`, `last_seen`, and `age`.
+- **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace. Each entry carries the same timing triple.
+- **`since` / `last_seen` / `age`** on every entry in both lists: `since` is when the entity entered its current state, `last_seen` is its last actual report, and `age` is how long since `since`. One honest caveat for the low list: `since` means at-this-level-since. A battery that drifts from 25 to 19 to 17 restarts the clock at each step, so `age` reads "at this level for", not "low for". The staleness of the reading is often the more useful number anyway: `last_seen` tells you whether that 12% is from an hour ago or from last week.
+- **`sentinel_type`** / **`sentinel_version`** constant identity fields (`battery` and the running version string), present even in `setup_error`, so dashboards and bug reports can identify the sensor without opening the blueprint.
 - **`boot_time`** the start time the grace is measured from, or null in `setup_error`.
 - **`last_evaluated`** the timestamp of the most recent evaluation, a heartbeat you can watch to confirm the sensor is still running. Stored in UTC; see the timestamp note below.
 
@@ -271,6 +284,7 @@ Neither is built yet. If there is enough interest, I will build them, or you can
 
 | Version | Notes |
 | --- | --- |
+| 1.1.0 | First stable release, graduated after an adversarial simulation suite and sustained clean live duty. Adds the timing triple, `since`, `last_seen`, and `age`, to every entry in both lists (for a low battery, `since` means at-this-level-since; the clock restarts when the percentage moves). Output is a strict superset; nothing existing changed shape. |
 | 1.0.3-beta | Added two identity attributes: sentinel_type (battery) and sentinel_version (the running version string). They let a dashboard, a companion, or a bug report identify the sensor and its version without opening the blueprint, and they are present even in the setup_error state. No detection change. |
 | 1.0.2-beta | Debug log line now prints its timestamps (`boot_time` and `last_evaluated`) in local time for readability. Display only: the stored attributes are unchanged and remain ISO-8601 UTC, the portable form anything downstream reads. |
 | 1.0.1-beta | Re-evaluation cadence moved to hours, the production setting (minutes was a development affordance for fast testing). The `scan_interval` selector now offers 1, 2, 3, 4, 6, 8, 12, and 24 hours, defaulting to hourly, and the sensor fires at the top of the chosen hour. |

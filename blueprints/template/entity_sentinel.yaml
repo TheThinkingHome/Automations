@@ -1,5 +1,5 @@
 # ==============================================================================
-# Entity Sentinel 2.3 (Beta) - The Tiered Rebuild
+# Entity Sentinel 2.4 (Beta) - The Tiered Rebuild
 # A template blueprint from The Thinking Home (xeazy.com)
 # License: GPL-3.0-or-later. Copyright (C) 2026 James Lander.
 # ==============================================================================
@@ -62,6 +62,14 @@
 # sensor in timestamp mode, and the loud uptime setup error.
 #
 # Changelog:
+#   2.4.0-beta - DEVICE ROWS IDENTIFY AS DEVICES. A collapsed row (a frozen
+#           device, or a whole device unavailable) now carries the device's
+#           registered name (name_by_user, else the registry name) instead of
+#           the representative entity's friendly name, and every row gains a
+#           kind field: 'device' or 'entity'. entity_id remains on device rows
+#           as the representative, for reference and tap-through. Cards and
+#           notifications can now distinguish a dead device from a dead entity
+#           without parsing names.
 #   2.3.0-beta - ONE ROW PER PROBLEM. Unavailable now collapses like frozen,
 #           but conditionally: when every live sibling on the device also reads
 #           unavailable, unknown, or none, the whole device is the problem and
@@ -145,9 +153,9 @@
 #           is frozen stable in its own file; its changelog lives there.
 # ==============================================================================
 blueprint:
-  name: Entity Sentinel 2.3 (Beta)
+  name: Entity Sentinel 2.4 (Beta)
   description: |
-    # Entity Sentinel 2.3 (Beta)
+    # Entity Sentinel 2.4 (Beta)
 
     *One sensor, up to five tiers: every critical entity that has gone quiet, offline or frozen, each judged by its own tier's freeze window.*
 
@@ -172,11 +180,11 @@ blueprint:
 
     This one sensor replaces the old one-sensor-per-tier pattern and the Dashboard Sentinel aggregator. Its companion, **Battery Sentinel**, counts the batteries running low; **Sentinel Notify** turns both into to-do lists and notifications, unchanged, since the output contract is a superset of 1.x.
 
-    This is the 2.3 beta. The frozen 1.x release remains available for settled setups; see the README.
+    This is the 2.4 beta. The frozen 1.x release remains available for settled setups; see the README.
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.3.0-beta
+    2.4.0-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
@@ -553,7 +561,7 @@ blueprint:
             boolean: {}
 
 variables:
-  sentinel_version: 2.3.0-beta
+  sentinel_version: 2.4.0-beta
   scan_interval: !input scan_interval
   tier_1_name: !input tier_1_name
   tier_1_target: !input tier_1_target
@@ -788,7 +796,8 @@ variables:
               {%- if dead.all -%}
                 {%- if udid not in useen.ids -%}
                   {%- set fl.items = fl.items + [{
-                    'name': ename,
+                    'name': ((device_attr(udid, 'name_by_user') or device_attr(udid, 'name')) or ename),
+                    'kind': 'device',
                     'entity_id': eid,
                     'area': earea,
                     'tier': t.name,
@@ -802,6 +811,7 @@ variables:
               {%- else -%}
                 {%- set fl.items = fl.items + [{
                   'name': ename,
+                  'kind': 'entity',
                   'entity_id': eid,
                   'area': earea,
                   'tier': t.name,
@@ -839,7 +849,8 @@ variables:
               {%- if age_s > freeze_s -%}
                 {%- if did is none or did not in fseen.ids -%}
                   {%- set fl.items = fl.items + [{
-                    'name': ename,
+                    'name': (((device_attr(did, 'name_by_user') or device_attr(did, 'name')) if did is not none else none) or ename),
+                    'kind': ('device' if did is not none else 'entity'),
                     'entity_id': eid,
                     'area': earea,
                     'tier': t.name,
@@ -854,6 +865,7 @@ variables:
             {%- elif settled -%}
               {%- set fl.items = fl.items + [{
                 'name': ename,
+                'kind': 'entity',
                 'entity_id': eid,
                 'area': earea,
                 'tier': t.name,

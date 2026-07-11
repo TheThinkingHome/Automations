@@ -194,6 +194,14 @@
 #  12. Log the result (debug only).
 #
 # Changelog:
+#   2.0.0-alpha.12 - ONE SCHEMA, TWO FAILURE TYPES. Reads the kind field the
+#           1.2.0/2.4.0 Sentinels publish (mapped internally to scope, since
+#           kind here already means the reason class). Item lines: an entity
+#           fault on a living device is marked 'entity fault:'; every line
+#           carries a stable 'since <day> <time>' from the problem's start
+#           (stable per episode, so item text never churns). Push copy lists
+#           device-down lines before entity faults. Entries without the field
+#           (older Sentinels) render exactly as before.
 #   2.0.0-alpha.11 - THE DIFF-READ SNAPSHOT, from a live incident on 2026-07-06
 #           16:19:46: a template reload during a deploy swapped a source entity
 #           mid-run. The gates passed honestly on the pre-swap entity, but the
@@ -381,7 +389,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.0.0-alpha.11
+    2.0.0-alpha.12
   author: James Lander (xeazy.com)
   domain: automation
   homeassistant:
@@ -665,7 +673,7 @@ mode: single
 max_exceeded: silent
 
 variables:
-  version: 2.0.0-alpha.11
+  version: 2.0.0-alpha.12
   family_mode: !input family_mode
   source_sensors: !input source_sensors
   todo_list: !input todo_list
@@ -815,7 +823,9 @@ variables:
             'battery_type': d.battery_type | default(''),
             'reason': '',
             'age': '',
-            'kind': 'low'
+            'kind': 'low',
+            'scope': d.kind | default('device'),
+            'since': d.since | default(none)
           }] %}
         {% endfor %}
         {% if battery_report_offline %}
@@ -828,7 +838,9 @@ variables:
               'battery_type': '',
               'reason': '',
               'age': '',
-              'kind': 'offline'
+              'kind': 'offline',
+              'scope': u.kind | default('device'),
+              'since': u.since | default(none)
             }] %}
           {% endfor %}
         {% endif %}
@@ -844,7 +856,9 @@ variables:
             'battery_type': '',
             'reason': d.reason | default('unavailable'),
             'age': d.age | default(''),
-            'kind': d.reason | default('unavailable')
+            'kind': d.reason | default('unavailable'),
+            'scope': d.kind | default('entity'),
+            'since': d.since | default(none)
           }] %}
         {% endfor %}
       {% endfor %}
@@ -883,7 +897,9 @@ variables:
               'battery_type': '',
               'reason': '',
               'age': '',
-              'kind': 'offline'
+              'kind': 'offline',
+              'scope': u.kind | default('device'),
+              'since': u.since | default(none)
             }] %}
           {% else %}
             {% set ns.items = ns.items + [d] %}
@@ -899,22 +915,26 @@ variables:
       {% set nm = d.name | default('Unknown') %}
       {% set ar = d.area | default('') %}
       {% set suffix = (' - ' ~ ar) if ar not in [none, '', 'Unassigned'] else '' %}
+      {% set scope = d.scope | default('entity' if family_mode == 'entity' else 'device') %}
+      {% set fault = 'entity fault: ' if scope == 'entity' and family_mode == 'entity' else '' %}
+      {% set sdt = d.since | default(none) | as_datetime(none) %}
+      {% set ts = (' since ' ~ (sdt | as_local).strftime('%-d %b %H:%M')) if sdt is not none else '' %}
       {% if family_mode == 'entity' %}
         {% set rs = d.reason | default('unavailable') %}
-        {% set line = nm ~ ' (' ~ rs ~ ')' ~ suffix %}
+        {% set line = nm ~ ' (' ~ fault ~ rs ~ ts ~ ')' ~ suffix %}
       {% else %}
         {% set lvl = d.level | default(none) %}
         {% set has_pct = lvl is not none and lvl not in ['unknown', 'unavailable', ''] and (lvl | string | float(none)) is not none %}
         {% if d.kind == 'offline' %}
-          {% set line = nm ~ ' (offline)' ~ suffix %}
+          {% set line = nm ~ ' (offline' ~ ts ~ ')' ~ suffix %}
         {% elif not has_pct %}
-          {% set line = nm ~ ' (low)' ~ suffix %}
+          {% set line = nm ~ ' (low' ~ ts ~ ')' ~ suffix %}
         {% else %}
           {% set bt = d.battery_type | default('') %}
-          {% set line = nm ~ ' (' ~ (lvl | float | round(0) | int) ~ '%' ~ ((', ' ~ bt) if bt else '') ~ ')' ~ suffix %}
+          {% set line = nm ~ ' (' ~ (lvl | float | round(0) | int) ~ '%' ~ ((', ' ~ bt) if bt else '') ~ ((', low' ~ ts) if ts else '') ~ ')' ~ suffix %}
         {% endif %}
       {% endif %}
-      {% set out.items = out.items + [{'entity_id': d.entity_id, 'kind': d.kind, 'name': nm, 'line': line}] %}
+      {% set out.items = out.items + [{'entity_id': d.entity_id, 'kind': d.kind, 'name': nm, 'line': line, 'scope': scope}] %}
     {% endfor %}
     {{ out.items }}
 
@@ -1380,7 +1400,7 @@ action:
           {% if d.entity_id in known_open_ids %}
             {% set k = (known_items | selectattr('entity_id', 'eq', d.entity_id) | selectattr('status', 'eq', 'needs_action') | list | first) %}
             {% if k.kind != d.kind %}
-              {% set ns.items = ns.items + [{'uid': k.uid, 'line': d.line, 'entity_id': d.entity_id, 'kind': d.kind, 'since': now().isoformat()}] %}
+              {% set ns.items = ns.items + [{'uid': k.uid, 'line': d.line, 'entity_id': d.entity_id, 'kind': d.kind, 'scope': d.scope | default('entity'), 'since': now().isoformat()}] %}
             {% endif %}
           {% endif %}
         {% endfor %}
@@ -1548,8 +1568,10 @@ action:
           Sentinel report
         {% endif %}
       new_body: >-
-        {% set new_lines = (additions | map(attribute='line') | list) + (kind_changed | map(attribute='line') | list) %}
-        {{ new_lines | sort | join('\n') }}{% if open_count | int > new_count | int %}{{ '\n' }}Also open: {{ open_count | int - new_count | int }} more{% endif %}
+        {% set newitems = (additions | list) + (kind_changed | list) %}
+        {% set dev_lines = newitems | selectattr('scope', 'defined') | selectattr('scope', 'eq', 'device') | map(attribute='line') | list | sort %}
+        {% set ent_lines = newitems | map(attribute='line') | list | sort | reject('in', dev_lines) | list %}
+        {{ (dev_lines + ent_lines) | join('\n') }}{% if open_count | int > new_count | int %}{{ '\n' }}Also open: {{ open_count | int - new_count | int }} more{% endif %}
       overnight_deliver: >-
         {% set new_ids = (additions | map(attribute='entity_id') | list) + (kind_changed | map(attribute='entity_id') | list) %}
         {% set win_ids = overnight_items | map(attribute='entity_id') | list %}

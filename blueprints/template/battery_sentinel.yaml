@@ -92,6 +92,15 @@
 #      stage 1 or 2 failed.
 #
 # Changelog:
+#   1.2.0 - ONE ROW PER PROBLEM, THE KIND FIELD, AND AREA-THEN-NAME ORDER,
+#           matching Entity Sentinel 2.3/2.4. Unavailable collapses to one row
+#           per device when every live sibling on the device is also
+#           unavailable; a battery entity down while siblings live stays its
+#           own row. The low list dedupes to one row per device, preferring
+#           the percentage entity over a binary low flag as the
+#           representative. Every entry in both lists carries kind: 'device'
+#           or 'entity'. Both lists are ordered by area, then name. missing
+#           entries stay per-entity.
 #   1.1.1 - Exposes the scan_interval input as an attribute, so dashboards can
 #           display the evaluation cadence. No behavior change.
 #   1.1.0 - FIRST STABLE RELEASE, after sustained clean live duty. Also adds
@@ -186,7 +195,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    1.1.1
+    1.2.0
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.yaml
@@ -378,7 +387,7 @@ blueprint:
           selector:
             boolean: {}
 variables:
-  sentinel_version: 1.1.1
+  sentinel_version: 1.2.0
   scan_interval: !input scan_interval
   low_threshold: !input low_threshold
   low_clear_margin: !input low_clear_margin
@@ -540,8 +549,40 @@ variables:
         {%- endif -%}
       {%- endif -%}
     {%- endfor -%}
-    {%- set devices = low_ns.items -%}
-    {%- set unavailable = un_ns.items if settled else [] -%}
+    {%- set un_final = namespace(items=[], dids=[]) -%}
+    {%- for it in un_ns.items -%}
+      {%- set udid = device_id(it.entity_id) -%}
+      {%- if udid is none or it.state == 'missing' -%}
+        {%- set un_final.items = un_final.items + [dict(it, **{'kind': 'entity'})] -%}
+      {%- else -%}
+        {%- set dead = namespace(all=true) -%}
+        {%- for de in device_entities(udid) -%}
+          {%- set deo = states[de] -%}
+          {%- if deo is not none and deo.state not in ['unavailable', 'unknown', 'none'] -%}
+            {%- set dead.all = false -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if dead.all -%}
+          {%- if udid not in un_final.dids -%}
+            {%- set un_final.items = un_final.items + [dict(it, **{'kind': 'device'})] -%}
+            {%- set un_final.dids = un_final.dids + [udid] -%}
+          {%- endif -%}
+        {%- else -%}
+          {%- set un_final.items = un_final.items + [dict(it, **{'kind': 'entity'})] -%}
+        {%- endif -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set low_pick = namespace(map={}) -%}
+    {%- for it in low_ns.items -%}
+      {%- set ldid = device_id(it.entity_id) -%}
+      {%- set key = ldid if ldid is not none else it.entity_id -%}
+      {%- set cur = low_pick.map.get(key) -%}
+      {%- if cur is none or (cur.level is none and it.level is not none) -%}
+        {%- set low_pick.map = dict(low_pick.map, **{key: dict(it, **{'kind': ('device' if ldid is not none else 'entity')})}) -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set devices = low_pick.map.values() | list | sort(attribute='entity_id') | sort(attribute='name') | sort(attribute='area') -%}
+    {%- set unavailable = (un_final.items | sort(attribute='entity_id') | sort(attribute='name') | sort(attribute='area')) if settled else [] -%}
     {%- endif -%}
     {%- if not setup.ok -%}
     {{

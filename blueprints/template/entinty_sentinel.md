@@ -4,7 +4,7 @@ A Home Assistant template blueprint that catches entities gone quiet: `unavailab
 
 Entity Sentinel comes from **The Thinking Home** at [xeazy.com](https://xeazy.com). The full design story and worked examples are in the [article](https://xeazy.com/battery-entity-sentinel-blueprints/). It has a sister detector, [Battery Sentinel](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/battery_sentinel.md), and a companion built for both: [Sentinel Notify](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/automation/sentinel_notify.md) reads this sensor and turns it into change-aware phone notifications and a live to-do list you check off as you fix things. Entity Sentinel detects; Sentinel Notify tells you. They are built to work together, and most installations will want both.
 
-**Current version: 2.2.0-beta.** The 2.x engine graduated through a 63-check adversarial simulation, two external code reviews (one of which surfaced a real bug, fixed before release), and live duty on the author's own system: nightly reboot cycles, real detections including a frozen sensor caught at exactly its tier's window, and planted-failure tests that shaped the engine itself. Beta means the inputs and the output contract are settled; the engine keeps improving behind them, and the remaining risk is variety, more homes, more integrations, more hardware weirdness. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
+**Current version: 2.4.0-beta.** The 2.x engine graduated through a 63-check adversarial simulation, two external code reviews (one of which surfaced a real bug, fixed before release), and live duty on the author's own system: nightly reboot cycles, real detections including a frozen sensor caught at exactly its tier's window, and planted-failure tests that shaped the engine itself. Beta means the inputs and the output contract are settled; the engine keeps improving behind them, and the remaining risk is variety, more homes, more integrations, more hardware weirdness. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
 
 ## Why It Exists
 
@@ -18,7 +18,14 @@ Entity Sentinel catches the freeze, and the ordinary failures alongside it. You 
 
 **What it flags.** Each watched entity is checked for five conditions: `unavailable` (the state is unavailable), `unknown` (the state is unknown), `missing` (the entity does not exist: renamed, removed, or never created), `frozen` (the entity holds a value but the device has not reported within its tier's window), and `never_reported` (the entity exists but has never produced a reading).
 
-**Two levels of judgment.** `unavailable`, `unknown`, `missing`, and `never_reported` are read straight from the entity you named. `frozen` is judged, and **reported**, at the **device** level: the freshest report from any entity on the same device counts, so a quiet entity whose sibling is still chatting is never flagged, the device is demonstrably alive. And when a device truly dies, it appears on the list once, represented by its highest-priority watched entity, no matter how many of its entities you watch, because one dead device is one problem, not three. A motion sensor is the classic case: its motion entity may be silent for hours in an empty room while its signal strength updates constantly; the device is fine, and Entity Sentinel knows it.
+**Two levels of judgment.** `unavailable`, `unknown`, `missing`, and `never_reported` are read from the entity you named. `frozen` is judged at the **device** level: the freshest report from any entity on the same device counts, so a quiet entity whose sibling is still chatting is never flagged, the device is demonstrably alive.
+
+**One row per problem.** The list distinguishes two different failures, because they need two different fixes:
+
+- **A dead device.** The batteries died, the radio failed, the device fell off the network. Every entity it carries goes silent or unavailable together. However many of its entities you watch, the device appears on the list **once**, carrying the **device's own name** ("Vibration FJ40 Land Cruiser", not "Vibration FJ40 Land Cruiser Alarm 1") and `kind: device`, with its highest-priority watched entity in `entity_id` as the representative, one problem, one row, one trip with fresh batteries. This applies to every freeze (a freeze is by definition the whole device going silent) and to unavailability when every live entity on the device reads unavailable together.
+- **A dead entity on a living device.** The watched entity is `unavailable` while its siblings still report, the device is fine, but something specific to that entity broke: a disabled entity, an integration quirk, a firmware oddity. That is a different problem with a different fix, so it reports as **its own row**, with the entity's name and `kind: entity`, and the living siblings prove the distinction.
+
+`missing` and `never_reported` are always per-entity; there is no device to consult. Without this rule, one dead multi-sensor floods the list with a row per watched entity, telling you the same thing three times and burying the genuinely separate faults. A motion sensor is the classic case: its motion entity may be silent for hours in an empty room while its signal strength updates constantly; the device is fine, and Entity Sentinel knows it.
 
 **The freeze clock.** Which clock supplies that device freshness matters more than anything else on this page. Where the device exposes a **last-seen entity** (a sibling with `device_class: timestamp` and `last_seen` in its entity id, as Zigbee2MQTT and Z-Wave JS publish), Entity Sentinel reads that entity's value: the protocol's own record of the last real message, which survives Home Assistant restarts and integration reconnects untouched. Where no such entity exists, it falls back to Home Assistant's `last_reported` metadata, which is less reliable, because restarts and re-publishes reset it. The practical consequence, and how to set yourself up well, is covered in its own section below.
 
@@ -159,7 +166,7 @@ The five tier slots take the same four inputs each; N is 1 through 5.
 
 ## Attributes
 
-Attributes are ordered so the useful summary sits on top and the reference fields below: `ok`, `error`, `total_monitored`, `unavailable_count`, `frozen_count`, `tier_error_count`, `devices` (each entry: `name`, `entity_id`, `area`, `tier`, `reason`, `since`, `last_seen`, `age`), `tiers` (per active tier: `tier`, `monitored`, `flagged`, `status`), then `sentinel_type`, `sentinel_version`, `scan_interval`, `uptime_status`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count. The list is ordered by area, then name.
+Attributes are ordered so the useful summary sits on top and the reference fields below: `ok`, `error`, `total_monitored`, `unavailable_count`, `frozen_count`, `tier_error_count`, `devices` (each entry: `name`, `kind`, `entity_id`, `area`, `tier`, `reason`, `since`, `last_seen`, `age`; `kind` is `device` for a collapsed whole-device row, whose `name` is the device's registered name, or `entity` for an individual fault), `tiers` (per active tier: `tier`, `monitored`, `flagged`, `status`), then `sentinel_type`, `sentinel_version`, `scan_interval`, `uptime_status`, `boot_time`, `settled`, `last_evaluated`. The state is the merged flagged count. The list is ordered by area, then name.
 
 A sensor with one frozen entity looks like this:
 
@@ -173,6 +180,7 @@ frozen_count: 1
 tier_error_count: 0
 devices:
   - name: Laundry Motion
+    kind: device
     entity_id: binary_sensor.laundry_motion_occupancy
     area: Laundry
     tier: Quiet
@@ -194,7 +202,7 @@ tiers:
     flagged: 0
     status: ""
 sentinel_type: entity
-sentinel_version: 2.2.0-beta
+sentinel_version: 2.4.0-beta
 scan_interval: /30
 uptime_status: "2026-07-09T08:42:08+00:00"
 boot_time: "2026-07-09T08:42:08+00:00"
@@ -236,6 +244,8 @@ If the sensor exists but reports `setup_error`, read its `error` attribute: it n
 
 | Version | Notes |
 | --- | --- |
+| 2.4.0-beta | Device rows identify as devices. A collapsed row (a frozen device, or a whole device unavailable) now carries the device's registered name instead of the representative entity's friendly name, and every row gains a `kind` field: `device` or `entity`. `entity_id` remains on device rows as the representative. |
+| 2.3.0-beta | One row per problem. Unavailable now collapses like frozen, conditionally: when every live sibling on the device also reads unavailable, the whole device is the problem and appears once, represented by its highest-priority watched entity. A watched entity down while siblings live remains a per-entity row. `missing` and `never_reported` stay per-entity. Also fixes the blueprint name and description headings, which had lagged at 2.1. |
 | 2.2.0-beta | Frozen reports per device, and area-then-name order. One dead device carries several watched entities that all freeze together, so the list showed the same dead device once per entity. Frozen entries now collapse to one per device, represented by the entity from its highest-priority tier; `frozen_count` counts frozen devices. Deviceless entities still stand alone; `unavailable`, `unknown`, `missing`, and `never_reported` remain per-entity. The list is now ordered by area, then name. |
 | 2.1.1-beta | Exposes the `scan_interval` input as an attribute, so dashboards can display the evaluation cadence. No behavior change. |
 | 2.1.0-beta | The device-truth freeze clock. Freeze is now judged, where available, from a device's own last-seen entity value (a sibling with `device_class: timestamp` and `last_seen` in its entity id, as Zigbee2MQTT and Z-Wave JS publish), falling back to `last_reported` where no such entity exists. Why: restarts and integration re-publishes reset `last_reported` for every entity, silently rewinding the freeze clock; on a system with a nightly network event, a freeze window longer than the reset cadence could never fire. The last-seen value carries the protocol's truth through every republish. Found live: two physically dead planted devices were swept as recovered by a router-reboot republish. No input or output change; proven by a six-check republish wave in the 63-check suite. |

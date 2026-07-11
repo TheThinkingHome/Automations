@@ -1,4 +1,4 @@
-# Battery Sentinel
+# Battery Sentinel (1.2.0)
 
 A Home Assistant template blueprint that watches the battery devices you choose and reports the ones running low. It is a sensor anything in your system can read: an automation, a voice assistant, a notification, a dashboard card.
 
@@ -16,7 +16,7 @@ Every other blueprint from _The Thinking Home_ series grew out of my own house. 
 
 This one is different. It was not refined over years while it ran quietly within my walls. It was asked for, by the community, for a problem the existing tools never solved. So I built it: imagined, drafted, edited, reimagined, debugged, and tested as hard as one house and an adversarial test suite allowed. I believe in it, but I cannot yet claim what years of uneventful running will allow me to claim.
 
-As of 1.1.1 this is a stable release. It earned that the slow way: an adversarial simulation suite, and sustained live duty on my own system through nightly reboot cycles, real detections, and a real power outage, without a fault. Stable does not mean finished. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
+As of 1.2.0 this is a stable release. It earned that the slow way: an adversarial simulation suite, and sustained live duty on my own system through nightly reboot cycles, real detections, and a real power outage, without a fault. Stable does not mean finished. Real homes are more varied than any one setup, and the edge cases that matter most are the ones I haven't thought of and cannot produce. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
 
 ## Why a Sensor, Not an Automation
 
@@ -180,6 +180,7 @@ total_monitored: 27
 unavailable_count: 1
 unavailable_entities:
   - name: Hall Motion
+    kind: device
     entity_id: sensor.hall_motion_battery
     area: Hall
     state: unavailable
@@ -188,6 +189,7 @@ unavailable_entities:
     age: 20 hours
 devices:
   - name: Master Bath Motion
+    kind: device
     entity_id: sensor.master_bath_motion_battery
     area: Master Bath
     level: 12
@@ -204,7 +206,7 @@ devices:
     last_seen: '2026-06-24T13:55:47+00:00'
     age: 9 hours
 sentinel_type: battery
-sentinel_version: 1.1.1
+sentinel_version: 1.2.0
 scan_interval: "0"
 ```
 
@@ -216,7 +218,8 @@ The state is the number you badge or trigger on, or the string `setup_error` if 
 - **`uptime_status`** the parsed uptime timestamp, or the raw bad value when the uptime sensor is the problem.
 - **`total_monitored`** how many battery entities fell within the scope.
 - **`devices`** the low batteries, each with `name`, `entity_id`, `area`, `level` (null for binary), `battery_type` if exposed, and the timing triple: `since`, `last_seen`, and `age`.
-- **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace. Each entry carries the same timing triple.
+- **`unavailable_count`** / **`unavailable_entities`** the parallel list of in-scope batteries currently `unavailable`, `unknown`, or `missing`, held empty during the startup grace. Each entry carries the same timing triple. One row per problem: when every live entity on a device is unavailable together, the device appears once (`kind: device`, the device's name); a battery entity down while its siblings still report is its own row (`kind: entity`). `missing` stays per-entity.
+- **`kind`** on every entry in both lists: `device` when the row stands for a whole device, `entity` for an individual fault or a deviceless entry. A device carrying both a percentage entity and a binary low flag appears on the low list once, represented by the percentage entity. Both lists are ordered by area, then name.
 - **`since` / `last_seen` / `age`** on every entry in both lists. For an unavailable entry, `since` is the moment it flipped. For a low battery, `since` means **below-threshold-since**: the first detection stamps the crossing, and every evaluation after carries that timestamp forward from the sensor's own memory, so the clock survives level drift (25 to 19 to 17 keeps the original crossing) and Home Assistant restarts. Recovery past the margin resets it, so a later re-drop starts a fresh clock. `last_seen` is the entity's most recent actual report, which tells you whether that 12% reading is an hour old or a week old, and `age` is how long since `since`. One footnote: Home Assistant bug [#115585](https://github.com/home-assistant/core/issues/115585) can very occasionally blank the sensor's read of its own previous attributes; that single evaluation falls back to the entity's `last_changed` and the clock self-heals at the next.
 - **`sentinel_type`** / **`sentinel_version`** / **`scan_interval`** constant identity fields (`battery`, the running version string, and the evaluation cadence as configured), present even in `setup_error`, so dashboards and bug reports can identify the sensor, and display how often it checks, without opening the blueprint.
 - **`boot_time`** the start time the grace is measured from, or null in `setup_error`.
@@ -285,6 +288,7 @@ Neither is built yet. If there is enough interest, I will build them, or you can
 
 | Version | Notes |
 | --- | --- |
+| 1.2.0 | One row per problem, the `kind` field, and area-then-name order, matching Entity Sentinel. Unavailable collapses to one row per device when every live sibling is also unavailable; a battery entity down while siblings live stays its own row. The low list dedupes to one row per device, preferring the percentage entity as representative. Every entry carries `kind`. |
 | 1.1.1 | Exposes the `scan_interval` input as an attribute, so dashboards can display the evaluation cadence. No behavior change. |
 | 1.1.0 | First stable release, graduated after an adversarial simulation suite and sustained clean live duty. Adds the timing triple, `since`, `last_seen`, and `age`, to every entry in both lists. For a low battery, `since` means below-threshold-since: the crossing is stamped once and carried forward through level drift and restarts by the same memory that drives the hysteresis; recovery past the margin resets it. Output is a strict superset; nothing existing changed shape. |
 | 1.0.3-beta | Added two identity attributes: sentinel_type (battery) and sentinel_version (the running version string). They let a dashboard, a companion, or a bug report identify the sensor and its version without opening the blueprint, and they are present even in the setup_error state. No detection change. |

@@ -51,7 +51,7 @@
 # devices entry carries tier (the display name); a tiers attribute lists
 # per-tier name, monitored, flagged, and a single status string (empty when the
 # tier is healthy); tier_error_count counts
-# tiers currently in error. The merged list is entity-id sorted (domain
+# tiers currently in error. The merged list is area-then-name sorted (entity-id
 # grouping), matching what Dashboard Sentinel used to hand the cards.
 #
 # Everything else is carried from 1.x verbatim: the label/device/area roll-up
@@ -62,6 +62,16 @@
 # sensor in timestamp mode, and the loud uptime setup error.
 #
 # Changelog:
+#   2.2.0-beta - FROZEN REPORTS PER DEVICE, AND AREA-THEN-NAME ORDER. One dead
+#           device carries several watched entities, and they all freeze
+#           together, so the list showed the same dead device once per entity.
+#           Frozen entries now collapse to one per device, represented by the
+#           entity from its highest-priority tier; frozen_count now counts
+#           frozen devices. Deviceless entities (groups, helpers) still stand
+#           alone. unavailable, unknown, missing, and never_reported remain
+#           per-entity. The devices list is now ordered by area, then name,
+#           with entity_id as the deterministic tiebreak, replacing the old
+#           entity-id sort.
 #   2.1.1-beta - Exposes the scan_interval input as an attribute, so dashboards
 #           can display the evaluation cadence. No behavior change.
 #   2.1.0-beta - THE DEVICE-TRUTH FREEZE CLOCK. Freeze is now judged, where
@@ -156,7 +166,7 @@ blueprint:
 
     License: GPL-3.0-or-later. Copyright (C) 2026 James Lander, The Thinking Home ([xeazy.com](https://xeazy.com)).
 
-    2.1.1-beta
+    2.2.0-beta
   author: James Lander (xeazy.com)
   domain: template
   source_url: https://raw.githubusercontent.com/TheThinkingHome/Automations/main/blueprints/template/entity_sentinel.yaml
@@ -533,7 +543,7 @@ blueprint:
             boolean: {}
 
 variables:
-  sentinel_version: 2.1.1-beta
+  sentinel_version: 2.2.0-beta
   scan_interval: !input scan_interval
   tier_1_name: !input tier_1_name
   tier_1_target: !input tier_1_target
@@ -617,6 +627,7 @@ variables:
       {%- endif -%}
     {%- endif -%}
     {%- set acc = namespace(seen=[], tiers=[], flagged=[], monitored_total=0, tier_err=0) -%}
+    {%- set fseen = namespace(ids=[]) -%}
     {%- for t in tier_defs -%}
       {%- set inc = t.target -%}
       {%- set active = inc is mapping and (inc.entity_id is defined or inc.label_id is defined or inc.device_id is defined or inc.area_id is defined) -%}
@@ -787,16 +798,19 @@ variables:
             {%- if hb.latest is not none -%}
               {%- set age_s = (now() - hb.latest).total_seconds() -%}
               {%- if age_s > freeze_s -%}
-                {%- set fl.items = fl.items + [{
-                  'name': ename,
-                  'entity_id': eid,
-                  'area': earea,
-                  'tier': t.name,
-                  'reason': 'frozen',
-                  'since': hb.latest.isoformat(),
-                  'last_seen': hb.latest.isoformat(),
-                  'age': relative_time(hb.latest)
-                }] -%}
+                {%- if did is none or did not in fseen.ids -%}
+                  {%- set fl.items = fl.items + [{
+                    'name': ename,
+                    'entity_id': eid,
+                    'area': earea,
+                    'tier': t.name,
+                    'reason': 'frozen',
+                    'since': hb.latest.isoformat(),
+                    'last_seen': hb.latest.isoformat(),
+                    'age': relative_time(hb.latest)
+                  }] -%}
+                  {%- if did is not none -%}{%- set fseen.ids = fseen.ids + [did] -%}{%- endif -%}
+                {%- endif -%}
               {%- endif -%}
             {%- elif settled -%}
               {%- set fl.items = fl.items + [{
@@ -823,7 +837,7 @@ variables:
         }] -%}
       {%- endif -%}
     {%- endfor -%}
-    {%- set flagged = acc.flagged | sort(attribute='entity_id') -%}
+    {%- set flagged = acc.flagged | sort(attribute='entity_id') | sort(attribute='name') | sort(attribute='area') -%}
     {%- endif -%}
     {%- if not uptime_ok -%}
     {{

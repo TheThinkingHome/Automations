@@ -1,4 +1,4 @@
-# Entity Sentinel (2.2.0 Beta)
+# Entity Sentinel (2.4.0 Beta)
 
 A Home Assistant template blueprint that catches entities gone quiet: `unavailable`, `unknown`, `missing`, and, most important, `frozen` at their last value while the device behind them has silently died. One sensor, up to five tiers, each tier with its own targets and its own freeze window. Entity Sentinel gives you the count of troubled entities and names each one, ready to send as a notification, show on a dashboard, or speak aloud through a voice assistant.
 
@@ -221,7 +221,7 @@ Three tier rules worth knowing while you read that: a tier with no targets is sk
 - **A freeze window longer than your reset cadence cannot fire on the fallback path.** Size fallback windows shorter than the time between your restarts, or better, eliminate the fallback with last-seen entities.
 - **Groups and helpers have no device.** No siblings, no last-seen; their own silence is their only signal. Prefer watching members.
 - **Freeze is deliberately exempt from the startup grace.** It cannot false-fire at a restart (a restart makes the clock younger, never older), so it is not held.
-- **Availability systems are the backstop, not the rival.** Zigbee2MQTT marks a passive device unavailable after roughly 25 hours; Entity Sentinel's unavailable detection picks that up regardless of any freeze clock. The two paths cover each other.
+- **Availability systems are the backstop, not the rival, and the backstop has a known hole.** Zigbee2MQTT is designed to mark a passive device unavailable after roughly 25 hours of silence, and Entity Sentinel's unavailable detection picks that up regardless of any freeze clock. In practice, a [known Zigbee2MQTT issue](https://github.com/Koenkk/zigbee2mqtt/issues/27652) means the offline verdict for passive devices is often only delivered when Zigbee2MQTT itself restarts: on a system that restarts nightly it arrives as a nightly batch, and on a system that never restarts it may not arrive at all, the device just holds its last value. Measured on the author's system: a device dead for 25+ hours was never marked offline at runtime, twice, and was marked within seconds at the next Zigbee2MQTT start. For passive Zigbee devices, freeze detection may be the only runtime detection that exists.
 
 ## Upgrading from 1.x
 

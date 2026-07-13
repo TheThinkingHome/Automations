@@ -1,4 +1,4 @@
-# Sentinel Notify (2.0 Alpha)
+# Sentinel Notify (2.x Alpha)
 
 A Home Assistant automation blueprint that turns a Battery Sentinel or Entity Sentinel into a live to-do list and addition-only notifications: every problem becomes an item on a list you can see, check off, and watch resolve, and your phone hears only about what is new.
 

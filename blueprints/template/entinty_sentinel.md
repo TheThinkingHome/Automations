@@ -254,8 +254,6 @@ If the sensor exists but reports `setup_error`, read its `error` attribute: it n
 | 2.0.0-alpha.1.1 | Attribute presentation only; no logic change. `tiers` entries show `tier: <name>`; `error` and `note` merged into one `status` string; attributes reordered summary-first. |
 | 2.0.0-alpha.1 | The tiered rebuild. Up to five tiers in one sensor, each with its own targets and freeze window on one shared cadence and one shared unavailable debounce. Output contract a strict superset of 1.x. |
 
-The 1.x line and its full history live in the frozen [entity_sentinel_1.0.5-beta.md](https://github.com/TheThinkingHome/Automations/blob/main/blueprints/template/entity_sentinel_1.0.5-beta.md).
-
 ## License
 
 Copyright (C) 2026 James Lander, The Thinking Home (<https://xeazy.com>). This blueprint is free software: you may use, modify, and redistribute it under the terms of the GNU General Public License, version 3 or later (GPL-3.0-or-later). It is provided with no warranty. See the LICENSE file in this repository for the full text. If you redistribute or adapt it, keep this copyright and license notice intact.

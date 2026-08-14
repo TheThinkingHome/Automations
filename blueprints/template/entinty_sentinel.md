@@ -6,6 +6,37 @@ Entity Sentinel comes from **The Thinking Home** at [xeazy.com](https://xeazy.co
 
 **Current version: 2.4.0-beta.** The 2.x engine graduated through a 63-check adversarial simulation, two external code reviews (one of which surfaced a real bug, fixed before release), and live duty on the author's own system: nightly reboot cycles, real detections including a frozen sensor caught at exactly its tier's window, and planted-failure tests that shaped the engine itself. Beta means the inputs and the output contract are settled; the engine keeps improving behind them, and the remaining risk is variety, more homes, more integrations, more hardware weirdness. If you hit something, the [community thread](https://xeazy.com/logbook/d/42-the-battery-entity-sentinel-blueprints) is where it gets found and fixed.
 
+> [!IMPORTANT]
+> **These blueprints are deprecated. The Device Sentinel HACS Integration replaces them.**
+>
+> The blueprints work, they are stable, and I will maintaining them for the 
+> people already running them. [Device Sentinel](https://github.com/TheThinkingHome/device_sentinel), a HACS integration is the successor to the blueprints.
+> Device Sentinel is much more powerful, feature rich, and does not suffer from
+> blueprint limitations.
+>
+> Device Sentinel learns each device's own reporting rhythm, so there are no 
+> tiers to assign and no guessing. It installs from HACS and starts watching 
+> every device in your registry the moment you add it. It adds signal strength 
+> monitoring, and it watches batteries twice: against a level you choose, and
+> against the rate they are actually falling. And it creates three HTML reports
+> you can read or put on a dashboard.
+>
+> | | Sentinel blueprints | Device Sentinel |
+> |---|---|---|
+> | **Setup** | A package file, labels applied by hand, and helper entities | Add the integration. It asks nothing. |
+> | **What is watched** | The entities you label | Every device in your registry, from the moment you install it |
+> | **Freeze windows** | Tiers you assign, one window per tier | Learned per device from its own reporting rhythm |
+> | **Across a restart** | The clock starts again | Clocks and learned history survive |
+> | **Battery, signal, freeze** | Separate blueprints | One integration |
+> | **Runs as** | One Jinja pass over every labeled entity, on a cadence | Python, listening to the event bus |
+> | **Updates** | Re-import the blueprint | HACS |
+> 
+> **Install Device Sentinel**
+>
+> [![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=TheThinkingHome&repository=device_sentinel&category=integration)
+>
+> Source and documentation: [Device Sentinel on GitHub](https://github.com/TheThinkingHome/device_sentinel)
+
 ## Why It Exists
 
 There is a failure nothing else catches cleanly: a device that stops reporting but keeps showing its last value. It does not go `unavailable`. It throws no error. Home Assistant still displays the old reading, every automation downstream keeps trusting it, and the house quietly stops doing what you built it to do. Catching a device that drops offline is easy, a state check finds it. A frozen one passes every check you would think to write, because its state is still a perfectly valid value.

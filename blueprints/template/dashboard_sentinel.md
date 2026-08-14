@@ -1,5 +1,36 @@
 # Dashboard Sentinel (Beta)
 
+> [!IMPORTANT]
+> **These blueprints are deprecated. The Device Sentinel HACS Integration replaces them.**
+>
+> The blueprints work, they are stable, and I will maintaining them for the 
+> people already running them. [Device Sentinel](https://github.com/TheThinkingHome/device_sentinel), a HACS integration is the successor to the blueprints.
+> Device Sentinel is much more powerful, feature rich, and does not suffer from
+> blueprint limitations.
+>
+> Device Sentinel learns each device's own reporting rhythm, so there are no 
+> tiers to assign and no guessing. It installs from HACS and starts watching 
+> every device in your registry the moment you add it. It adds signal strength 
+> monitoring, and it watches batteries twice: against a level you choose, and
+> against the rate they are actually falling. And it creates three HTML reports
+> you can read or put on a dashboard.
+>
+> | | Sentinel blueprints | Device Sentinel |
+> |---|---|---|
+> | **Setup** | A package file, labels applied by hand, and helper entities | Add the integration. It asks nothing. |
+> | **What is watched** | The entities you label | Every device in your registry, from the moment you install it |
+> | **Freeze windows** | Tiers you assign, one window per tier | Learned per device from its own reporting rhythm |
+> | **Across a restart** | The clock starts again | Clocks and learned history survive |
+> | **Battery, signal, freeze** | Separate blueprints | One integration |
+> | **Runs as** | One Jinja pass over every labeled entity, on a cadence | Python, listening to the event bus |
+> | **Updates** | Re-import the blueprint | HACS |
+> 
+> **Install Device Sentinel**
+>
+> [![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=TheThinkingHome&repository=device_sentinel&category=integration)
+>
+> Source and documentation: [Device Sentinel on GitHub](https://github.com/TheThinkingHome/device_sentinel)
+
 A dashboard for your Sentinels: a status board that shows what has gone quiet and what is running low across your whole house, and the aggregator sensor that makes a combined board possible.
 
 This page builds the board below in three steps: first the **aggregator**, the sensor that merges your Entity Sentinels into one clean list; then the **status cards** that read it; then, if you run Sentinel Notify, the **to-do cards** that make the board interactive. The full copy-paste view closes the page.

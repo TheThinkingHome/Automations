@@ -16,22 +16,22 @@ A Home Assistant template blueprint that watches the battery devices you choose 
 > monitoring, and it watches batteries twice: against a level you choose, and
 > against the rate they are actually falling. And it creates three HTML reports
 > you can read or put on a dashboard.
-
-| | Sentinel blueprints | Device Sentinel |
-|---|---|---|
-| **Setup** | A package file, labels applied by hand, and helper entities | Add the integration. It asks nothing. |
-| **What is watched** | The entities you label | Every device in your registry, from the moment you install it |
-| **Freeze windows** | Tiers you assign, one window per tier | Learned per device from its own reporting rhythm |
-| **Across a restart** | The clock starts again | Clocks and learned history survive |
-| **Battery, signal, freeze** | Separate blueprints | One integration |
-| **Runs as** | One Jinja pass over every labeled entity, on a cadence | Python, listening to the event bus |
-| **Updates** | Re-import the blueprint | HACS |
-
-**Install Device Sentinel**
-
-[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=TheThinkingHome&repository=device_sentinel&category=integration)
-
-Source and documentation: [Device Sentinel on GitHub](https://github.com/TheThinkingHome/device_sentinel)
+>
+> | | Sentinel blueprints | Device Sentinel |
+> |---|---|---|
+> | **Setup** | A package file, labels applied by hand, and helper entities | Add the integration. It asks nothing. |
+> | **What is watched** | The entities you label | Every device in your registry, from the moment you install it |
+> | **Freeze windows** | Tiers you assign, one window per tier | Learned per device from its own reporting rhythm |
+> | **Across a restart** | The clock starts again | Clocks and learned history survive |
+> | **Battery, signal, freeze** | Separate blueprints | One integration |
+> | **Runs as** | One Jinja pass over every labeled entity, on a cadence | Python, listening to the event bus |
+> | **Updates** | Re-import the blueprint | HACS |
+> 
+> **Install Device Sentinel**
+>
+> [![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=TheThinkingHome&repository=device_sentinel&category=integration)
+>
+> Source and documentation: [Device Sentinel on GitHub](https://github.com/TheThinkingHome/device_sentinel)
 
 ## What This Solves
 

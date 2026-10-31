@@ -31,11 +31,17 @@ Entity Sentinel comes from **The Thinking Home** at [xeazy.com](https://xeazy.co
 > | **Runs as** | One Jinja pass over every labeled entity, on a cadence | Python, listening to the event bus |
 > | **Updates** | Re-import the blueprint | HACS |
 > 
-> **Install Device Sentinel**
+> ## Installation
+>
+> Device Sentinel is in the HACS default store.
 >
 > [![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=TheThinkingHome&repository=device_sentinel&category=integration)
 >
-> Source and documentation: [Device Sentinel on GitHub](https://github.com/TheThinkingHome/device_sentinel)
+> 1. Open **HACS**, search for **Device Sentinel**, and open it.
+> 2. Click **Download**, then **Restart Home Assistant**.
+> 3. Go to **Settings > Devices and Services > Add Integration** and search for Device Sentinel.
+>
+> *(Requires Home Assistant 2026.5 or newer)*
 
 ## Why It Exists
 
